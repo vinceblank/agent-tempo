@@ -794,11 +794,48 @@ export async function setupTestEnv(): Promise<void> {
     testEnv = env;
     workflowBundle = loadedBundle;
   }
+  // #721 — terminate workflows leaked by prior files BEFORE this file runs.
+  // Under per-worker unique queues a leaked Running workflow is pinned to a
+  // queue no future worker will ever poll, so every later `resolveSession`
+  // scan pays the full 2s `queryHandleWithTimeout` budget per leak when it
+  // probes the leak's `getMetadata` (the pre-#721 shared queue let any live
+  // worker serve those queries, masking the leaks). Server-side terminate
+  // needs no worker; per-file random ensembles mean nothing legitimately
+  // spans files.
+  await sweepLeakedWorkflows();
   // Re-seed per-file suffix. Short hex keeps workflow IDs readable in Temporal UI.
   currentEnsemblePrefix = `test-ensemble-${crypto.randomBytes(4).toString('hex')}`;
   // #721 — re-mint so file-scope TASK_QUEUE reads (before the first
   // withWorker) already see this file's namespace, not the previous file's.
   mintTaskQueue();
+}
+
+/**
+ * Best-effort terminate of every still-Running workflow in the shared env.
+ * Called from `setupTestEnv()` at each file boundary (#721) — see the call
+ * site for why leaks must not survive into the next file. Best-effort: a
+ * workflow finishing between list and terminate, or a visibility hiccup,
+ * must never fail a file's `before()` hook.
+ */
+async function sweepLeakedWorkflows(): Promise<void> {
+  if (!testEnv) return;
+  const client = testEnv.client;
+  let swept = 0;
+  try {
+    for await (const wf of client.workflow.list({ query: 'ExecutionStatus = "Running"' })) {
+      try {
+        await client.workflow.getHandle(wf.workflowId).terminate('test harness per-file leak sweep (#721)');
+        swept += 1;
+      } catch {
+        // Completed/terminated since listing — already gone, ignore.
+      }
+    }
+  } catch {
+    // Visibility scan failed — best-effort only; the file can still run.
+  }
+  if (swept > 0) {
+    console.log(`[test:setupTestEnv] #721 leak sweep terminated ${swept} workflow(s) left Running by prior files`);
+  }
 }
 
 /**
