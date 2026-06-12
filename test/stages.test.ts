@@ -40,11 +40,16 @@ let ENSEMBLE: string;
  */
 async function retry<T>(
   assertFn: () => Promise<T>,
-  // Default timeout bumped from 5s→10s in #178 to absorb Node 24 CI latency
-  // spikes (#196/#197 saw the "completes stage when all players report result"
-  // test flake on first CI run, pass on rerun). 50ms polling × 200 iterations
-  // still well under worst-case scheduler variance.
-  { timeoutMs = 10_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+  // #777 — budget bumped 10s→20s. The old 10s was EXACTLY equal to the two
+  // server-side bounded waits that can silently stall a workflow task:
+  // `stickyQueueScheduleToStartTimeout` (SDK default 10s — now 1s via the
+  // helpers.ts choke point, the root-cause fix) and `workflowTaskTimeout`
+  // (10s). A poll budget equal to a bounded wait loses the race by
+  // definition — the assertion gives up at the precise moment the task
+  // recovers ('waiting'≠'reported' / 'active'≠'failed', the #181 lineage:
+  // #178 bumped 5s→10s INTO that equality). 20s strictly dominates every
+  // bounded wait plus processing headroom.
+  { timeoutMs = 20_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   // eslint-disable-next-line no-constant-condition
