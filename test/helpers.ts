@@ -699,6 +699,19 @@ export interface CreateWorkerRetryOpts {
  * error if every attempt hits the overlap.
  */
 /**
+ * ── STANDING RULE (#777, architect-adopted): poll budgets vs bounded waits ──
+ *
+ * Any polling/retry budget in a test must STRICTLY dominate — rule of thumb
+ * ≥2× — the longest server-side timeout in the awaited path. Budget==timeout
+ * EQUALITY is a flake generator: the awaited task recovers at exactly the
+ * moment the assertion gives up. The #178→#181 lineage kept reintroducing
+ * this shape (5s→10s "to absorb CI latency" landed precisely ON the 10s
+ * sticky failover + workflowTaskTimeout defaults). Relevant bounds for test
+ * workers: sticky failover 1s (below), workflowTaskTimeout 10s (SDK default)
+ * — so transition-poll budgets should be ≥20s.
+ */
+
+/**
  * #777 — test-wide sticky-queue failover bound. The SDK default is 10s: a
  * workflow task dispatched to a worker's sticky queue that the worker misses
  * (worker churn — tests create one short-lived worker per `withWorker` — plus
