@@ -454,6 +454,10 @@ export class CopilotSdkAttachment extends SdkAttachment {
       const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
       handle = await this.startV2Lifecycle(expectedWorkflowId, expectedAttachmentId);
       log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId}${expectedAttachmentId ? ', renewed' : ''})`);
+      // T1.1 PR-2 — cue doorbell: ding ⇒ immediate poll tick + backoff
+      // reset; connected ⇒ 60s idle ceiling. No token / daemon down ⇒
+      // silent no-op (pure #761 polling).
+      this.startDoorbell(config.ensemble, playerIdForWorkflow);
     } catch (err: any) {
       log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
       try { await session.disconnect(); } catch { /* best effort */ }
@@ -502,17 +506,16 @@ export class CopilotSdkAttachment extends SdkAttachment {
     let sessionRecreations = 0;
     let proactiveRecreations = 0;
     let lastActivityTime = Date.now();
-    // #749: self-scheduling poll timer (was a fixed-2s setInterval). Declared
-    // here, armed after poll is defined.
-    let pollTimer: ReturnType<typeof setTimeout> | undefined;
-
     // Shared cleanup — disconnects session, removes PID file, stops client.
     let shuttingDown = false;
     const cleanup = async () => {
       if (shuttingDown) return;
       shuttingDown = true;
       polling = false;
-      clearTimeout(pollTimer);
+      // T1.1 — end the doorbell stream and pop any parked inter-tick sleep
+      // so the scheduler chain observes `polling = false` promptly.
+      this.stopDoorbell();
+      this.wakePollSleep();
       // V2 graceful detach — fires `adapterExited` so the workflow collapses
       // draining → detached immediately per §11.1. No-op if V2 was off or if
       // startV2Lifecycle never ran successfully.
@@ -753,11 +756,16 @@ export class CopilotSdkAttachment extends SdkAttachment {
         return POLL_INTERVAL_MS;
       });
       if (polling) {
-        pollTimer = setTimeout(() => void runPollTick(), delay);
+        // T1.1 — the inter-tick wait is doorbell-interruptible: a ding pops
+        // it (and reset the backoff) so the next tick runs immediately.
+        await this.pollSleep(delay);
+        if (polling) void runPollTick();
       }
     };
     this.pollBackoff.reset();
-    pollTimer = setTimeout(() => void runPollTick(), POLL_INTERVAL_MS);
+    void this.pollSleep(POLL_INTERVAL_MS).then(() => {
+      if (polling) void runPollTick();
+    });
     log('Message poller started. Bridge is running.');
 
     // Graceful shutdown on SIGINT/SIGTERM — signal the workflow before exiting

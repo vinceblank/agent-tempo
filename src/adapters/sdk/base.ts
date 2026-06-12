@@ -27,7 +27,8 @@
 import type { WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import { processingStartUpdate, processingEndUpdate, markDeliveredSignal } from '../../workflows/signals';
-import { IdleBackoff } from './idle-backoff';
+import { IdleBackoff, resolveDoorbellCeilingMs, resolveIdleBackoffConfig } from './idle-backoff';
+import { DoorbellClient, WakeableSleep } from './doorbell-client';
 import type { Message, DetachReason } from '../../types';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:sdk-adapter]', ...args);
@@ -76,6 +77,22 @@ export abstract class SdkAttachment extends BaseAttachment {
    * driven by this — lease math depends on them (#249).
    */
   protected readonly pollBackoff = new IdleBackoff();
+
+  /**
+   * T1.1 PR-2 — cue doorbell (docs/design/t11-cue-doorbell.md §2.4). Started
+   * by the concrete adapter via {@link startDoorbell} once it knows its
+   * `{ensemble, playerId}`; null until then and after {@link stopDoorbell}.
+   * A ding is a HINT: it wakes the poll sleep + resets the backoff — the
+   * poll itself (and its acks) remain the sole delivery path.
+   */
+  private doorbell: DoorbellClient | null = null;
+
+  /**
+   * The ding→immediate-poll primitive (level-triggered, identity-guarded —
+   * see {@link WakeableSleep}). Shared shape with the PR-3 Pi pump, which
+   * composes the same class without being an SdkAttachment.
+   */
+  private readonly pollSleeper = new WakeableSleep();
 
   constructor(options: BaseAttachmentOptions = {}) {
     super(options);
@@ -184,11 +201,73 @@ export abstract class SdkAttachment extends BaseAttachment {
   }
 
   /**
+   * T1.1 PR-2 — start the doorbell once the concrete adapter knows its
+   * identity (typically right after `startV2Lifecycle`). Wires:
+   *
+   *   - `ding` → `pollBackoff.reset()` + wake the parked {@link pollSleep}
+   *     (or set the pending bit if the loop is mid-tick) ⇒ the very next
+   *     poll runs now, at the fast cadence.
+   *   - connection state → idle ceiling: connected ⇒ 60s
+   *     (`SDK_POLL_DOORBELL_MAX_MS`), disconnected ⇒ the T0.2 30s floor.
+   *     Degradation is automatic and silent — daemon down means the player
+   *     behaves exactly like post-#761 (§5 of the design doc).
+   *
+   * No token / no daemon ⇒ the client never subscribes and this is a no-op
+   * beyond one breadcrumb. Idempotent per attachment (restart calls stop
+   * first).
+   */
+  protected startDoorbell(ensemble: string, playerId: string): void {
+    this.stopDoorbell();
+    this.doorbell = new DoorbellClient({
+      ensemble,
+      playerId,
+      onDing: () => {
+        this.pollBackoff.reset();
+        this.wakePollSleep();
+      },
+      onConnectionChange: (connected) => {
+        this.pollBackoff.setCeiling(
+          connected ? resolveDoorbellCeilingMs() : resolveIdleBackoffConfig().maxMs,
+        );
+      },
+    });
+    this.doorbell.start();
+  }
+
+  /** Tear down the doorbell stream (graceful detach, adapter exit). Idempotent. */
+  protected stopDoorbell(): void {
+    this.doorbell?.stop();
+    this.doorbell = null;
+  }
+
+  /**
+   * T1.1 PR-2 — doorbell-interruptible sleep for the subclass poll loops.
+   * Drop-in for the previous `await sleep(pollBackoff.next(...))` sites: a
+   * `ding` (or {@link wakePollSleep}) resolves it early so the next poll
+   * runs immediately; otherwise it behaves exactly like a plain sleep.
+   * A ding that landed while the loop was mid-tick resolves the NEXT call
+   * instantly (level-triggered pending bit — hints are consumed, not lost).
+   */
+  protected pollSleep(ms: number): Promise<void> {
+    return this.pollSleeper.sleep(ms);
+  }
+
+  /**
+   * Wake a parked {@link pollSleep} now (ding, or a subclass's own stop
+   * path wanting a prompt loop exit). No parked sleep ⇒ sets the pending
+   * bit so the next `pollSleep` returns immediately.
+   */
+  protected wakePollSleep(): void {
+    this.pollSleeper.wake();
+  }
+
+  /**
    * Subclass-facing convenience: call this from `startV2Lifecycle` path to
    * fire `adapterExited` on clean shutdown and tear down the V2 machinery.
    * Forwards to `BaseAttachment.stopV2Lifecycle` with graceful=true.
    */
   protected async detachGracefully(reason: DetachReason = 'user-stop'): Promise<void> {
+    this.stopDoorbell();
     await this.stopV2Lifecycle(reason, /* graceful */ true);
   }
 }

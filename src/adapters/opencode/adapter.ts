@@ -359,6 +359,11 @@ export class OpenCodeAttachment extends SdkAttachment {
       process.exit(1);
     }
 
+    // T1.1 PR-2 — cue doorbell: ding ⇒ immediate poll + backoff reset;
+    // connected ⇒ 60s idle ceiling. No token / daemon down ⇒ silent no-op
+    // (pure #761 polling).
+    this.startDoorbell(config.ensemble, playerIdForWorkflow);
+
     // (9) PID file — two lines (adapter PID + opencode-serve PID) per
     // design §6.5. Operators can grep / kill either.
     const pidFile = path.join(logDir, `${playerIdForWorkflow}.pid`);
@@ -381,6 +386,7 @@ export class OpenCodeAttachment extends SdkAttachment {
 
     // (11) Drive the poll loop. #753 — meter its Temporal calls under 'sdk-poller'.
     await withActionSource('sdk-poller', () => this.pollLoop(handle));
+    this.stopDoorbell();
     try { fs.unlinkSync(pidFile); } catch { /* gone */ }
   }
 
@@ -434,12 +440,14 @@ export class OpenCodeAttachment extends SdkAttachment {
       } catch (err) {
         log(`pendingMessages query failed: ${(err as Error)?.message ?? err}`);
         // #749: grow on errors too — don't hammer a wedged worker at 2s.
-        await sleep(this.pollBackoff.next(false));
+        // T1.1: pollSleep is doorbell-interruptible — a ding ends it early.
+        await this.pollSleep(this.pollBackoff.next(false));
         continue;
       }
       if (messages.length === 0) {
-        // #749: idle backoff — 2s → 30s while nothing is pending.
-        await sleep(this.pollBackoff.next(false));
+        // #749: idle backoff — 2s → 30s while nothing is pending (60s
+        // ceiling while the T1.1 doorbell is connected; a ding wakes it).
+        await this.pollSleep(this.pollBackoff.next(false));
         continue;
       }
       // #749: live conversation — snap back to the fast cadence.

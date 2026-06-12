@@ -37,6 +37,15 @@ export const SDK_POLL_BASE_MS = 2_000;
 export const SDK_POLL_BACKOFF_FACTOR = 1.5;
 /** Idle ceiling. 15× the base — the steady-state idle cadence. */
 export const SDK_POLL_MAX_MS = 30_000;
+/**
+ * T1.1 PR-2 — idle ceiling while the cue doorbell is CONNECTED. Latency is
+ * the doorbell's job; the 60s poll is reconciliation AND the only bound on
+ * worst-case delivery after a lost ding (§2.4 of the design doc — at-most-
+ * once, no replay), so it stays operator-tolerable rather than stretching
+ * to minutes. Disconnected ⇒ the T0.2 30s ceiling above (today's shipped
+ * behavior is the floor).
+ */
+export const SDK_POLL_DOORBELL_MAX_MS = 60_000;
 
 /** Parse a positive-integer env override; fall back on absent/garbage. */
 function envInt(name: string, fallback: number): number {
@@ -66,6 +75,16 @@ export function resolveIdleBackoffConfig(): IdleBackoffConfig {
 }
 
 /**
+ * T1.1 PR-2 — the ceiling to apply while the doorbell is connected
+ * (`AGENT_TEMPO_SDK_POLL_DOORBELL_MAX_MS` override; clamped ≥ the resolved
+ * base so a misconfigured override can never invert base/max).
+ */
+export function resolveDoorbellCeilingMs(): number {
+  const baseMs = envInt(ENV.SDK_POLL_BASE_MS, SDK_POLL_BASE_MS);
+  return Math.max(baseMs, envInt(ENV.SDK_POLL_DOORBELL_MAX_MS, SDK_POLL_DOORBELL_MAX_MS));
+}
+
+/**
  * Pure delay computer for an idle-backoff poll loop.
  *
  * Usage per tick:
@@ -87,8 +106,20 @@ export class IdleBackoff {
   private currentMs: number;
 
   constructor(cfg: IdleBackoffConfig = resolveIdleBackoffConfig()) {
-    this.cfg = cfg;
+    // Copy — `setCeiling` mutates maxMs and must never write through to a
+    // shared config object a caller handed in.
+    this.cfg = { ...cfg };
     this.currentMs = cfg.baseMs;
+  }
+
+  /**
+   * T1.1 PR-2 — swap the idle ceiling (doorbell connected ⇒ 60s,
+   * disconnected ⇒ the 30s T0.2 floor). Base/factor/reset semantics are
+   * untouched; a `currentMs` above a LOWERED ceiling self-heals on the next
+   * `next()` (Math.min clamps it). Clamped ≥ base so the curve can't invert.
+   */
+  setCeiling(maxMs: number): void {
+    this.cfg.maxMs = Math.max(this.cfg.baseMs, maxMs);
   }
 
   /** The delay the next idle sleep would use (read-only; for logs/tests). */
