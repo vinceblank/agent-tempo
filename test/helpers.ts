@@ -389,7 +389,61 @@ export function getTestEnsemble(): string {
   return currentEnsemblePrefix;
 }
 
-export const TASK_QUEUE = 'test-agent-tempo';
+/** Base prefix for every minted test task queue. */
+const TASK_QUEUE_BASE = 'test-agent-tempo';
+
+/**
+ * #721 — the CURRENT per-worker task queue, as a **live binding**.
+ *
+ * Every `withWorker*` helper (and `startWorkerPair`) mints a fresh
+ * process-unique queue via {@link mintTaskQueue} before creating its
+ * worker(s), so no two worker creations in the same process ever share a
+ * SlotKey — structurally eliminating the Rust core-bridge slot-release race
+ * (#642) that `createWorkerWithSlotRetry` only papers over.
+ *
+ * Tests compile to CommonJS (`dist-test/`), so importers read
+ * `helpers_1.TASK_QUEUE` at every use site — `taskQueue: TASK_QUEUE` inside a
+ * `withWorker` callback always resolves to the queue that callback's worker
+ * is polling, with zero call-site edits.
+ *
+ * **SERIAL-WITHWORKER CONSTRAINT (#721)**: this mutable module global is
+ * safe because no two `withWorker*` invocations ever run concurrently
+ * WITHIN one process — no `Promise.all`/`allSettled` wraps a `withWorker*`
+ * call anywhere in `test/` (standing invariant, enforced by
+ * `tests/conformance/serial-withworker-fence.test.ts`). Note the precise
+ * boundary: parallel-Mocha with per-FILE worker processes would be safe
+ * as-is (module state is per-process); only INTRA-process concurrent
+ * `withWorker*` calls are forbidden — concurrent mints would make live-
+ * binding reads timing-dependent.
+ *
+ * Initial value is the pre-#721 literal as a defensive fallback for any read
+ * before the first `setupTestEnv()`/`withWorker*` call.
+ */
+export let TASK_QUEUE = TASK_QUEUE_BASE;
+
+/** Monotonic counter — per-invocation uniqueness within the process. */
+let taskQueueCounter = 0;
+
+/**
+ * Mint a fresh process-unique main task queue and publish it as the live
+ * {@link TASK_QUEUE} binding. Called by `setupTestEnv()` (file granularity)
+ * and at the entry of every worker-creating helper (invocation granularity).
+ *
+ * Shape: `test-agent-tempo-<fileHex>-<n>` — the per-file random suffix ties
+ * Temporal-UI entries back to their test file; the counter isolates
+ * consecutive `withWorker` calls within a file.
+ *
+ * Exported for tests that inline their own worker setup instead of going
+ * through a `withWorker*` helper (e.g. `destroy.test.ts`'s capturing
+ * variant) — they must mint too, or they'd reuse the previous mint and
+ * race its just-released SlotKey without the retry backstop.
+ */
+export function mintTaskQueue(): string {
+  taskQueueCounter += 1;
+  const fileSuffix = currentEnsemblePrefix.replace(/^test-ensemble-/, '');
+  TASK_QUEUE = `${TASK_QUEUE_BASE}-${fileSuffix}-${taskQueueCounter}`;
+  return TASK_QUEUE;
+}
 
 /**
  * Per-host task queue for spawnProcess activities.
@@ -559,8 +613,13 @@ export const _isAccessDeniedError = isAccessDeniedError;
 // #694 symptom 2 (beta.4 band-aid) — budget bumped 4→6 attempts / 100→200ms base
 // per QA's diagnosis. Old max wait ~900ms (100+200+400+jitter); new max ~6.6s
 // (200+400+800+1600+3200 + jitter×5) — covers the Rust-bridge slot-release lag on
-// a loaded Windows runner. The STRUCTURAL fix (per-test unique task queue) is
-// tracked separately; this only widens the retry window.
+// a loaded Windows runner.
+//
+// #721 landed the structural fix for the MAIN queue (unique mint per
+// withWorker) — this retry is now the HOST-QUEUE BACKSTOP only (the shared
+// `agent-tempo-test-host` queue still carries the #642 race). Do NOT retire
+// it before #772 (per-test unique host queues) lands + the CI soak there
+// passes.
 const SLOT_RETRY_DEFAULT_ATTEMPTS = 6;
 const SLOT_RETRY_DEFAULT_BASE_MS = 200;
 const SLOT_RETRY_DEFAULT_FACTOR = 2;
@@ -578,6 +637,10 @@ const SLOT_RETRY_DEFAULT_JITTER_MS = 100;
  * NEXT caller's create is far less likely to race the not-yet-released slot (the
  * retry above is the backstop). ~223 withWorker calls × 20ms ≈ 4.5s/shard —
  * negligible vs. total test runtime. Not injectable: always wanted post-shutdown.
+ *
+ * Post-#721 the main queue is minted unique per withWorker, so this barrier
+ * serves the shared HOST queue (`agent-tempo-test-host`) only. Do NOT retire
+ * before #772 lands + its CI soak passes.
  */
 const SLOT_RELEASE_BARRIER_MS = 20;
 async function awaitWorkerSlotRelease(): Promise<void> {
@@ -628,6 +691,9 @@ export interface CreateWorkerRetryOpts {
  * exponential backoff + jitter; RETHROWS any other error immediately so real
  * worker-init failures surface unmasked. Exported for unit testing
  * (`test/worker-slot-retry.test.ts`); all `withWorker*` helpers call it.
+ *
+ * Host-queue backstop — see #772 before retiring (main-queue collisions are
+ * structurally gone since #721's per-withWorker mint).
  *
  * Resolves with the worker on first success. Rejects with the last attempt's
  * error if every attempt hits the overlap.
@@ -744,8 +810,48 @@ export async function setupTestEnv(): Promise<void> {
     testEnv = env;
     workflowBundle = loadedBundle;
   }
+  // #721 — terminate workflows leaked by prior files BEFORE this file runs.
+  // Under per-worker unique queues a leaked Running workflow is pinned to a
+  // queue no future worker will ever poll, so every later `resolveSession`
+  // scan pays the full 2s `queryHandleWithTimeout` budget per leak when it
+  // probes the leak's `getMetadata` (the pre-#721 shared queue let any live
+  // worker serve those queries, masking the leaks). Server-side terminate
+  // needs no worker; per-file random ensembles mean nothing legitimately
+  // spans files.
+  await sweepLeakedWorkflows();
   // Re-seed per-file suffix. Short hex keeps workflow IDs readable in Temporal UI.
   currentEnsemblePrefix = `test-ensemble-${crypto.randomBytes(4).toString('hex')}`;
+  // #721 — re-mint so file-scope TASK_QUEUE reads (before the first
+  // withWorker) already see this file's namespace, not the previous file's.
+  mintTaskQueue();
+}
+
+/**
+ * Best-effort terminate of every still-Running workflow in the shared env.
+ * Called from `setupTestEnv()` at each file boundary (#721) — see the call
+ * site for why leaks must not survive into the next file. Best-effort: a
+ * workflow finishing between list and terminate, or a visibility hiccup,
+ * must never fail a file's `before()` hook.
+ */
+async function sweepLeakedWorkflows(): Promise<void> {
+  if (!testEnv) return;
+  const client = testEnv.client;
+  let swept = 0;
+  try {
+    for await (const wf of client.workflow.list({ query: 'ExecutionStatus = "Running"' })) {
+      try {
+        await client.workflow.getHandle(wf.workflowId).terminate('test harness per-file leak sweep (#721)');
+        swept += 1;
+      } catch {
+        // Completed/terminated since listing — already gone, ignore.
+      }
+    }
+  } catch {
+    // Visibility scan failed — best-effort only; the file can still run.
+  }
+  if (swept > 0) {
+    console.log(`[test:setupTestEnv] #721 leak sweep terminated ${swept} workflow(s) left Running by prior files`);
+  }
 }
 
 /**
@@ -947,9 +1053,10 @@ export async function skipTime(durationMs: number): Promise<void> {
  * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
   });
   const hostWorker = await createWorkerWithSlotRetry({
@@ -982,11 +1089,12 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
  * by `setupTestEnv` — no per-test host worker is needed here.
  */
 export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
   const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: scheduleActivities,
   });
@@ -1172,6 +1280,7 @@ export async function isConductorRunning(
  * spawnProcess is stubbed to avoid launching real terminals in tests.
  */
 export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
@@ -1179,14 +1288,14 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
   const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
-    taskQueue: TASK_QUEUE,
+    taskQueue, // recruited workflows must start on the queue this worker polls
     ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
 
   const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
@@ -1235,6 +1344,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
  * `agent-tempo-test-host` with a stubbed spawnProcess to avoid launching real terminals.
  */
 export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
@@ -1242,7 +1352,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
-    taskQueue: TASK_QUEUE,
+    taskQueue, // recruited workflows must start on the queue this worker polls
     ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
@@ -1250,7 +1360,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   // Main worker: workflow execution + all outbox + schedule activities
   const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
@@ -1304,6 +1414,9 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
 async function startWorkerPair(
   opts: { includeHardTerminateOnMain: boolean },
 ): Promise<() => Promise<void>> {
+  // #721 — one queue per describe-level worker pair; tests inside the
+  // describe read the live TASK_QUEUE binding and land on this queue.
+  const taskQueue = mintTaskQueue();
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
@@ -1311,7 +1424,7 @@ async function startWorkerPair(
   const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
-    taskQueue: TASK_QUEUE,
+    taskQueue, // recruited workflows must start on the queue this worker polls
     ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
@@ -1324,7 +1437,7 @@ async function startWorkerPair(
 
   const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
@@ -1399,6 +1512,7 @@ export async function withWorkerAndRecruitCapture<T>(
   spawnInputs: Array<Record<string, unknown>>,
   fn: () => Promise<T>,
 ): Promise<T> {
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
@@ -1406,7 +1520,7 @@ export async function withWorkerAndRecruitCapture<T>(
   const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
-    taskQueue: TASK_QUEUE,
+    taskQueue, // recruited workflows must start on the queue this worker polls
     ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
@@ -1418,7 +1532,7 @@ export async function withWorkerAndRecruitCapture<T>(
 
   const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
@@ -1467,12 +1581,13 @@ export async function withWorkerAndMaestroActivities<T>(
   const relayResult = opts.relayResult ?? (() => ({ success: true }));
   const relayedCommands: Array<{ text: string; source: string; replyTo?: string }> = [];
 
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
   const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
@@ -1520,12 +1635,13 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
   const fetchHistoryResult = opts.fetchHistoryResult ?? (() => ({ success: true, history: [] }));
   const relayedCommands: Array<{ ensemble: string; text: string; source: string; replyTo?: string }> = [];
 
+  const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
   const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: TASK_QUEUE,
+    taskQueue,
     workflowBundle,
     activities: {
       ...scheduleActivities,
