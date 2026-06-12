@@ -7,7 +7,7 @@ import { Config, hostTaskQueue } from './config';
 import { createTemporalNativeConnection } from './connection';
 import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
-import { createOutboxActivities } from './activities/outbox';
+import { createOutboxActivities, type DoorbellSink } from './activities/outbox';
 import { createMaestroActivities, type ObserverPresenceSource } from './activities/maestro';
 import type { IngestTokenRegistry } from './http/ingest-registry';
 import { actionCountingInterceptors } from './utils/action-counters';
@@ -80,6 +80,13 @@ export async function createWorkers(
    * and fills `current` in once the AggregateRunner exists.
    */
   observerPresence?: ObserverPresenceSource,
+  /**
+   * T1.1 PR-1 — late-wired cue-doorbell sink for the outbox delivery
+   * activities (same holder pattern as observerPresence). The daemon fills
+   * `current` with its DoorbellRegistry; a non-daemon worker leaves it null
+   * (ring() no-ops; fallback polling covers delivery latency).
+   */
+  doorbells?: DoorbellSink,
 ): Promise<DualWorkers> {
   const connection = await createTemporalNativeConnection(config);
 
@@ -95,7 +102,7 @@ export async function createWorkers(
   // activities so the pi spawn branch can mint per-player ingest tokens and the
   // destroy path can revoke them. Same singleton the HTTP server validates
   // against (both run in this daemon process).
-  const outboxActivities = createOutboxActivities(client, config, ingestTokens);
+  const outboxActivities = createOutboxActivities(client, config, ingestTokens, doorbells);
   const maestroActivities = createMaestroActivities(client, {
     costProfile: config.costProfile,
     observerPresence,

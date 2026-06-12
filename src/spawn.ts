@@ -811,6 +811,13 @@ export interface CopilotBridgeOpts {
    * keeps the ppid-poll (#604 anti-leak on daemon death; ppid = persistent daemon).
    */
   transientSpawner?: boolean;
+  /**
+   * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
+   * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
+   * calls (doorbell subscribe; Pi also uses it for /inner/ingest). Absent →
+   * the adapter never subscribes (pure T0.2 fallback-poll behavior).
+   */
+  ingestToken?: string;
 }
 
 export interface CopilotBridgeResult {
@@ -873,6 +880,7 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         ...(opts.sessionId ? { [ENV.BRIDGE_SESSION_ID]: opts.sessionId } : {}),
         // PR-D attachment handoff — renew rather than fresh-claim in startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
         ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
@@ -926,6 +934,13 @@ export interface MockAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /**
+   * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
+   * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
+   * calls (doorbell subscribe; Pi also uses it for /inner/ingest). Absent →
+   * the adapter never subscribes (pure T0.2 fallback-poll behavior).
+   */
+  ingestToken?: string;
 }
 
 export interface MockAdapterResult {
@@ -984,6 +999,7 @@ export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
         ...(opts.mockScenario ? { AGENT_TEMPO_MOCK_SCENARIO: opts.mockScenario } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
         ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
@@ -1037,6 +1053,13 @@ export interface ClaudeApiAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /**
+   * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
+   * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
+   * calls (doorbell subscribe; Pi also uses it for /inner/ingest). Absent →
+   * the adapter never subscribes (pure T0.2 fallback-poll behavior).
+   */
+  ingestToken?: string;
 }
 
 export interface ClaudeApiAdapterResult {
@@ -1100,6 +1123,7 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
         ...(opts.model ? { [ENV.API_MODEL]: opts.model } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
         ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
@@ -1152,6 +1176,13 @@ export interface OpenCodeAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /**
+   * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
+   * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
+   * calls (doorbell subscribe; Pi also uses it for /inner/ingest). Absent →
+   * the adapter never subscribes (pure T0.2 fallback-poll behavior).
+   */
+  ingestToken?: string;
 }
 
 export interface OpenCodeAdapterResult {
@@ -1214,6 +1245,7 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
         ...(opts.model ? { [ENV.OPENCODE_MODEL]: opts.model } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
         ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
@@ -1390,6 +1422,13 @@ export interface ClaudeCodeHeadlessAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /**
+   * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
+   * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
+   * calls (doorbell subscribe; Pi also uses it for /inner/ingest). Absent →
+   * the adapter never subscribes (pure T0.2 fallback-poll behavior).
+   */
+  ingestToken?: string;
 }
 
 export interface ClaudeCodeHeadlessAdapterResult {
@@ -1459,6 +1498,7 @@ export function spawnClaudeCodeHeadlessAdapter(
         ...(opts.dangerouslySkipPermissions ? { [ENV.DANGEROUSLY_SKIP_PERMISSIONS]: '1' } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
         ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
