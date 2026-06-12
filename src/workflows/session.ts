@@ -1475,6 +1475,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
 
     // ── Stage Handlers ──
 
+    // #777 — staleness bound for stage-creation reconciliation (below).
+    // Architect-ruled: 5 minutes covers the real ms-to-seconds races with
+    // margin while blocking hours-old unrelated reports from falsely
+    // completing/failing a fresh stage. Input override is a TEST KNOB only.
+    const STAGE_RECONCILE_WINDOW_MS = input.stageReconcileWindowMs ?? 5 * 60_000;
+
     setHandler(setStageSignal, ({ name, players, failurePolicy, createdBy }) => {
       const entry: StageEntry = {
         name,
@@ -1487,6 +1493,101 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         createdAt: workflowNow().toISOString(),
         createdBy,
       };
+
+      // ── #777 — commutative reconciliation against pre-stage reports ──
+      //
+      // Cross-dependent signal handlers must be commutative under buffered
+      // delivery: the TS SDK drains pre-registration signal buffers in
+      // HANDLER-REGISTRATION order, not arrival order — this handler
+      // registers AFTER playerReportSignal's, so a report buffered alongside
+      // this setStage is consumed FIRST, against an empty `stages`, and the
+      // transition would be silently lost (the #777 wedge; proven by the
+      // captured history in test/fixtures/777-wedge-history.txt). The same
+      // loss occurs with zero buffering when a report simply ARRIVES just
+      // before setStage in a running workflow. Fix: at creation, count each
+      // player's most recent stage-relevant report.
+      //
+      // Semantics (architect-ruled, MOST-RECENT-WINS — deliberate divergence
+      // from the live handler's first-report-wins): live handling is an
+      // INTERRUPT semantic for an existing stage (a blocker halts in-flight
+      // fan-out the moment it happens); reconciliation is a STATE-SUMMARY
+      // semantic for a stage created after the fact — nothing is in flight
+      // to interrupt, and the player's latest report IS their current
+      // standing. Replaying a superseded [blocker→result] as a fresh halt
+      // would act on stale information about a player who already
+      // recovered; [result→blocker] symmetrically reconciles to 'blocked'
+      // (halt at creation) — latest-state-wins is consistent in both
+      // directions. question/update reports are stage-inert, mirroring the
+      // live handler. Reconciled entries keep the ORIGINAL receipt time as
+      // `reportedAt` and carry `reconciled: true`.
+      //
+      // patched() gate: stage state itself drives no commands, but the
+      // completion/failure messages pushed here join `messages`, which
+      // participates in main-loop condition predicates whose resolution
+      // interleaves with recorded timer commands — a command-sequence
+      // dependency on replay. Conservative tiebreak per the ruling: marker.
+      if (patched('v0.27-stage-reconcile-reports')) {
+        const nowMs = workflowNow().getTime();
+        for (const playerEntry of entry.players) {
+          // Most recent stage-relevant (result|blocker) report from this
+          // player; question/update are inert and skipped, not blocking.
+          for (let i = reportHistory.length - 1; i >= 0; i--) {
+            const r = reportHistory[i];
+            if (r.playerId !== playerEntry.playerId) continue;
+            if (r.type !== 'result' && r.type !== 'blocker') continue;
+            const ageMs = nowMs - new Date(r.timestamp).getTime();
+            if (ageMs > STAGE_RECONCILE_WINDOW_MS) break; // stale — most recent is too old
+            playerEntry.status = r.type === 'result' ? 'reported' : 'blocked';
+            playerEntry.reportType = r.type;
+            playerEntry.reportText = r.text;
+            playerEntry.reportedAt = r.timestamp; // ORIGINAL receipt time
+            playerEntry.reconciled = true;
+            break; // only the most recent counts
+          }
+        }
+
+        // Apply the same transitions the live handler would have produced
+        // (deliberate faithful copy — the live handler stays untouched to
+        // keep this change's replay surface minimal).
+        const reconciledBlockers = entry.players.filter((p) => p.reconciled && p.status === 'blocked');
+        const now = workflowNow().toISOString();
+        if (entry.failurePolicy === 'halt' && reconciledBlockers.length > 0) {
+          entry.status = 'failed';
+          entry.completedAt = now;
+          messages.push({
+            id: uuid4(),
+            from: '_stage',
+            text: `[stage failed] "${entry.name}" halted — ${reconciledBlockers[0].playerId} reported blocker: ${reconciledBlockers[0].reportText ?? ''}`,
+            timestamp: now,
+            delivered: false,
+          });
+        } else if (entry.players.every((p) => p.status !== 'waiting')) {
+          const blocked = entry.players.filter((p) => p.status === 'blocked');
+          if (blocked.length > 0) {
+            entry.status = 'failed';
+            entry.completedAt = now;
+            const blockerNames = blocked.map((p) => p.playerId).join(', ');
+            messages.push({
+              id: uuid4(),
+              from: '_stage',
+              text: `[stage failed] "${entry.name}" completed with ${blocked.length} blocker(s): ${blockerNames}`,
+              timestamp: now,
+              delivered: false,
+            });
+          } else {
+            entry.status = 'complete';
+            entry.completedAt = now;
+            messages.push({
+              id: uuid4(),
+              from: '_stage',
+              text: `[stage complete] "${entry.name}" — all ${entry.players.length} players reported successfully.`,
+              timestamp: now,
+              delivered: false,
+            });
+          }
+        }
+      }
+
       const existing = stages.findIndex((s) => s.name === name);
       if (existing >= 0) {
         stages[existing] = entry;
