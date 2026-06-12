@@ -213,15 +213,19 @@ current evidence says banners sufficed → keep parked, revisit at 2.0 GA review
 
 ---
 
-## E. Operator decision points
+## E. Operator decision points — **ALL EIGHT RATIFIED (operator ruling, 2026-06-12)**
 
-| # | Decision | Recommendation | Alternative & its cost |
+> Relayed via conductor 2026-06-12. Each row's "Ruling" column is the operative decision;
+> alternatives are preserved for the record. E.8 carries the operator's standing objection
+> rights until 2.0-beta.1 ships it.
+
+| # | Decision | **Ruling (operator, 2026-06-12)** | Alternative considered & its cost |
 |---|---|---|---|
-| 1 | Migration protocol | **A2 clean cutover** (guarded; zero residue; clears ALL legacy tolerance at once; #334+lineups are the continuity story) | A1 deprecatePatch ladder: in-place upgrade preserved, but 2-release tax + live replay-compat matrix through 2.0 + per-debt drain stories |
-| 2 | 1.8.0 stable before 2.0 branch | **Yes** — carries the cutover verb + ships the unreleased pile to 1.x users | Cut 2.0 from the beta line directly: faster, but no cutover-verb home and 1.x users never get Tier 0/T1.1 in a stable |
-| 3 | Web dashboard fate | **Stays** (D3's recorded decision: zero-dep fallback; mission-control needs optional Pi + Node 22.19) | Delete with TUI: max simplification, one rendering stack — at the cost of no operator surface without the Pi dep |
-| 4 | Tool-merge alias window | **One beta with aliases, drop at GA** | No aliases (cleanest, most muscle-memory breakage) / keep through GA (registry-size win deferred) |
-| 5 | Env unification in beta.1 | **Yes** (breaking window is open; do all the renames at once) | Defer: drags dual-reads through 2.x |
-| 6 | B2 in 2.0 betas | **beta.2+, contingent on T1.1 PR-2/3 settled** | Defer to 2.x: safer, but loses the beta window where internal churn is free |
-| 7 | B4(a) pause-axis collapse in 2.0 | **No — keep parked** (B4c banners resolved the operational pain) | Fold in: one suspension axis, but adds a breaking surface with no incident pressure behind it |
-| 8 | Bare `agent-tempo` default after TUI deletion | **Bootstrap (six-step, unchanged) + `status` + next-step hints** — incl. a `command-center` suggestion when the Pi seat is available. Safe, informative, no side effects beyond provisioning | `up` (researcher's other suggestion): most helpful for the returning user, but bare-command-starts-an-ensemble is a surprising side effect for a first-run user; plain help: safest, least useful |
+| 1 | Migration protocol | **RATIFIED: A2 clean cutover** (guarded; zero residue; clears ALL legacy tolerance at once; #334+lineups are the continuity story) | A1 deprecatePatch ladder: in-place upgrade preserved, but 2-release tax + live replay-compat matrix through 2.0 + per-debt drain stories |
+| 2 | 1.8.0 stable before 2.0 branch | **RATIFIED: yes** — carries the cutover verb + ships the unreleased pile to 1.x users | Cut 2.0 from the beta line directly: faster, but no cutover-verb home and 1.x users never get Tier 0/T1.1 in a stable |
+| 3 | Web dashboard fate | **RATIFIED: stays** as the zero-dependency fallback — 2.0 operator surfaces are CLI + command-center + web dashboard; TUI dies per plan | Delete with TUI: max simplification, one rendering stack — at the cost of no operator surface without the Pi dep |
+| 4 | Tool-merge alias window | **RATIFIED: one beta with aliases, drop at GA** | No aliases (cleanest, most muscle-memory breakage) / keep through GA (registry-size win deferred) |
+| 5 | Env unification in beta.1 | **RATIFIED: yes** — all renames at once while the breaking window is open | Defer: drags dual-reads through 2.x |
+| 6 | B2 in 2.0 betas | **RATIFIED: beta.2+, contingent on T1.1 PR-2/3 settled** | Defer to 2.x: safer, but loses the beta window where internal churn is free |
+| 7 | B4(a) pause-axis collapse in 2.0 | **RATIFIED: no — keep parked** (B4c banners resolved the operational pain) | Fold in: one suspension axis, but adds a breaking surface with no incident pressure behind it |
+| 8 | Bare `agent-tempo` default after TUI deletion | **RATIFIED (with standing objection rights until 2.0-beta.1 ships it): bootstrap (six-step, unchanged) + `status` + next-step hints** — incl. a `command-center` suggestion when the Pi seat is available. Safe, informative, no side effects beyond provisioning | `up`: most helpful for the returning user, but bare-command-starts-an-ensemble is a surprising side effect on first run; plain help: safest, least useful |
