@@ -203,7 +203,7 @@ Signals sent **to** a `agentGlobalMaestroWorkflow` instance (`agent-maestro-glob
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
 | `maestroNotifyMessage` | `MaestroRelayMessage` | Push-notify the global Maestro of a relayed message. Used for push-based message notifications. |
-| `hostProfile` | `Record<string, unknown>` | **#274.** Daemon advertises its capability profile at boot: `hostname` (required), plus optional `version`, `defaultAgent`, `availableAgentTypes`, `availablePlayerTypes`, `claudeBin` (basename only), `platform`, `capabilities`. Open schema — additive fields beyond the documented set are stored opaquely so older maestros survive newer daemons. Handler validates only `hostname` (PLAYER_NAME_REGEX, ≤64 chars). Full typed shape: see `HostProfile` below. |
+| `hostProfile` | `Record<string, unknown>` | **#274.** Daemon advertises its capability profile at boot: `hostname` (required), plus optional `version`, `defaultAgent`, `availableAgentTypes`, `availablePlayerTypes`, `claudeBin` (basename only), `platform`, `capabilities`, `httpDegraded` (#768). Open schema — additive fields beyond the documented set are stored opaquely so older maestros survive newer daemons. Handler validates only `hostname` (PLAYER_NAME_REGEX, ≤64 chars). Full typed shape: see `HostProfile` below. |
 
 ---
 
@@ -348,6 +348,7 @@ Advertised by daemons via the `hostProfile` signal. **Open schema** — consumer
 | `claudeBin` | `string?` | Basename only (e.g. `"claude"`). **Never** absolute — privacy scrub. |
 | `platform` | `NodeJS.Platform?` | Reported from `process.platform`. |
 | `capabilities` | `string[]?` | Free-form capability flags (future extension). |
+| `httpDegraded` | `boolean?` | **#768.** `true` while the daemon serves no HTTP because its port bind failed (Temporal workers stay up; the bind retries with capped backoff). Re-advertised on transitions only: `true` entering the degraded state, `false` on bind recovery. Absent on healthy boots and pre-#768 daemons — consumers MUST treat absent as "not known degraded", not "healthy". |
 | `daemonStartedAt` | `number?` | Daemon process start time (epoch ms, captured at module load). Resets on every daemon restart; semantics are **daemon-process uptime**, not host-first-seen. Issue #399 Q5.3b. |
 | `adapterVersions` | `Record<string, string>?` | Adapter name → upstream tool version (e.g. `{ "claude-code": "1.2.4", "copilot": "0.5.2" }`). Probed once at daemon boot in parallel with the global-maestro ensure; adapters whose probe fails or output can't be parsed are omitted. Issue #399 Q5.4. |
 | `[extraField]` | `unknown` | Additive open-schema escape hatch for forward compatibility. |

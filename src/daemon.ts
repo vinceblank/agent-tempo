@@ -470,6 +470,9 @@ export function scrubHostProfile(raw: HostProfile): HostProfile {
   };
   if (raw.daemonStartedAt !== undefined) out.daemonStartedAt = raw.daemonStartedAt;
   if (raw.adapterVersions !== undefined) out.adapterVersions = raw.adapterVersions;
+  // #768 — boolean, no path/env data; pass through when present (true OR
+  // false — an explicit `false` clears a consumer's earlier `true`).
+  if (raw.httpDegraded !== undefined) out.httpDegraded = raw.httpDegraded;
   return out;
 }
 
@@ -521,6 +524,96 @@ export async function advertiseHostProfile(
     lastError instanceof Error ? lastError.message : lastError,
   );
   return { ok: false, attempts: backoffs.length, lastError };
+}
+
+// ── #768 — HTTP bind failure: retry-with-beacon ──────────────────────────
+//
+// The daemon-side half of the #758 ghost incident class: when the HTTP
+// listener cannot bind its port at boot, the daemon used to log ONE
+// non-fatal line and keep polling Temporal forever with no HTTP —
+// invisible unless you read the boot log. Posture (operator-ratified on
+// #768): Temporal workers stay up (they are the durable concern and work
+// fine), the bind retries INDEFINITELY with capped backoff (the squatter
+// is often a draining prior daemon; the retry converges the moment it
+// dies), and the degraded state is made impossible to miss via three
+// beacons: the #758/#769 `daemon status` port-divergence warning
+// (shipped), the rate-limited WARNING breadcrumb below, and the additive
+// `httpDegraded` hostProfile flag (cluster-wide via `hosts`).
+//
+// Interaction with `daemon start`'s #758 pre-flight (assertDaemonPortFree):
+// no deadlock and no double-spawn amplification is possible — a failed
+// bind acquires NOTHING, so this loop never holds the port the pre-flight
+// probes; and a competing daemon that binds first simply keeps winning
+// (bind failure cannot steal a bound port), leaving this daemon beaconing
+// until an operator stops one of them.
+
+/** Capped exponential backoff for HTTP bind retries: 1s, 2s, 4s, … capped at 30s. */
+export function httpBindRetryDelayMs(retry: number, baseMs = 1_000, capMs = 30_000): number {
+  return Math.min(capMs, baseMs * 2 ** Math.min(retry, 31));
+}
+
+/** Beacon cadence — after the first retry failure, warn at most once per 5 minutes. */
+export const HTTP_BIND_BEACON_INTERVAL_MS = 300_000;
+
+/** Deps for {@link runHttpBindRetryLoop} — injected so the loop is unit-testable. */
+export interface HttpBindRetryDeps {
+  /** One bind attempt. Resolves on success (caller wires the handle); throws on failure. */
+  attemptStart: () => Promise<void>;
+  /** Checked before every sleep and attempt — flipping it ends the loop. */
+  isShuttingDown: () => boolean;
+  /** Fired once, before the first retry — advertise `httpDegraded: true`. */
+  onDegraded?: () => void;
+  /** Fired once on eventual success — advertise `httpDegraded: false`. */
+  onRecovered?: (retries: number) => void;
+  log?: (...args: unknown[]) => void;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  beaconIntervalMs?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+/**
+ * #768 — indefinite capped-backoff HTTP bind retry. Called AFTER the
+ * inline boot attempt failed; runs detached (never blocks the worker run
+ * loop). Returns `'recovered'` when a retry binds, `'shutdown'` when the
+ * daemon began draining first.
+ *
+ * Beacon rate-limiting: the first retry failure always logs; subsequent
+ * failures log at most once per {@link HTTP_BIND_BEACON_INTERVAL_MS} so a
+ * long-lived squatter produces a greppable heartbeat, not log spam
+ * (steady-state retry cadence is 30s; unlimited logging would be ~2.9k
+ * lines/day).
+ */
+export async function runHttpBindRetryLoop(
+  deps: HttpBindRetryDeps,
+): Promise<'recovered' | 'shutdown'> {
+  const logFn = deps.log ?? log;
+  const sleepFn = deps.sleep ?? sleep;
+  const now = deps.now ?? Date.now;
+  const beaconMs = deps.beaconIntervalMs ?? HTTP_BIND_BEACON_INTERVAL_MS;
+  deps.onDegraded?.();
+  let lastBeaconAt = -Infinity;
+  for (let retry = 0; ; retry++) {
+    if (deps.isShuttingDown()) return 'shutdown';
+    await sleepFn(httpBindRetryDelayMs(retry, deps.baseDelayMs, deps.maxDelayMs));
+    if (deps.isShuttingDown()) return 'shutdown';
+    try {
+      await deps.attemptStart();
+      logFn(`HTTP recovered after ${retry + 1} bind ${retry === 0 ? 'retry' : 'retries'} (#768)`);
+      deps.onRecovered?.(retry + 1);
+      return 'recovered';
+    } catch (err) {
+      if (now() - lastBeaconAt >= beaconMs) {
+        lastBeaconAt = now();
+        logFn(
+          `WARNING: serving no HTTP — bind retry ${retry + 1} failed ` +
+          `(${err instanceof Error ? err.message : String(err)}); Temporal workers remain up; ` +
+          `retrying every ≤${Math.round((deps.maxDelayMs ?? 30_000) / 1000)}s (#768)`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -1085,7 +1178,14 @@ async function main() {
   // load-bearing — see M11 / AC5a — so the outer `.catch` only
   // handles unexpected throws (both ensure and signal paths log +
   // return gracefully on their own).
-  (async () => {
+  // #768 — the HTTP-degraded transition advertiser (wired in the HTTP block
+  // below) reuses the boot-advertised profile (preserving adapterVersions
+  // etc.) and serializes BEHIND the boot advertise, so a late-landing boot
+  // signal can never clobber a transition flag. `lastSentProfile` is
+  // captured via the sendHostProfileSignal seam; `bootAdvertise` resolves
+  // (never rejects) when the boot sequence settles.
+  const lastSentProfile: { current: HostProfile | null } = { current: null };
+  const bootAdvertise: Promise<Client | null> = (async () => {
     try {
       const bootConnection = await createTemporalConnection(config);
       const bootClient = new Client({
@@ -1095,7 +1195,10 @@ async function main() {
       });
       await runDaemonBoot(bootClient, {
         ensureGlobalMaestro: () => ensureGlobalMaestro(config),
-        sendHostProfileSignal: realSendHostProfileSignal,
+        sendHostProfileSignal: async (c, p) => {
+          lastSentProfile.current = p; // #768 — snapshot for transition re-sends
+          await realSendHostProfileSignal(c, p);
+        },
         computeHostProfile: () => computeHostProfile(config),
         // Issue #399 Q5.4 — probe upstream tool versions in parallel
         // with the global-maestro ensure. Production uses real spawns
@@ -1103,8 +1206,10 @@ async function main() {
         // `DaemonBootDeps.probeAdapterVersions`.
         probeAdapterVersions: () => probeAdapterVersions(),
       });
+      return bootClient;
     } catch (err) {
       log('runDaemonBoot background error:', err);
+      return null;
     }
   })();
 
@@ -1182,19 +1287,75 @@ async function main() {
         `demand-gate ${config.costProfile === 'cloud' ? 'armed' : 'off'}, ` +
         `confirm-on-change ${config.costProfile === 'cloud' ? 'armed' : 'off'}`,
       );
-      httpServerHandle = await startHttpServer({
-        client: httpClient,
-        namespace: config.temporalNamespace,
-        taskQueue: config.taskQueue,
-        version: daemonVersion(),
-        aggregate: aggregateRunner,
-        // 3c Tier-2 — same singletons the worker's outbox activities use, so
-        // the operator /inner SSE reads the registry the publisher POSTs into
-        // and /inner/ingest validates against the tokens the spawn path minted.
-        innerLoop,
-        ingestTokens,
+      // #768 — the bind is re-invokable: the retry loop below re-attempts
+      // JUST the listener. Everything above (TempoClient, AggregateRunner,
+      // presence wiring) is bind-independent and constructed exactly once.
+      const startHttp = async (): Promise<void> => {
+        const handle = await startHttpServer({
+          client: httpClient,
+          namespace: config.temporalNamespace,
+          taskQueue: config.taskQueue,
+          version: daemonVersion(),
+          aggregate: runner,
+          // 3c Tier-2 — same singletons the worker's outbox activities use, so
+          // the operator /inner SSE reads the registry the publisher POSTs into
+          // and /inner/ingest validates against the tokens the spawn path minted.
+          innerLoop,
+          ingestTokens,
+        });
+        httpServerHandle = handle;
+        log(`HTTP listening on http://${handle.bindAddr}:${handle.port}`);
+        // A successful LATE bind can race the shutdown handler (which saw a
+        // null handle) — close the recovered listener immediately so it
+        // doesn't outlive the drain.
+        if (shuttingDown) void handle.close().catch(() => { /* draining anyway */ });
+      };
+      // #768 — transition advertiser: serialized behind the boot advertise
+      // (a late boot signal must not clobber the flag) and behind prior
+      // transitions; reuses the boot-advertised profile so adapterVersions
+      // etc. survive the re-send. Fires on TRANSITIONS only (degraded /
+      // recovered) — zero extra signals on healthy boots.
+      const transitionClient = reconcileClient;
+      // Stable fallback client — captured once when the boot sequence
+      // settles; the chain below only serializes, it never threads values.
+      let bootClientRef: Client | null = null;
+      let advertiseChain: Promise<void> = bootAdvertise.then((bc) => {
+        bootClientRef = bc;
       });
-      log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
+      const advertiseHttpDegraded = (degraded: boolean): void => {
+        advertiseChain = advertiseChain
+          .then(async () => {
+            const base =
+              lastSentProfile.current ?? scrubHostProfile(computeHostProfile(config));
+            const profile: HostProfile = { ...base, httpDegraded: degraded };
+            lastSentProfile.current = profile;
+            await advertiseHostProfile(bootClientRef ?? transitionClient, profile, {});
+          })
+          .catch((err) => {
+            log(
+              'httpDegraded advertise failed (non-fatal):',
+              err instanceof Error ? err.message : String(err),
+            );
+          });
+      };
+      try {
+        await startHttp();
+      } catch (bindErr) {
+        log(
+          'http bind failed — entering indefinite capped-backoff bind-retry; ' +
+          'Temporal workers stay up (#768):',
+          bindErr instanceof Error ? bindErr.message : String(bindErr),
+        );
+        // Detached — the worker run loop below must not wait on this.
+        void runHttpBindRetryLoop({
+          attemptStart: startHttp,
+          isShuttingDown: () => shuttingDown,
+          onDegraded: () => advertiseHttpDegraded(true),
+          onRecovered: () => advertiseHttpDegraded(false),
+        }).catch((err) =>
+          log('bind-retry loop error (non-fatal):', err instanceof Error ? err.message : String(err)),
+        );
+      }
       log(`Aggregate poll loop running (bootEpoch=${bootEpoch})`);
     } catch (err) {
       log('http server init failed (non-fatal):', err instanceof Error ? err.message : String(err));
