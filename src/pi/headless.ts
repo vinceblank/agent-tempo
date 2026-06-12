@@ -88,8 +88,20 @@ async function resolveModel(modelStr: string | undefined): Promise<{ model?: unk
       const AuthStorage = piSdk.AuthStorage as { create(): unknown };
       const custom = ModelRegistry.create(AuthStorage.create()).find(provider, modelName);
       if (custom !== undefined && custom !== null) return { model: custom };
-    } catch {
-      // ModelRegistry unavailable — fall through to the fatal below.
+    } catch (registryErr) {
+      // DELIBERATE swallow: a registry failure (unreadable/malformed
+      // ~/.pi/agent/models.json, AuthStorage init error, SDK export-shape
+      // drift) must surface the same way as a plain model-not-found — both
+      // fall through to the single actionable fatal below, preserving the
+      // fail-clean-before-attach invariant (one clear exit, never a
+      // half-configured attach). The fatal blames the model id, so leave a
+      // breadcrumb naming the REAL failure for the operator whose id is
+      // actually correct:
+      log(
+        `models.json registry probe failed while resolving "${modelStr}" — ` +
+        `falling through to model-not-found: ` +
+        (registryErr instanceof Error ? registryErr.message : String(registryErr)),
+      );
     }
 
     return {
