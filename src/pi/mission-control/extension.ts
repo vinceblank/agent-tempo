@@ -23,6 +23,7 @@ import {
   initBoard,
   applyTempoEvent,
   applyInnerFrame,
+  rebindBoard,
   selectPlayer,
   sortedPlayerIds,
   tailability,
@@ -159,6 +160,13 @@ export class Controller {
   readonly localHost: string;
   /** Set by the extension so /tail can (re)open the fine SSE; null in unit tests. */
   onTailRequest: ((playerId: string | null) => void) | null = null;
+  /**
+   * #790 — set by the extension so `/ensemble <name>` can tear down the old
+   * ensemble's coarse SSE + tail and re-open on the new one. Fired AFTER the
+   * model + actions are re-keyed (same hook pattern as {@link onTailRequest});
+   * null in unit tests.
+   */
+  onRebind: ((ensemble: string) => void) | null = null;
   /** Infra bootstrap fn (#700 P1); injectable for tests. */
   private readonly ensureInfraFn: EnsureInfraFn;
 
@@ -192,6 +200,98 @@ export class Controller {
   async cmdPlayers(ctx: McExtensionContext): Promise<void> {
     const ids = sortedPlayerIds(this.model);
     this.notify(ctx, ids.length ? `Players (${ids.length}): ${ids.join(', ')}` : 'No players in the ensemble.');
+  }
+
+  // ── Multi-ensemble home (#790) ──
+
+  /**
+   * One-line ensembles listing — `▶` marks the board's current binding. Shared
+   * by the `/ensembles` command and the `list_ensembles` planner tool. Returns
+   * the text (the tool needs it) or the failure.
+   */
+  async ensemblesText(): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.listEnsembles();
+    if (!r.ok) return r;
+    if (r.ensembles.length === 0) {
+      return { ok: true, text: 'No ensembles found. Create one with /ensemble-up <name>.' };
+    }
+    const line = r.ensembles
+      .map((e) => {
+        const mark = e.name === this.model.ensemble ? '▶ ' : '';
+        const state = e.state ? `, ${e.state}` : '';
+        return `${mark}${e.name} (${e.playerCount} player${e.playerCount === 1 ? '' : 's'}${state})`;
+      })
+      .join(' · ');
+    return { ok: true, text: `Ensembles (${r.ensembles.length}): ${line}` };
+  }
+
+  async cmdEnsembles(ctx: McExtensionContext): Promise<void> {
+    const r = await this.ensemblesText();
+    this.notify(ctx, r.ok ? r.text : `ensembles failed: ${r.error}`);
+  }
+
+  /**
+   * Shared bind-validation (the `/ensemble` command renders the failure; the
+   * `bind_ensemble` planner tool throws it). `unknown` carries the known list
+   * so both surfaces can show it. Visibility-backed (#673) — the command's
+   * `--force` skips this entirely for the lag window.
+   */
+  async validateEnsemble(
+    name: string,
+  ): Promise<{ ok: true } | { ok: false; reason: 'unverifiable' | 'unknown'; detail: string }> {
+    const r = await this.actions.listEnsembles();
+    if (!r.ok) return { ok: false, reason: 'unverifiable', detail: r.error };
+    if (!r.ensembles.some((e) => e.name === name)) {
+      return {
+        ok: false,
+        reason: 'unknown',
+        detail: r.ensembles.map((e) => e.name).join(', ') || 'none',
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * #790 — re-bind the board to another ensemble: re-keys the model + actions,
+   * then fires {@link onRebind} so the extension tears down the old coarse
+   * SSE/tail and re-opens on the new one. Validates against the daemon's
+   * ensemble list first; `--force` skips validation for the #673 visibility-lag
+   * window (a just-created ensemble may not be indexed for a few seconds — the
+   * SSE route itself falls back to a strongly-consistent existence check).
+   */
+  async cmdEnsemble(args: string, ctx: McExtensionContext): Promise<void> {
+    const tokens = args.trim().split(/\s+/).filter(Boolean);
+    const force = tokens.includes('--force');
+    const name = tokens.find((t) => !t.startsWith('--'));
+    if (!name) {
+      this.notify(ctx, `Bound to "${this.model.ensemble}". Usage: /ensemble <name> [--force] — switch the board (see /ensembles).`);
+      return;
+    }
+    if (name === this.model.ensemble) {
+      this.notify(ctx, `Already bound to "${name}".`);
+      return;
+    }
+    if (!force) {
+      const v = await this.validateEnsemble(name);
+      if (!v.ok) {
+        this.notify(
+          ctx,
+          v.reason === 'unverifiable'
+            ? `Cannot verify ensemble "${name}" (${v.detail}). Re-run with --force to bind anyway.`
+            : `No such ensemble: "${name}" (known: ${v.detail}). Create it with /ensemble-up ${name}, or --force if it was created seconds ago (#673 visibility lag).`,
+        );
+        return;
+      }
+    }
+    this.rebind(name);
+    this.notify(ctx, `Re-bound to "${name}" — board will repopulate from its snapshot.`);
+  }
+
+  /** Re-key actions + model and fire the extension's SSE-rebind hook. */
+  rebind(ensemble: string): void {
+    this.actions.setEnsemble(ensemble);
+    rebindBoard(this.model, ensemble);
+    this.onRebind?.(ensemble);
   }
 
   async cmdTail(args: string, ctx: McExtensionContext): Promise<void> {
@@ -467,6 +567,42 @@ export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void
     parameters: zodShapeToTypeBox({}, 'observe_board'),
     execute: () => ok(renderBoard(ctrl.model, ctrl.localHost).join('\n')),
   });
+
+  // #790 — multi-ensemble home for the planner half: see every ensemble, and
+  // re-bind the board (the SAME re-bind path as the operator's /ensemble — the
+  // SSE plane follows via Controller.onRebind).
+  pi.registerTool({
+    name: 'list_ensembles', label: 'list_ensembles',
+    description: 'List all ensembles on this daemon (name, player count, online/paused/offline). The ▶ marker is the one this board is bound to.',
+    parameters: zodShapeToTypeBox({}, 'list_ensembles'),
+    execute: async () => {
+      const r = await ctrl.ensemblesText();
+      if (!r.ok) throw new Error(`list_ensembles failed: ${r.error}`);
+      return ok(r.text);
+    },
+  });
+
+  pi.registerTool({
+    name: 'bind_ensemble', label: 'bind_ensemble',
+    description: 'Re-bind this board (and all your ensemble-scoped tools: cue, recruit, observe_board, ask, handoff) to another ensemble. The board repopulates from the new ensemble\'s snapshot.',
+    parameters: zodShapeToTypeBox({
+      name: z.string().describe('Ensemble name to bind to (see list_ensembles).'),
+    }, 'bind_ensemble'),
+    execute: async (_id, params) => {
+      const { name } = params as { name: string };
+      if (name === ctrl.model.ensemble) return ok(`Already bound to "${name}".`);
+      const v = await ctrl.validateEnsemble(name);
+      if (!v.ok) {
+        throw new Error(
+          v.reason === 'unverifiable'
+            ? `bind_ensemble: cannot verify "${name}": ${v.detail}`
+            : `bind_ensemble: no such ensemble "${name}" (known: ${v.detail})`,
+        );
+      }
+      ctrl.rebind(name);
+      return ok(`Re-bound to "${name}". The board repopulates from its snapshot; observe_board reflects the new ensemble.`);
+    },
+  });
 }
 
 function resolveBaseUrl(override: string | undefined): string {
@@ -526,6 +662,10 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     let renderTimer: ReturnType<typeof setInterval> | null = null;
     let lastRenderedRevision = -1;
     let activeCtx: McExtensionContext | null = null;
+    // #790 — the CURRENT ensemble binding lives on `ctrl.model.ensemble`
+    // (re-keyed by Controller.rebind BEFORE onRebind fires), so the SSE
+    // closures below read it at (re)open time instead of capturing the
+    // session-start `ensemble` const — no second variable to keep in sync.
 
     const renderNow = (): void => {
       if (!activeCtx?.hasUI) return;
@@ -554,7 +694,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       });
       void (async () => {
         try {
-          for await (const ev of subscribe(ensemble, { signal: ac.signal })) {
+          for await (const ev of subscribe(ctrl.model.ensemble, { signal: ac.signal })) {
             // #700 P2 — an `answer` event isn't a board event; it WAKES the
             // planner (its only inbound channel is this SSE stream). Inject via
             // pi.sendMessage(triggerTurn) — feature-detected (a fake/older Pi
@@ -589,7 +729,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
         | undefined;
       if (!fetchFn) return;
       void openInnerTail({
-        baseUrl, adminToken, ensemble, playerId,
+        baseUrl, adminToken, ensemble: ctrl.model.ensemble, playerId,
         signal: tailAbort.signal,
         fetchFn: fetchFn as Parameters<typeof openInnerTail>[0]['fetchFn'],
         onFrame: (f) => applyInnerFrame(ctrl.model, f),
@@ -597,6 +737,17 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       });
     };
     ctrl.onTailRequest = openTail;
+
+    // #790 — `/ensemble <name>` re-bind: the model + actions were already
+    // re-keyed by Controller.rebind; this hook swaps the SSE plane — abort the
+    // old ensemble's coarse stream + any fine tail, then re-open the coarse
+    // stream on the new ensemble (its snapshot event repopulates the board).
+    ctrl.onRebind = (): void => {
+      coarseAbort?.abort(); coarseAbort = null;
+      tailAbort?.abort(); tailAbort = null;
+      startCoarse(); // reads the already-re-keyed ctrl.model.ensemble
+      renderNow(); // show the re-keyed (empty) board immediately, not at the next throttle tick
+    };
 
     const teardown = (): void => {
       coarseAbort?.abort(); coarseAbort = null;
@@ -618,6 +769,9 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
 
     // Operator commands (display-only widget → slash-commands drive everything).
     pi.registerCommand('players', { description: 'List ensemble players', handler: (_a, ctx) => ctrl.cmdPlayers(ctx) });
+    // #790 — multi-ensemble home: list + re-bind.
+    pi.registerCommand('ensembles', { description: 'List all ensembles (▶ marks the bound one)', handler: (_a, ctx) => ctrl.cmdEnsembles(ctx) });
+    pi.registerCommand('ensemble', { description: 'Switch the board to another ensemble (/ensemble <name> [--force])', handler: (a, ctx) => ctrl.cmdEnsemble(a, ctx) });
     pi.registerCommand('tail', { description: 'Tail a player\'s inner loop (/tail <player> | off)', handler: (a, ctx) => ctrl.cmdTail(a, ctx) });
     pi.registerCommand('cue', { description: 'Send a message to a player (/cue <player> <msg>)', handler: (a, ctx) => ctrl.cmdCue(a, ctx) });
     pi.registerCommand('pause', { description: 'Pause the ensemble', handler: (a, ctx) => ctrl.cmdPause(a, ctx) });
