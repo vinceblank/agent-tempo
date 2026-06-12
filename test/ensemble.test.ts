@@ -21,6 +21,7 @@ import {
   allMessagesQuery,
   waitForEnsembleMembers,
   pollWithTimeout,
+  TASK_QUEUE,
 } from './helpers';
 import {
   addScheduleSignal,
@@ -32,7 +33,6 @@ import { listLineups } from '../src/ensemble/saver';
 
 /** Per-file ensemble namespace — seeded in `before()` (see #210). */
 let ENSEMBLE: string;
-const SCHEDULER_TASK_QUEUE = 'test-agent-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
   return `agent-scheduler-${ensemble}`;
@@ -314,7 +314,8 @@ players:
         // Start scheduler and add a schedule targeting "all" that fires soon
         const schedulerHandle = await getClient().workflow.start('agentSchedulerWorkflow', {
           workflowId: schedulerWorkflowId(fanoutEnsemble),
-          taskQueue: SCHEDULER_TASK_QUEUE,
+          // #721 — live binding: the queue minted by the enclosing withWorker* call.
+          taskQueue: TASK_QUEUE,
           args: [{ ensemble: fanoutEnsemble, entries: [] }],
         });
 
