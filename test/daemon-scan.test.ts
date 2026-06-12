@@ -7,7 +7,13 @@
  * identically on all CI matrix entries regardless of platform.
  */
 import { expect } from 'chai';
-import { scanAgentTempoDaemons, selectOrphans, type DaemonProcessInfo } from '../src/cli/daemon';
+import {
+  scanAgentTempoDaemons,
+  selectOrphans,
+  parseDaemonEntryScript,
+  isPathVerifiedDaemonScript,
+  type DaemonProcessInfo,
+} from '../src/cli/daemon';
 
 describe('scanAgentTempoDaemons', function () {
   describe('POSIX (ps) scanner', function () {
@@ -138,10 +144,104 @@ describe('scanAgentTempoDaemons', function () {
   });
 });
 
+// ── #771 — structural matcher + install-signature trust tiers ──
+describe('#771 structural daemon-entry matcher', function () {
+  describe('parseDaemonEntryScript', function () {
+    it('REPRO #771: matches the local-repo Windows command line the old regex missed', function () {
+      const script = parseDaemonEntryScript(
+        '"C:\\Program Files\\nodejs\\node.exe" C:\\repos\\claude-tempo\\dist\\daemon.js',
+      );
+      expect(script).to.equal('C:\\repos\\claude-tempo\\dist\\daemon.js');
+    });
+
+    it('matches an arbitrary repo path (no package-name marker required)', function () {
+      expect(parseDaemonEntryScript('node /code/my-fork/dist/daemon.js')).to.equal(
+        '/code/my-fork/dist/daemon.js',
+      );
+    });
+
+    it('matches a relative entry path and skips node flags', function () {
+      expect(parseDaemonEntryScript('node dist\\daemon.js')).to.equal('dist\\daemon.js');
+      expect(parseDaemonEntryScript('node --inspect /repo/dist/daemon.js')).to.equal(
+        '/repo/dist/daemon.js',
+      );
+    });
+
+    it('QA false-positive (#769 review): rejects a viewer whose ARGUMENT is a daemon path', function () {
+      // First non-flag script is log-viewer.js — the daemon path is just data.
+      expect(
+        parseDaemonEntryScript('node /tools/log-viewer.js /x/agent-tempo/dist/daemon.js'),
+      ).to.equal(null);
+    });
+
+    it('QA false-positive: rejects a non-node executable even with node + the path in its argv', function () {
+      expect(
+        parseDaemonEntryScript('grep node.*agent-tempo/dist/daemon.js /var/log/daemon.log'),
+      ).to.equal(null);
+    });
+
+    it('rejects daemon.js outside a dist directory, and other dist scripts', function () {
+      expect(parseDaemonEntryScript('node /opt/unrelated/daemon.js')).to.equal(null);
+      expect(parseDaemonEntryScript('node /repo/dist/cli.js daemon stop')).to.equal(null);
+    });
+  });
+
+  describe('isPathVerifiedDaemonScript', function () {
+    it('verifies agent-tempo and pre-rebrand claude-tempo package/repo paths', function () {
+      expect(isPathVerifiedDaemonScript('/usr/lib/node_modules/agent-tempo/dist/daemon.js')).to.equal(true);
+      expect(isPathVerifiedDaemonScript('C:\\repos\\claude-tempo\\dist\\daemon.js')).to.equal(true);
+    });
+
+    it('verifies THIS install\'s own entry path, slash- and case-insensitively', function () {
+      expect(
+        isPathVerifiedDaemonScript('c:/code/MY-FORK/dist/daemon.js', 'C:\\code\\my-fork\\dist\\daemon.js'),
+      ).to.equal(true);
+    });
+
+    it('does not verify a foreign repo path', function () {
+      expect(
+        isPathVerifiedDaemonScript('/code/other-project/dist/daemon.js', '/somewhere/else/dist/daemon.js'),
+      ).to.equal(false);
+    });
+  });
+
+  describe('scanner pathVerified tiering', function () {
+    it('POSIX: a foreign-path daemon is matched but NOT pathVerified; install-entry match IS', function () {
+      const stub = () =>
+        'PID COMMAND\n' +
+        '11111 node /code/other-project/dist/daemon.js\n' +
+        '22222 node /home/dev/my-fork/dist/daemon.js\n';
+      const result = scanAgentTempoDaemons(stub, 'linux', '/home/dev/my-fork/dist/daemon.js');
+      expect(result.map((p) => [p.pid, p.pathVerified])).to.deep.equal([
+        [11111, false],
+        [22222, true],
+      ]);
+    });
+
+    it('Windows: REPRO #771 — the incident CSV row is matched and verified (claude-tempo marker)', function () {
+      const stub = () =>
+        '"ProcessId","CommandLine"\r\n' +
+        '"9284","""C:\\Program Files\\nodejs\\node.exe"" C:\\repos\\claude-tempo\\dist\\daemon.js"\r\n';
+      const result = scanAgentTempoDaemons(stub, 'win32');
+      expect(result).to.have.length(1);
+      expect(result[0].pid).to.equal(9284);
+      expect(result[0].pathVerified).to.equal(true);
+    });
+
+    it('Windows: QA false-positive row (daemon path as a viewer argument) is rejected', function () {
+      const stub = () =>
+        '"ProcessId","CommandLine"\r\n' +
+        '"4242","""C:\\nodejs\\node.exe"" C:\\tools\\log-viewer.js C:\\x\\agent-tempo\\dist\\daemon.js"\r\n';
+      expect(scanAgentTempoDaemons(stub, 'win32')).to.deep.equal([]);
+    });
+  });
+});
+
 describe('selectOrphans (#157 PR B)', function () {
   const proc = (pid: number): DaemonProcessInfo => ({
     pid,
     commandLine: `node /path/agent-tempo/dist/daemon.js`,
+    pathVerified: true,
   });
 
   it('returns the full scanner result when no tracked pid is provided', function () {
