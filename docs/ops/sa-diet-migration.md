@@ -84,7 +84,12 @@ test server.
 ## T0.1 — the `costProfile` axis (#748)
 
 T0.1 (same release) adds `costProfile: 'local' | 'cloud'`
-(`AGENT_TEMPO_COST_PROFILE` env > `config.json` > default `'local'`):
+(`AGENT_TEMPO_COST_PROFILE` env > `config.json` > default `'local'`).
+Set it persistently with `agent-tempo config set costProfile cloud` (#765);
+verify what a running daemon actually resolved via the boot log line
+`aggregate: costProfile=<x>, demand-gate <armed|off>` in `daemon.log` —
+do not infer the profile from maestro inputs (those can come from a
+different process's environment):
 
 - **`local`** (default): byte-identical to pre-T0.1 behavior — 5s maestro
   refresh, legacy scan, no confirm-on-change. Right for dev servers where
