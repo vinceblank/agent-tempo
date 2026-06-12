@@ -408,6 +408,12 @@ export interface SessionInput {
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
+  /**
+   * #777 — override the stage-creation reconciliation staleness window
+   * (default 5 minutes). TEST KNOB: lets the staleness bound be exercised
+   * without 5-minute real-time waits; production callers never set it.
+   */
+  stageReconcileWindowMs?: number;
   /** Restored from continue-as-new: last inbound message with responseRequested=true */
   lastInboundRRTime?: number;
   /** Restored from continue-as-new: last outbound activity timestamp */
@@ -867,6 +873,15 @@ export interface StagePlayerStatus {
   reportType?: 'result' | 'blocker' | 'question' | 'update';
   reportText?: string;
   reportedAt?: string;
+  /**
+   * #777 — true when this status was applied by stage-creation
+   * reconciliation: the player's report arrived BEFORE the stage existed
+   * (buffered-signal drain order, or plain arrival order in a running
+   * workflow) and was counted at creation. `reportedAt` keeps the report's
+   * ORIGINAL receipt time so dashboards/post-mortems can distinguish
+   * reconciled-at-creation from reported-after. Absent otherwise.
+   */
+  reconciled?: boolean;
 }
 
 export interface StageEntry {
