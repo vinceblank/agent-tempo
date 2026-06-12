@@ -15,6 +15,7 @@ import {
   destroyUpdate,
   allMessagesQuery,
   withWorkerAndActivities,
+  TASK_QUEUE,
 } from './helpers';
 import {
   addScheduleSignal,
@@ -31,7 +32,6 @@ import { ScheduleEntry } from '../src/types';
  * workflow IDs don't collide with any other file under the shared env.
  */
 let ENSEMBLE: string;
-const SCHEDULER_TASK_QUEUE = 'test-agent-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
   return `agent-scheduler-${ensemble}`;
@@ -64,7 +64,9 @@ async function startScheduler(
 ): Promise<WorkflowHandle> {
   return client.workflow.start('agentSchedulerWorkflow', {
     workflowId: schedulerWorkflowId(ENSEMBLE),
-    taskQueue: SCHEDULER_TASK_QUEUE,
+    // #721 — live binding: resolves to the queue minted by the enclosing
+    // withWorker* call (startScheduler is only ever called inside one).
+    taskQueue: TASK_QUEUE,
     args: [{
       ensemble: ENSEMBLE,
       entries,

@@ -127,6 +127,31 @@ describe('spawnProcess — adapter routing switch (#131 PR-fixup)', () => {
     });
   });
 
+  it('agent: "pi" with model routes to spawnPiHeadless and forwards model', async () => {
+    // Same regression class: without model in the pi outbox entry, the
+    // model arg would be silently dropped and the player would fall back
+    // to AGENT_TEMPO_PI_MODEL / Pi default instead of the requested model.
+    const piSpy = vi.spyOn(spawnModule, 'spawnPiHeadless').mockReturnValue({ pid: 9999, logPath: '/tmp/pi.log', pidPath: '/tmp/pi.pid' });
+    const terminalSpy = vi.spyOn(spawnModule, 'spawnInTerminal').mockReturnValue({ pid: 8888 } as ReturnType<typeof spawnModule.spawnInTerminal>);
+    const claudeApiSpy = vi.spyOn(spawnModule, 'spawnClaudeApiAdapter').mockReturnValue({ pid: 0, logPath: '', pidPath: '' });
+    const copilotSpy = vi.spyOn(spawnModule, 'spawnCopilotBridge').mockReturnValue({ pid: 0, logPath: '', pidPath: '' });
+
+    const activities = createOutboxActivities(client, config);
+    const result = await activities.spawnProcess(spawnInput({ agent: 'pi', model: 'lmstudio/qwen/qwen3.6-27b' }));
+
+    expect(result.success).toBe(true);
+    expect(piSpy).toHaveBeenCalledTimes(1);
+    expect(terminalSpy).not.toHaveBeenCalled();
+    expect(claudeApiSpy).not.toHaveBeenCalled();
+    expect(copilotSpy).not.toHaveBeenCalled();
+    // Model must be forwarded so AGENT_TEMPO_PI_MODEL gets set on the subprocess.
+    expect(piSpy.mock.calls[0][0]).toMatchObject({
+      name: 'tempo-test',
+      ensemble: 'test-ensemble',
+      model: 'lmstudio/qwen/qwen3.6-27b',
+    });
+  });
+
   it('forwards attachmentId/runId/adapterId to spawnClaudeApiAdapter for restart handoff', async () => {
     // PR-D attachment renewal path — restart pre-claims and threads the
     // token through to the spawn so the adapter `startV2Lifecycle`s with
