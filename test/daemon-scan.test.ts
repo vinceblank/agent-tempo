@@ -184,6 +184,17 @@ describe('#771 structural daemon-entry matcher', function () {
       expect(parseDaemonEntryScript('node /opt/unrelated/daemon.js')).to.equal(null);
       expect(parseDaemonEntryScript('node /repo/dist/cli.js daemon stop')).to.equal(null);
     });
+
+    it('KNOWN LIMITATION (#775): unquoted POSIX paths with spaces are missed — fails safe to warn-only', function () {
+      // `ps` output carries no quoting; the spaced path tokenizes as two
+      // arguments and the first ("…/my") is not a daemon entry. The
+      // degradation is warn-not-kill, never a wrong kill. Pinned so a
+      // future tokenizer change that ALTERS this behavior is a conscious
+      // decision, not an accident.
+      expect(
+        parseDaemonEntryScript('node /Users/my name/repo/dist/daemon.js'),
+      ).to.equal(null);
+    });
   });
 
   describe('isPathVerifiedDaemonScript', function () {

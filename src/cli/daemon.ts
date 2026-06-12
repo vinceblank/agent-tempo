@@ -42,7 +42,15 @@ export const HEARTBEAT_INTERVAL_MS = 60_000;
  */
 export const HEARTBEAT_STALE_MULTIPLIER = 2;
 
-/** Entry point for the daemon process (compiled JS). */
+/**
+ * Entry point for the daemon process (compiled JS).
+ *
+ * ⚠ Packaging dependency (#771): the ghost-scanner's structural matcher
+ * ({@link parseDaemonEntryScript}) keys on the entry script being
+ * `dist/daemon.js`, and {@link isPathVerifiedDaemonScript} compares
+ * against this exact path. If the daemon entry ever moves or is renamed,
+ * the matcher breaks wholesale — update both together.
+ */
 const DAEMON_ENTRY_PATH = path.resolve(__dirname, '..', 'daemon.js');
 
 export interface DaemonStatus {
@@ -513,7 +521,17 @@ export function parseDaemonEntryScript(commandLine: string): string | null {
   return /(^|[\\/])dist[\\/]daemon\.js$/i.test(script) ? script : null;
 }
 
-/** Split a raw command line into tokens, treating `"…"` spans as atomic and stripping the quotes. */
+/**
+ * Split a raw command line into tokens, treating `"…"` spans as atomic and
+ * stripping the quotes.
+ *
+ * Known limitation (#775 review): POSIX `ps` output is UNQUOTED — a daemon
+ * path containing spaces (`/Users/my name/repo/dist/daemon.js`) tokenizes
+ * as multiple arguments, so the matcher misses it (pinned by test). This
+ * fails SAFE: a missed daemon degrades to the warn-only path, never a
+ * wrong kill. Windows is unaffected (Win32_Process command lines carry
+ * their original quoting).
+ */
 function tokenizeCommandLine(commandLine: string): string[] {
   const tokens: string[] = [];
   let cur = '';
@@ -759,13 +777,32 @@ function killDaemonPid(
 export function resolveDaemonPort(
   readPort: () => number | null = () => readPortFile(DAEMON_PORT_PATH),
 ): number {
+  return resolveDaemonPortInfo(readPort).port;
+}
+
+/**
+ * #775 hardening — where the resolved port came from. PROVENANCE gates the
+ * ghost sweep's structural-only kill (see {@link stopDaemon}):
+ *  - `file` — written by a daemon we own at bind time. Ground truth.
+ *  - `env` — pinned by the operator for this profile. Strong intent.
+ *  - `default` — just the profile fallback (8473/8474); a foreign
+ *    project's daemon could coincidentally squat it.
+ */
+export type DaemonPortSource = 'file' | 'env' | 'default';
+
+/** Provenance-aware variant of {@link resolveDaemonPort} — same resolution order. */
+export function resolveDaemonPortInfo(
+  readPort: () => number | null = () => readPortFile(DAEMON_PORT_PATH),
+): { port: number; source: DaemonPortSource } {
   const fromFile = readPort();
-  if (fromFile !== null) return fromFile;
+  if (fromFile !== null) return { port: fromFile, source: 'file' };
   if (!isDevMode()) {
     const fromEnv = Number(process.env[ENV.DAEMON_PORT]);
-    if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) return fromEnv;
+    if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) {
+      return { port: fromEnv, source: 'env' };
+    }
   }
-  return isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
+  return { port: isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT, source: 'default' };
 }
 
 /**
@@ -942,6 +979,13 @@ export interface StopDaemonOpts {
   getOtherProfilePid?: () => number | undefined;
   /** #758 — port resolver — defaults to {@link resolveDaemonPort}. */
   resolvePort?: () => number;
+  /**
+   * #775 — provenance-aware port resolver. Takes precedence over
+   * `resolvePort` when both are given. When only the legacy `resolvePort`
+   * seam is provided (existing tests), its result is treated as
+   * file-sourced — preserving pre-provenance sweep semantics.
+   */
+  resolvePortInfo?: () => { port: number; source: DaemonPortSource };
   /** #758 — port-owner probe — defaults to {@link findPortOwnerPid}. */
   findPortOwner?: (port: number) => number | null;
   /** #758 — forceful ghost terminator — defaults to {@link forceKillPid}. */
@@ -1044,7 +1088,17 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   // path — #771: port ownership is the verification here, so no install
   // signature is required) — an unrelated process squatting the port gets
   // a loud warning + the manual command instead.
-  const port = (opts.resolvePort ?? resolveDaemonPort)();
+  // #775 hardening — port PROVENANCE gates the structural-only kill below:
+  // a FILE-sourced port was written by a daemon we own; an env-sourced port
+  // was pinned by the operator for this profile. A DEFAULT-sourced port
+  // (no port file, no env) is just the profile fallback — a foreign
+  // project's daemon could coincidentally squat 8473, so that branch
+  // additionally requires the #771 install signature.
+  const portInfo = opts.resolvePortInfo?.()
+    ?? (opts.resolvePort
+      ? { port: opts.resolvePort(), source: 'file' as const } // legacy seam — pre-provenance semantics
+      : resolveDaemonPortInfo());
+  const port = portInfo.port;
   const owner = (opts.findPortOwner ?? findPortOwnerPid)(port);
   // Exclusion set: pids we already gracefully signalled (drain window) PLUS
   // the OTHER profile's tracked daemon (architect must-fix on #769 — if
@@ -1057,17 +1111,32 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
     ...(() => { const p = otherPidLookup(); return p !== undefined ? [p] : []; })(),
   ]);
   if (owner !== null && !excludedPids.has(owner)) {
-    let looksLikeDaemon = false;
+    let ownerMatch: DaemonProcessInfo | undefined;
     try {
-      looksLikeDaemon = (scanned ?? scan()).some((p) => p.pid === owner);
+      ownerMatch = (scanned ?? scan()).find((p) => p.pid === owner);
     } catch { /* scanner unavailable — treat as not-verified, warn below */ }
-    if (looksLikeDaemon) {
-      log(`ghost daemon (#758): port ${port} owned by untracked pid ${owner} — force-terminating`);
+    const killable =
+      ownerMatch !== undefined && (portInfo.source !== 'default' || ownerMatch.pathVerified);
+    if (killable) {
+      log(
+        `ghost daemon (#758): port ${port} (resolved from ${portInfo.source}) owned by ` +
+        `untracked pid ${owner} — force-terminating`,
+      );
       if ((opts.forceKiller ?? forceKillPid)(owner, platform)) {
         stopped = true;
       } else {
         log(`WARNING: failed to terminate ghost pid ${owner} — free port ${port} manually`);
       }
+    } else if (ownerMatch !== undefined) {
+      // #775 — structural match on a DEFAULT-sourced port without an
+      // install signature: plausibly a foreign project's daemon that
+      // happens to sit on our fallback port. Warn, never kill.
+      log(
+        `WARNING: daemon port ${port} (profile default — no port file) is owned by pid ${owner}, ` +
+        `which runs a dist/daemon.js entry but carries no agent-tempo install signature — ` +
+        `NOT killing it (#775). If it is yours, terminate it manually ` +
+        `(Windows: taskkill /T /F /PID ${owner} · POSIX: kill ${owner}).`,
+      );
     } else {
       log(
         `WARNING: daemon port ${port} is owned by pid ${owner}, which does not look like an ` +
