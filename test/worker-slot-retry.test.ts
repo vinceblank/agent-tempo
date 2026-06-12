@@ -102,7 +102,7 @@ describe('createWorkerWithSlotRetry — sticky failover default (#777)', () => {
       return sentinelWorker;
     };
     await createWorkerWithSlotRetry(
-      { stickyQueueScheduleToStartTimeout: '5s' } as Parameters<typeof Worker.create>[0],
+      { stickyQueueScheduleToStartTimeout: '5s' } as unknown as Parameters<typeof Worker.create>[0],
       { create },
     );
     expect(seen!.stickyQueueScheduleToStartTimeout).to.equal('5s');
