@@ -328,6 +328,7 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 |-------|------|-------------|
 | `name` | `string` | Unique name identifying this stage. |
 | `players` | `StagePlayerStatus[]` | Tracked players. Each has `playerId`, `status` (`'waiting'` \| `'reported'` \| `'blocked'`), and optional `reportType`, `reportText`, `reportedAt`. |
+| `players[].reconciled` | `boolean?` | #777: `true` when the player's status was applied by stage-creation reconciliation — their report arrived BEFORE the stage existed (buffered-signal drain order or plain arrival order) and was counted at creation; `reportedAt` keeps the report's original receipt time. Additive optional field — pre-#777 readers ignore it transparently (broadcastId precedent). |
 | `status` | `'active' \| 'complete' \| 'failed' \| 'cancelled'` | Aggregate status. `complete` when all players report results; `failed` when a blocker is received and `failurePolicy` is `'halt'`. |
 | `failurePolicy` | `'halt' \| 'continue'` | What happens when a player reports a blocker. `halt` fails the stage immediately; `continue` marks the player as blocked but keeps the stage active. |
 | `createdAt` | `string` | ISO timestamp of stage creation. |
