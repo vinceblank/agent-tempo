@@ -111,7 +111,11 @@ different process's environment):
   Note: when an observer connects to an idle cloud maestro, the cadence
   snap-back (60s → 20s) takes effect on the **next refresh completion** —
   the board can feel stale for up to ~60s after opening a dashboard.
-  Expected behavior, not a bug.
+  Expected behavior, not a bug. Similarly, the maestro's Q&A
+  answers-mailbox **physical sweep** runs on the same stretched tick, so
+  expired entries can linger in memory up to one refresh interval —
+  correctness is unaffected (TTL is enforced at read time) and memory is
+  bounded by the 20-slot cap.
 
 **⚠ Flipping `costProfile=cloud` does not move the bill until maestros
 restart.** Maestro workflows inherit their start-time input across
