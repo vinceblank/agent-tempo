@@ -25,6 +25,7 @@ import {
   STALE_LOCK_MS,
   tryAcquireLockFile,
   checkLockFileStale,
+  type DaemonProcessInfo,
 } from '../src/cli/daemon';
 import { writePidFileAtomic } from '../src/daemon';
 
@@ -170,7 +171,7 @@ describe('daemon management', function () {
     // otherwise tests fail on dev machines where the developer happens to
     // be running a prod daemon with a port file present.
     const noopOpts = {
-      scan: () => [] as Array<{ pid: number; commandLine: string }>,
+      scan: () => [] as DaemonProcessInfo[],
       killer: () => { /* no-op */ },
       isOtherProfileLikelyRunning: () => false,
       getOtherProfilePid: () => undefined,
@@ -220,8 +221,8 @@ describe('daemon management', function () {
       seedPidFile(DAEMON_PID_PATH, process.pid); // tracked = current process (alive)
       const killed: number[] = [];
       const scan = () => [
-        { pid: 99001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
-        { pid: 99002, commandLine: 'node /opt/agent-tempo/dist/daemon.js' },
+        { pid: 99001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js', pathVerified: true },
+        { pid: 99002, commandLine: 'node /opt/agent-tempo/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -238,7 +239,7 @@ describe('daemon management', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       const killed: number[] = [];
       const scan = () => [
-        { pid: 88001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
+        { pid: 88001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -255,8 +256,8 @@ describe('daemon management', function () {
       // showed up in the OS process listing). selectOrphans must drop it so
       // we don't double-signal.
       const scan = () => [
-        { pid: process.pid, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
-        { pid: 77001, commandLine: 'node /opt/agent-tempo/dist/daemon.js' },
+        { pid: process.pid, commandLine: 'node /tmp/agent-tempo/dist/daemon.js', pathVerified: true },
+        { pid: 77001, commandLine: 'node /opt/agent-tempo/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -274,7 +275,7 @@ describe('daemon management', function () {
 
     it('returns true when only zombies are killed (no tracked daemon)', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-      const scan = () => [{ pid: 66001, commandLine: 'node x/dist/daemon.js' }];
+      const scan = () => [{ pid: 66001, commandLine: 'node x/dist/daemon.js', pathVerified: true }];
       const killer = () => { /* succeeds */ };
       expect(stopDaemon({ scan, killer, ...singleProfileOverrides })).to.be.true;
     });
@@ -296,9 +297,9 @@ describe('daemon management', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       const killed: number[] = [];
       const scan = () => [
-        { pid: 55001, commandLine: 'node x/dist/daemon.js' },
-        { pid: 55002, commandLine: 'node y/dist/daemon.js' },
-        { pid: 55003, commandLine: 'node z/dist/daemon.js' },
+        { pid: 55001, commandLine: 'node x/dist/daemon.js', pathVerified: true },
+        { pid: 55002, commandLine: 'node y/dist/daemon.js', pathVerified: true },
+        { pid: 55003, commandLine: 'node z/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => {
         if (pid === 55002) throw new Error('ESRCH');
@@ -312,10 +313,28 @@ describe('daemon management', function () {
       expect(killed.sort()).to.deep.equal([55001, 55003]);
     });
 
+    it('leaves structural matches without an install signature alone (#771 trust tiers)', function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      const killed: number[] = [];
+      const scan = () => [
+        // Another project's daemon — matched structurally, but not verifiably
+        // ours. The reaper (kill-on-match-alone) must skip it; only the #758
+        // port sweep may kill such a process, after port-owner cross-verify.
+        { pid: 33001, commandLine: 'node /code/other-project/dist/daemon.js', pathVerified: false },
+        { pid: 33002, commandLine: 'node /opt/agent-tempo/dist/daemon.js', pathVerified: true },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      const result = stopDaemon({ scan, killer, ...singleProfileOverrides });
+
+      expect(result).to.be.true;
+      expect(killed).to.deep.equal([33002]);
+    });
+
     it('uses SIGTERM on POSIX, no signal on Windows', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       const calls: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
-      const scan = () => [{ pid: 44001, commandLine: 'node x/dist/daemon.js' }];
+      const scan = () => [{ pid: 44001, commandLine: 'node x/dist/daemon.js', pathVerified: true }];
       const killer = (pid: number, signal?: NodeJS.Signals | number) => {
         calls.push({ pid, signal });
       };
@@ -350,8 +369,8 @@ describe('daemon management', function () {
       seedPidFile(DAEMON_PID_PATH, process.pid);
       const killed: number[] = [];
       const scan = () => [
-        { pid: 12345, commandLine: 'node /opposite/dist/daemon.js' },
-        { pid: 67890, commandLine: 'node /actual-zombie/dist/daemon.js' },
+        { pid: 12345, commandLine: 'node /opposite/dist/daemon.js', pathVerified: true },
+        { pid: 67890, commandLine: 'node /actual-zombie/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -377,7 +396,7 @@ describe('daemon management', function () {
       // With weak evidence, we'd rather miss the zombie than risk killing
       // the opposite profile.
       const scan = () => [
-        { pid: 22222, commandLine: 'node /opposite-untracked/dist/daemon.js' },
+        { pid: 22222, commandLine: 'node /opposite-untracked/dist/daemon.js', pathVerified: true },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 

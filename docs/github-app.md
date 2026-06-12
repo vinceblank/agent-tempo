@@ -63,6 +63,18 @@ The wrapper exec's `gh` directly, so every flag and subcommand works. It also
 clears `GITHUB_TOKEN` in its own environment to prevent CI-inherited tokens
 from outranking the installation token.
 
+> **Windows / PowerShell — silent no-op trap** (tracked in #741): `ensemble-gh`
+> is a bash script. If you invoke it bare from PowerShell (`./scripts/ensemble-gh
+> ...`), PowerShell "runs" it as a native command with **zero output and zero
+> error** — the token is never minted and the `gh` call never fires. Always
+> invoke via `bash`:
+>
+> ```bash
+> bash ./scripts/ensemble-gh pr create --title "..." --body "..."
+> ```
+>
+> Grep marker for the silent-failure pattern: `ensemble-gh no-op PowerShell`.
+
 ### When to use `ensemble-gh` vs plain `gh`
 
 | Use `ensemble-gh` when… | Use plain `gh` when… |

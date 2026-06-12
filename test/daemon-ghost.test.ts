@@ -37,6 +37,7 @@ const PORT = 8473;
 const daemonProc = (pid: number): DaemonProcessInfo => ({
   pid,
   commandLine: 'C:\\Program Files\\nodejs\\node.exe C:\\repos\\agent-tempo\\dist\\daemon.js',
+  pathVerified: true,
 });
 
 /** Save/restore any real PID file so dev boxes aren't disturbed. */
@@ -117,6 +118,96 @@ describe('#758 stopDaemon — port-based ghost sweep', function () {
     });
     expect(forceKilled).to.deep.equal([]);
     expect(result).to.equal(false);
+  });
+
+  it('REPRO #771: an UNVERIFIED structural match owning the port IS swept (local-repo daemon)', function () {
+    // The #771 incident class: a daemon at a path without an install
+    // signature (e.g. an arbitrarily-named local checkout). The reaper must
+    // not touch it on match alone — but once it owns OUR profile-scoped
+    // port, the sweep's PID cross-verify makes it ours and it must die.
+    const forceKilled: number[] = [];
+    const result = stopDaemon({
+      scan: () => [
+        { pid: GHOST_PID, commandLine: 'node /code/my-fork/dist/daemon.js', pathVerified: false },
+      ],
+      killer: () => { throw new Error('graceful killer must not be reached — unverified matches are not reaped'); },
+      isOtherProfileLikelyRunning: () => false, // reaper active, but skips the unverified match
+      getOtherProfilePid: () => undefined,
+      resolvePort: () => PORT,
+      findPortOwner: () => GHOST_PID,
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(forceKilled).to.deep.equal([GHOST_PID]);
+    expect(result).to.equal(true);
+  });
+
+  it('#771: an unverified structural match NOT owning the port is left completely alone', function () {
+    const forceKilled: number[] = [];
+    const signalled: number[] = [];
+    const result = stopDaemon({
+      scan: () => [
+        { pid: GHOST_PID, commandLine: 'node /code/my-fork/dist/daemon.js', pathVerified: false },
+      ],
+      killer: (pid) => { signalled.push(Number(pid)); },
+      isOtherProfileLikelyRunning: () => false,
+      getOtherProfilePid: () => undefined,
+      resolvePort: () => PORT,
+      findPortOwner: () => null, // port free — no cross-verification possible
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(signalled).to.deep.equal([]);
+    expect(forceKilled).to.deep.equal([]);
+    expect(result).to.equal(false);
+  });
+
+  it('#775 provenance gate: DEFAULT-sourced port + unverified match → warned, NOT killed', function () {
+    // No port file, no env — the resolved port is just the profile
+    // fallback. A foreign project's daemon coincidentally squatting 8473
+    // must not die on structural match alone.
+    const forceKilled: number[] = [];
+    const result = stopDaemon({
+      scan: () => [
+        { pid: GHOST_PID, commandLine: 'node /code/my-fork/dist/daemon.js', pathVerified: false },
+      ],
+      killer: () => {},
+      isOtherProfileLikelyRunning: () => false,
+      getOtherProfilePid: () => undefined,
+      resolvePortInfo: () => ({ port: PORT, source: 'default' as const }),
+      findPortOwner: () => GHOST_PID,
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(forceKilled).to.deep.equal([]);
+    expect(result).to.equal(false);
+  });
+
+  it('#775 provenance gate: DEFAULT-sourced port + VERIFIED match → still swept', function () {
+    const forceKilled: number[] = [];
+    stopDaemon({
+      scan: () => [daemonProc(GHOST_PID)], // agent-tempo path → pathVerified
+      killer: () => {},
+      isOtherProfileLikelyRunning: () => true, // reaper suppressed — sweep is the only path
+      getOtherProfilePid: () => undefined,
+      resolvePortInfo: () => ({ port: PORT, source: 'default' as const }),
+      findPortOwner: () => GHOST_PID,
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(forceKilled).to.deep.equal([GHOST_PID]);
+  });
+
+  it('#775 provenance gate: FILE-sourced port + unverified match → swept (the #771 repro path)', function () {
+    const forceKilled: number[] = [];
+    stopDaemon({
+      scan: () => [
+        { pid: GHOST_PID, commandLine: 'node /code/my-fork/dist/daemon.js', pathVerified: false },
+      ],
+      killer: () => { throw new Error('unverified matches are not reaped'); },
+      isOtherProfileLikelyRunning: () => false,
+      getOtherProfilePid: () => undefined,
+      resolvePortInfo: () => ({ port: PORT, source: 'file' as const }),
+      findPortOwner: () => GHOST_PID,
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(forceKilled).to.deep.equal([GHOST_PID]);
   });
 
   it('a zombie found by the cmdline reaper is not double-killed by the port sweep', function () {

@@ -120,7 +120,7 @@ export function buildRecruitTool(
       agent: z.enum(AGENT_TYPES).optional()
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to agent-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools). "claude-code-headless" runs the official Claude Code CLI as a headless per-turn \`claude -p\` subprocess — requires the \`claude\` binary on PATH AND a logged-in Claude Code session (\`claude auth login\`); turns bill against the host's existing subscription extra-usage credits, NOT a Console API key. claude-code-headless players have full Claude Code tool access (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch).`),
       model: z.string().regex(/^[a-z0-9][a-z0-9-/.:_]*$/).optional()
-        .describe('Model id. For "claude-api": bare Anthropic id (e.g. "claude-opus-4-7"). For "opencode": combined "provider/model" (e.g. "anthropic/claude-opus-4-7", "openai/gpt-4o", "ollama/llama3"). Falls back to AGENT_TEMPO_API_MODEL (claude-api) or AGENT_TEMPO_OPENCODE_MODEL (opencode), then a constants-pinned default. Ignored for claude / copilot / mock adapters.'),
+        .describe('Model id. For "claude-api": bare Anthropic id (e.g. "claude-opus-4-7"). For "opencode": combined "provider/model" (e.g. "anthropic/claude-opus-4-7", "openai/gpt-4o", "ollama/llama3"). For "pi": combined "provider/model" (e.g. "lmstudio/qwen/qwen3.6-27b", "anthropic/claude-opus-4-5", "github-copilot/gpt-4o") — built-in and custom models.json providers both supported. Falls back to AGENT_TEMPO_PI_MODEL (pi), AGENT_TEMPO_API_MODEL (claude-api), or AGENT_TEMPO_OPENCODE_MODEL (opencode), then a constants-pinned default. Ignored for claude / copilot / mock adapters.'),
       type: z.string().optional()
         .describe('Agent type name — references a Claude Code agent definition (e.g., "tempo-soloist")'),
       systemPrompt: z.string().optional()
@@ -208,8 +208,8 @@ export function buildRecruitTool(
       // target daemon's `availableAgentTypes` advertisement (the existing
       // `checkHostPreflight` path), which already gates on whether the
       // remote daemon resolved the SDK at boot.
-      if (model != null && agent !== 'claude-api' && agent !== 'opencode') {
-        return fail(`model is only valid when agent: "claude-api" or agent: "opencode" (got agent: "${agent}").`);
+      if (model != null && agent !== 'claude-api' && agent !== 'opencode' && agent !== 'pi') {
+        return fail(`model is only valid when agent: "claude-api", "opencode", or "pi" (got agent: "${agent}").`);
       }
       // #520 — claude-code-headless permission knobs are mutually exclusive
       // and only meaningful for that adapter. Reject silently-ignored
@@ -446,7 +446,7 @@ export function buildRecruitTool(
           claudeBin: config.claudeBin,
           ...(agent === 'mock' ? { mockMode: mockMode ?? 'echo' } : {}),
           ...(agent === 'mock' && mockScenario ? { mockScenario } : {}),
-          ...(agent === 'claude-api' && model ? { model } : {}),
+          ...((agent === 'claude-api' || agent === 'pi') && model ? { model } : {}),
           // #520 — claude-code-headless permission knobs flow through the
           // outbox so PR-2's spawn helper picks them up via env. Fields
           // are only present on the entry when actually set; the
