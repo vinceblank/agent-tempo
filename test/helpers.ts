@@ -698,10 +698,40 @@ export interface CreateWorkerRetryOpts {
  * Resolves with the worker on first success. Rejects with the last attempt's
  * error if every attempt hits the overlap.
  */
+/**
+ * ── STANDING RULE (#777, architect-adopted): poll budgets vs bounded waits ──
+ *
+ * Any polling/retry budget in a test must STRICTLY dominate — rule of thumb
+ * ≥2× — the longest server-side timeout in the awaited path. Budget==timeout
+ * EQUALITY is a flake generator: the awaited task recovers at exactly the
+ * moment the assertion gives up. The #178→#181 lineage kept reintroducing
+ * this shape (5s→10s "to absorb CI latency" landed precisely ON the 10s
+ * sticky failover + workflowTaskTimeout defaults). Relevant bounds for test
+ * workers: sticky failover 1s (below), workflowTaskTimeout 10s (SDK default)
+ * — so transition-poll budgets should be ≥20s.
+ */
+
+/**
+ * #777 — test-wide sticky-queue failover bound. The SDK default is 10s: a
+ * workflow task dispatched to a worker's sticky queue that the worker misses
+ * (worker churn — tests create one short-lived worker per `withWorker` — plus
+ * CI CPU contention) sits server-side, SILENTLY, for the full
+ * `stickyQueueScheduleToStartTimeout` before re-dispatch on the normal queue.
+ * That 10s stall was exactly equal to `stages.test.ts`'s 10s `retry()`
+ * budget, so any sticky miss failed the assertion at the precise moment the
+ * task would have recovered ('waiting'≠'reported' / 'active'≠'failed' — the
+ * #181-class flake, evidence on #777). 1s bounds the worst-case stall to
+ * noise while keeping sticky-cache performance for the common hit path.
+ * One choke point (the #721 philosophy): every test worker inherits it;
+ * callers can still override via their own `workerOpts`.
+ */
+const STICKY_SCHEDULE_TO_START_TIMEOUT = '1s';
+
 export async function createWorkerWithSlotRetry(
   workerOpts: Parameters<typeof Worker.create>[0],
   retryOpts: CreateWorkerRetryOpts = {},
 ): Promise<Worker> {
+  workerOpts = { stickyQueueScheduleToStartTimeout: STICKY_SCHEDULE_TO_START_TIMEOUT, ...workerOpts };
   const attempts = retryOpts.attempts ?? SLOT_RETRY_DEFAULT_ATTEMPTS;
   const baseMs = retryOpts.baseDelayMs ?? SLOT_RETRY_DEFAULT_BASE_MS;
   const factor = retryOpts.factor ?? SLOT_RETRY_DEFAULT_FACTOR;
