@@ -38,6 +38,7 @@ import {
   selectOrphans,
   resolveDaemonPort,
   findPortOwnerPid,
+  classifyPortDivergence,
   DAEMON_PID_PATH,
   DAEMON_LOG_PATH,
   HEARTBEAT_INTERVAL_MS,
@@ -235,30 +236,36 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
       // #758 — port-ownership cross-check: the PID file is a hint, the
       // port is the ground truth. A divergence is exactly the phantom/
       // ghost condition that made `daemon status` report a healthy pid
-      // while ALL HTTP traffic hit a different, stale process.
+      // while ALL HTTP traffic hit a different, stale process. The
+      // classification is pure + unit-tested (classifyPortDivergence).
       {
         const port = resolveDaemonPort();
-        const portOwner = findPortOwnerPid(port);
-        if (status.running && status.pid !== undefined) {
-          if (portOwner === status.pid) {
-            out.log(`  ${out.dim(`Port ${port}: owned by tracked pid ${status.pid}`)}`);
-          } else if (portOwner === null) {
+        const d = classifyPortDivergence(status, port, findPortOwnerPid(port));
+        switch (d.kind) {
+          case 'ok':
+            out.log(`  ${out.dim(`Port ${d.port}: owned by tracked pid ${d.pid}`)}`);
+            break;
+          case 'not-bound':
             out.warn(
-              `Port ${port}: NOT bound — the tracked daemon (pid ${status.pid}) is not serving HTTP ` +
+              `Port ${d.port}: NOT bound — the tracked daemon (pid ${d.pid}) is not serving HTTP ` +
               `(failed bind at boot, or still starting). HTTP surfaces (/v1/*, SSE, dashboard) are down.`,
             );
-          } else {
+            break;
+          case 'phantom':
             out.warn(
-              `PHANTOM DAEMON: the pid file says ${status.pid}, but port ${port} is owned by pid ${portOwner}. ` +
+              `PHANTOM DAEMON: the pid file says ${d.pid}, but port ${d.port} is owned by pid ${d.owner}. ` +
               `All HTTP traffic is hitting the OLD process (likely on a stale build). ` +
               `Run \`agent-tempo daemon stop\` (ghost-aware) then \`daemon start\`.`,
             );
-          }
-        } else if (portOwner !== null) {
-          out.warn(
-            `GHOST DAEMON: no tracked daemon, but port ${port} is owned by pid ${portOwner}. ` +
-            `Run \`agent-tempo daemon stop\` to terminate it (port-based; works without a pid file).`,
-          );
+            break;
+          case 'ghost':
+            out.warn(
+              `GHOST DAEMON: no tracked daemon, but port ${d.port} is owned by pid ${d.owner}. ` +
+              `Run \`agent-tempo daemon stop\` to terminate it (port-based; works without a pid file).`,
+            );
+            break;
+          case 'none':
+            break;
         }
       }
       break;

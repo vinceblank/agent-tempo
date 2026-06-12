@@ -693,6 +693,32 @@ export function forceKillPid(
   }
 }
 
+/**
+ * #758 — pure classification of the PID-file-vs-port-owner relationship,
+ * consumed by `daemon status` (the formatters pattern: pure + exported so
+ * the four-way ladder is unit-testable without process probes).
+ */
+export type PortDivergence =
+  | { kind: 'ok'; port: number; pid: number }
+  | { kind: 'not-bound'; port: number; pid: number }
+  | { kind: 'phantom'; port: number; pid: number; owner: number }
+  | { kind: 'ghost'; port: number; owner: number }
+  | { kind: 'none' };
+
+export function classifyPortDivergence(
+  status: DaemonStatus,
+  port: number,
+  owner: number | null,
+): PortDivergence {
+  if (status.running && status.pid !== undefined) {
+    if (owner === status.pid) return { kind: 'ok', port, pid: status.pid };
+    if (owner === null) return { kind: 'not-bound', port, pid: status.pid };
+    return { kind: 'phantom', port, pid: status.pid, owner };
+  }
+  if (owner !== null) return { kind: 'ghost', port, owner };
+  return { kind: 'none' };
+}
+
 /** Deps for {@link assertDaemonPortFree} — injectable for unit tests. */
 export interface PortPreflightDeps {
   resolvePort?: () => number;
@@ -824,13 +850,17 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   // command line), but a wrongly-killed prod daemon costs the user
   // their state.
   let zombies: DaemonProcessInfo[] = [];
+  // Cached for the #758 ghost sweep below — avoids a second OS process
+  // scan when the reaper branch already paid for one.
+  let scanned: DaemonProcessInfo[] | undefined;
   if (otherLikelyRunning()) {
     log(
       'cross-profile coexistence detected — skipping zombie reaper to avoid touching the other profile (ADR 0014 §5.6)',
     );
   } else {
     try {
-      zombies = selectOrphans(scan(), [status.pid, otherPidLookup()]);
+      scanned = scan();
+      zombies = selectOrphans(scanned, [status.pid, otherPidLookup()]);
     } catch {
       // Scanner failures are non-fatal — we already did the primary stop above.
       zombies = [];
@@ -860,7 +890,7 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   if (owner !== null && !signalledPids.has(owner)) {
     let looksLikeDaemon = false;
     try {
-      looksLikeDaemon = scan().some((p) => p.pid === owner);
+      looksLikeDaemon = (scanned ?? scan()).some((p) => p.pid === owner);
     } catch { /* scanner unavailable — treat as not-verified, warn below */ }
     if (looksLikeDaemon) {
       log(`ghost daemon (#758): port ${port} owned by untracked pid ${owner} — force-terminating`);

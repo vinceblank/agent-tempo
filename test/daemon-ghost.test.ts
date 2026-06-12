@@ -24,6 +24,7 @@ import {
   stopDaemon,
   assertDaemonPortFree,
   parseWindowsNetstatOwner,
+  classifyPortDivergence,
   DAEMON_PID_PATH,
   type DaemonProcessInfo,
 } from '../src/cli/daemon';
@@ -187,6 +188,33 @@ describe('#758 assertDaemonPortFree — daemon start pre-flight', function () {
     } catch (err) { caught = err; }
     expect(String(caught)).to.match(/owned by pid 4242/);
     expect(String(caught)).to.match(/does not look like an agent-tempo daemon/);
+  });
+});
+
+describe('#758 classifyPortDivergence (daemon status)', function () {
+  it('tracked daemon owning the port → ok', function () {
+    expect(classifyPortDivergence({ running: true, pid: 100 }, PORT, 100))
+      .to.deep.equal({ kind: 'ok', port: PORT, pid: 100 });
+  });
+
+  it('tracked daemon, free port → not-bound (HTTP down)', function () {
+    expect(classifyPortDivergence({ running: true, pid: 100 }, PORT, null))
+      .to.deep.equal({ kind: 'not-bound', port: PORT, pid: 100 });
+  });
+
+  it('REPRO: pid file says new pid, port owned by old → phantom', function () {
+    expect(classifyPortDivergence({ running: true, pid: 2436 }, PORT, GHOST_PID))
+      .to.deep.equal({ kind: 'phantom', port: PORT, pid: 2436, owner: GHOST_PID });
+  });
+
+  it('no tracked daemon, port owned → ghost', function () {
+    expect(classifyPortDivergence({ running: false }, PORT, GHOST_PID))
+      .to.deep.equal({ kind: 'ghost', port: PORT, owner: GHOST_PID });
+  });
+
+  it('no tracked daemon, free port → none', function () {
+    expect(classifyPortDivergence({ running: false }, PORT, null))
+      .to.deep.equal({ kind: 'none' });
   });
 });
 
