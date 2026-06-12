@@ -6,16 +6,19 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execFileSync } from 'child_process';
+import { spawn, spawnSync, execFileSync } from 'child_process';
 import { homedir } from 'os';
 import {
   AGENT_TEMPO_HOME,
   Config,
+  DEV_DAEMON_PORT,
   DEV_HOME_DIR_NAME,
   ENV,
+  PROD_DAEMON_PORT,
   PROD_HOME_DIR_NAME,
   isDevMode,
 } from '../config';
+import { DAEMON_PORT_PATH, readPortFile } from '../http/port-file';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:daemon]', ...args);
 
@@ -374,6 +377,13 @@ export async function startDaemon(config: Config): Promise<number> {
     return status.pid;
   }
 
+  // #758 — port pre-flight: refuse to spawn a daemon that cannot bind its
+  // port. Pre-#758 this path happily spawned a new process that silently
+  // failed to bind while a ghost daemon kept serving stale HTTP — the new
+  // PID file then made `daemon status` track a phantom. Waits out a
+  // draining prior daemon, then throws with the owning pid + remedy.
+  await assertDaemonPortFree();
+
   // Ensure daemon directory exists
   fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
 
@@ -591,6 +601,152 @@ function killDaemonPid(
  *
  * @internal
  */
+// ── #758 — port-ownership hygiene ───────────────────────────────────────
+//
+// The ghost-daemon incident class: a daemon without a PID file survives
+// `daemon stop` (nothing knows its PID), `daemon start` spawns a NEW
+// process that silently fails to bind the port, and `daemon status`
+// tracks the phantom new PID while ALL HTTP traffic still hits the old
+// process — which also keeps polling Temporal task queues on a stale
+// bundle. The PID file is a hint; the PORT is the ground truth. Same
+// port = same profile, so port-based hygiene never violates the
+// ADR 0014 §5.6 cross-profile guard the way the cmdline-based zombie
+// reaper could.
+
+/**
+ * The HTTP port the CURRENT profile's daemon should own:
+ * `daemon.port` file (the port the daemon actually bound) → env override →
+ * profile default (8473 prod / 8474 dev).
+ */
+export function resolveDaemonPort(): number {
+  const fromFile = readPortFile(DAEMON_PORT_PATH);
+  if (fromFile !== null) return fromFile;
+  const fromEnv = Number(process.env[ENV.DAEMON_PORT]);
+  if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) return fromEnv;
+  return isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
+}
+
+/**
+ * Parse `netstat -ano -p tcp` output for the pid LISTENING on `port`.
+ * Exported for unit testing against canned output (incl. the #758 repro's
+ * `TCP 0.0.0.0:8473 ... LISTENING 2800` line).
+ */
+export function parseWindowsNetstatOwner(output: string, port: number): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    const m = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i);
+    if (m && Number(m[1]) === port) return Number(m[2]);
+  }
+  return null;
+}
+
+/**
+ * The pid LISTENING on the given local TCP port, or `null` when the port is
+ * free OR the probe is unavailable (probe failure degrades to pre-#758
+ * behavior — never blocks a stop/start on a missing tool).
+ */
+export function findPortOwnerPid(
+  port: number,
+  platform: NodeJS.Platform = process.platform,
+): number | null {
+  try {
+    if (platform === 'win32') {
+      const out = execFileSync('netstat', ['-ano', '-p', 'tcp'], {
+        encoding: 'utf8', windowsHide: true, timeout: 10_000,
+      });
+      return parseWindowsNetstatOwner(out, port);
+    }
+    // POSIX — lsof exits non-zero when nothing matches (caught below).
+    const out = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      encoding: 'utf8', timeout: 10_000,
+    });
+    const pid = parseInt(out.trim().split(/\s+/)[0] ?? '', 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Forceful, platform-correct termination for ghost daemons (#758). The
+ * incident's `bash kill <pid>` was a silent no-op on a Windows process —
+ * Windows uses `taskkill /T /F` (tree + force; exit 128/255 = already gone,
+ * mirroring `activities/hard-terminate.ts`), POSIX escalates SIGTERM →
+ * SIGKILL. Distinct from {@link killDaemonPid} (the GRACEFUL path for the
+ * tracked daemon): ghosts already missed their graceful window.
+ */
+export function forceKillPid(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  try {
+    if (platform === 'win32') {
+      const r = spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], {
+        windowsHide: true, timeout: 10_000,
+      });
+      return r.status === 0 || r.status === 128 || r.status === 255;
+    }
+    try { process.kill(pid, 'SIGTERM'); } catch { /* may already be gone */ }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* gone — fine */ }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Deps for {@link assertDaemonPortFree} — injectable for unit tests. */
+export interface PortPreflightDeps {
+  resolvePort?: () => number;
+  findPortOwner?: (port: number) => number | null;
+  scan?: () => DaemonProcessInfo[];
+  /** Total wait for a draining prior daemon to release the port. Default 10s. */
+  waitMs?: number;
+  /** Poll interval while waiting. Default 250ms. */
+  pollMs?: number;
+  /** Test seam — defaults to a real setTimeout sleep. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * #758 `daemon start` pre-flight: refuse to spawn a daemon that cannot bind
+ * its port. WAITS briefly first — a legitimate stop→start flow probes while
+ * the prior daemon is still draining (graceful shutdown holds the port for
+ * up to ~15s), and pre-#758 that window produced exactly the silent
+ * failed-bind degraded state this guard exists to prevent. If the port is
+ * still owned at the deadline, throws with the owning pid and whether it
+ * looks like an (untracked) agent-tempo daemon. No-op when the port is free
+ * or the probe is unavailable.
+ */
+export async function assertDaemonPortFree(deps: PortPreflightDeps = {}): Promise<void> {
+  const port = (deps.resolvePort ?? resolveDaemonPort)();
+  const probe = deps.findPortOwner ?? findPortOwnerPid;
+  const waitMs = deps.waitMs ?? 10_000;
+  const pollMs = deps.pollMs ?? 250;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  let owner = probe(port);
+  if (owner === null) return;
+  log(`daemon port ${port} currently owned by pid ${owner} — waiting up to ${waitMs}ms for it to release (prior daemon may be draining)`);
+  const deadline = Date.now() + waitMs;
+  while (owner !== null && Date.now() < deadline) {
+    await sleep(pollMs);
+    owner = probe(port);
+  }
+  if (owner === null) return;
+
+  let looksLikeDaemon = false;
+  try {
+    looksLikeDaemon = (deps.scan ?? scanAgentTempoDaemons)().some((p) => p.pid === owner);
+  } catch { /* scanner unavailable — fall through with the generic message */ }
+  throw new Error(
+    `daemon port ${port} is already owned by pid ${owner}` +
+    (looksLikeDaemon
+      ? ' — an UNTRACKED agent-tempo daemon (ghost: running without a PID file). ' +
+        'Run `agent-tempo daemon stop` (ghost-aware) and retry.'
+      : ' — a process that does not look like an agent-tempo daemon. ' +
+        `Free the port (or set ${ENV.DAEMON_PORT}) and retry.`),
+  );
+}
+
 export interface StopDaemonOpts {
   /** Process scanner — defaults to {@link scanAgentTempoDaemons}. */
   scan?: () => DaemonProcessInfo[];
@@ -610,6 +766,12 @@ export interface StopDaemonOpts {
    * Tests stub it for the same reason as `isOtherProfileLikelyRunning`.
    */
   getOtherProfilePid?: () => number | undefined;
+  /** #758 — port resolver — defaults to {@link resolveDaemonPort}. */
+  resolvePort?: () => number;
+  /** #758 — port-owner probe — defaults to {@link findPortOwnerPid}. */
+  findPortOwner?: (port: number) => number | null;
+  /** #758 — forceful ghost terminator — defaults to {@link forceKillPid}. */
+  forceKiller?: (pid: number, platform?: NodeJS.Platform) => boolean;
 }
 
 /**
@@ -679,6 +841,44 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
       stopped = true;
     }
   }
+
+  // ── #758 ghost sweep — trust the PORT, not the PID file ──
+  //
+  // Runs UNCONDITIONALLY, including when the §5.6 cross-profile guard
+  // skipped the zombie reaper above (exactly the incident path: no PID
+  // file + reaper skipped → nothing ever reached the ghost). The port is
+  // profile-scoped, so killing its owner can never touch the other
+  // profile. Safety: only force-kill when the owner's command line
+  // matches an agent-tempo daemon — an unrelated process squatting the
+  // port gets a loud warning + the manual command instead.
+  const port = (opts.resolvePort ?? resolveDaemonPort)();
+  const owner = (opts.findPortOwner ?? findPortOwnerPid)(port);
+  const signalledPids = new Set<number>([
+    ...(status.pid !== undefined ? [status.pid] : []),
+    ...zombies.map((z) => z.pid),
+  ]);
+  if (owner !== null && !signalledPids.has(owner)) {
+    let looksLikeDaemon = false;
+    try {
+      looksLikeDaemon = scan().some((p) => p.pid === owner);
+    } catch { /* scanner unavailable — treat as not-verified, warn below */ }
+    if (looksLikeDaemon) {
+      log(`ghost daemon (#758): port ${port} owned by untracked pid ${owner} — force-terminating`);
+      if ((opts.forceKiller ?? forceKillPid)(owner, platform)) {
+        stopped = true;
+      } else {
+        log(`WARNING: failed to terminate ghost pid ${owner} — free port ${port} manually`);
+      }
+    } else {
+      log(
+        `WARNING: daemon port ${port} is owned by pid ${owner}, which does not look like an ` +
+        `agent-tempo daemon — NOT killing it. If it is a stale daemon, terminate it manually ` +
+        `(Windows: taskkill /T /F /PID ${owner} · POSIX: kill ${owner}).`,
+      );
+    }
+  }
+  // owner ∈ signalledPids → we already signalled it; graceful shutdown
+  // takes a moment to release the port — nothing more to do here.
 
   return stopped;
 }

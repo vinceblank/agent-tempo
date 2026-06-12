@@ -36,6 +36,8 @@ import {
   getOtherProfilePid,
   scanAgentTempoDaemons,
   selectOrphans,
+  resolveDaemonPort,
+  findPortOwnerPid,
   DAEMON_PID_PATH,
   DAEMON_LOG_PATH,
   HEARTBEAT_INTERVAL_MS,
@@ -227,6 +229,36 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
           out.warn(`Found ${scanned.length} orphaned agent-tempo daemon process${scanned.length === 1 ? '' : 'es'} (no pid file):`);
           for (const p of scanned) out.log(`  pid ${p.pid}: ${p.commandLine}`);
           out.log(`  ${out.dim('These are untracked. See docs/troubleshooting.md → "Orphaned daemon processes" for emergency cleanup.')}`);
+        }
+      }
+
+      // #758 — port-ownership cross-check: the PID file is a hint, the
+      // port is the ground truth. A divergence is exactly the phantom/
+      // ghost condition that made `daemon status` report a healthy pid
+      // while ALL HTTP traffic hit a different, stale process.
+      {
+        const port = resolveDaemonPort();
+        const portOwner = findPortOwnerPid(port);
+        if (status.running && status.pid !== undefined) {
+          if (portOwner === status.pid) {
+            out.log(`  ${out.dim(`Port ${port}: owned by tracked pid ${status.pid}`)}`);
+          } else if (portOwner === null) {
+            out.warn(
+              `Port ${port}: NOT bound — the tracked daemon (pid ${status.pid}) is not serving HTTP ` +
+              `(failed bind at boot, or still starting). HTTP surfaces (/v1/*, SSE, dashboard) are down.`,
+            );
+          } else {
+            out.warn(
+              `PHANTOM DAEMON: the pid file says ${status.pid}, but port ${port} is owned by pid ${portOwner}. ` +
+              `All HTTP traffic is hitting the OLD process (likely on a stale build). ` +
+              `Run \`agent-tempo daemon stop\` (ghost-aware) then \`daemon start\`.`,
+            );
+          }
+        } else if (portOwner !== null) {
+          out.warn(
+            `GHOST DAEMON: no tracked daemon, but port ${port} is owned by pid ${portOwner}. ` +
+            `Run \`agent-tempo daemon stop\` to terminate it (port-based; works without a pid file).`,
+          );
         }
       }
       break;
