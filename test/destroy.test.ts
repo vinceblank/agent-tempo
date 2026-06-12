@@ -288,6 +288,10 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
       connection,
       taskQueue,
       workflowBundle: bundle,
+      // #777 — match the helpers.ts choke-point default (this is the one
+      // worker-create site that bypasses createWorkerWithSlotRetry): bound a
+      // missed sticky dispatch to 1s instead of the SDK's silent 10s.
+      stickyQueueScheduleToStartTimeout: '1s',
     });
     const hostWorker = await Worker.create({
       connection,
