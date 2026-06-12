@@ -91,7 +91,13 @@ export function evaluateStartPreflight(
     return { action: 'already-running', pid: status.pid };
   }
   if (!force) {
-    const orphans = selectOrphans(scanned, [status.pid, otherProfilePid]);
+    // #771 — abort only on pathVerified matches: a structural
+    // `node …/dist/daemon.js` hit without an agent-tempo install signature
+    // may be another project's daemon, and blocking `daemon start` on it
+    // (until --force) would be a false positive.
+    const orphans = selectOrphans(scanned, [status.pid, otherProfilePid]).filter(
+      (p) => p.pathVerified,
+    );
     if (orphans.length > 0) return { action: 'abort', orphans };
   }
   return { action: 'spawn', cleanupStalePid: force };
@@ -218,7 +224,10 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
         // a second daemon started by a stale concurrent CLI invocation (#157).
         // The opposite profile's daemon (if running) also gets excluded so
         // prod doesn't flag dev as an orphan / vice versa (ADR 0014 §5.6).
-        const extras = selectOrphans(scanned, [status.pid, getOtherProfilePid()]);
+        // #771 — list only pathVerified matches; see evaluateStartPreflight.
+        const extras = selectOrphans(scanned, [status.pid, getOtherProfilePid()]).filter(
+          (p) => p.pathVerified,
+        );
         if (extras.length > 0) {
           out.warn(`Found ${extras.length} additional agent-tempo daemon process${extras.length === 1 ? '' : 'es'} not tracked by the pid file:`);
           for (const p of extras) out.log(`  pid ${p.pid}: ${p.commandLine}`);
@@ -226,9 +235,11 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
         }
       } else {
         out.log('Daemon is not running');
-        if (scanned.length > 0) {
-          out.warn(`Found ${scanned.length} orphaned agent-tempo daemon process${scanned.length === 1 ? '' : 'es'} (no pid file):`);
-          for (const p of scanned) out.log(`  pid ${p.pid}: ${p.commandLine}`);
+        // #771 — list only pathVerified matches; see evaluateStartPreflight.
+        const verified = scanned.filter((p) => p.pathVerified);
+        if (verified.length > 0) {
+          out.warn(`Found ${verified.length} orphaned agent-tempo daemon process${verified.length === 1 ? '' : 'es'} (no pid file):`);
+          for (const p of verified) out.log(`  pid ${p.pid}: ${p.commandLine}`);
           out.log(`  ${out.dim('These are untracked. See docs/troubleshooting.md → "Orphaned daemon processes" for emergency cleanup.')}`);
         }
       }
