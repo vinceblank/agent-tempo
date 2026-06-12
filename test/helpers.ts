@@ -698,10 +698,27 @@ export interface CreateWorkerRetryOpts {
  * Resolves with the worker on first success. Rejects with the last attempt's
  * error if every attempt hits the overlap.
  */
+/**
+ * #777 — test-wide sticky-queue failover bound. The SDK default is 10s: a
+ * workflow task dispatched to a worker's sticky queue that the worker misses
+ * (worker churn — tests create one short-lived worker per `withWorker` — plus
+ * CI CPU contention) sits server-side, SILENTLY, for the full
+ * `stickyQueueScheduleToStartTimeout` before re-dispatch on the normal queue.
+ * That 10s stall was exactly equal to `stages.test.ts`'s 10s `retry()`
+ * budget, so any sticky miss failed the assertion at the precise moment the
+ * task would have recovered ('waiting'≠'reported' / 'active'≠'failed' — the
+ * #181-class flake, evidence on #777). 1s bounds the worst-case stall to
+ * noise while keeping sticky-cache performance for the common hit path.
+ * One choke point (the #721 philosophy): every test worker inherits it;
+ * callers can still override via their own `workerOpts`.
+ */
+const STICKY_SCHEDULE_TO_START_TIMEOUT = '1s';
+
 export async function createWorkerWithSlotRetry(
   workerOpts: Parameters<typeof Worker.create>[0],
   retryOpts: CreateWorkerRetryOpts = {},
 ): Promise<Worker> {
+  workerOpts = { stickyQueueScheduleToStartTimeout: STICKY_SCHEDULE_TO_START_TIMEOUT, ...workerOpts };
   const attempts = retryOpts.attempts ?? SLOT_RETRY_DEFAULT_ATTEMPTS;
   const baseMs = retryOpts.baseDelayMs ?? SLOT_RETRY_DEFAULT_BASE_MS;
   const factor = retryOpts.factor ?? SLOT_RETRY_DEFAULT_FACTOR;
