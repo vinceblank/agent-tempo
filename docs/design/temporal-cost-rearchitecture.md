@@ -31,8 +31,10 @@ $50/M actions (first 5M, May 2026 repricing). **Queries ARE billable** — 1 act
 > **RESOLVED 2026-06-12 (#763/#764)**: step 0's honest re-measure put the daemon aggregate
 > poll at **~9.4M actions/day** idle (≈78 queries + 3 cluster scans per 750ms tick) — the
 > architect sweep's ~7.8M estimate below was the right order of magnitude; the researcher's
-> 2.0M/day total above under-counted by omitting `aggregate.ts`, and the early 13h meter's
-> ~600k/day reading was an instrumentation-suppression artifact fixed in #763. ~9.4M/day is
+> 2.0M/day total above under-counted by omitting `aggregate.ts`. The ~3.3M/day "pre-diet
+> baseline" from the first meter window (18.09h, build 4eb50c21) was an
+> instrumentation-suppression artifact identified in #763 — daemon sickness truncated most
+> ticks, measuring ~⅓ of the true cost; the honest healthy-daemon baseline is ~9.4M/day,
 > the epic's denominator. The section below is preserved as written for the audit trail.
 
 ### ⚠ Discrepancy to resolve with instrumentation (step 0 of any implementation)
