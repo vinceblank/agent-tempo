@@ -65,6 +65,13 @@ function formatSingleHost(host: HostInfo): string[] {
   // Profile (capability).
   if (host.profile) {
     const p = host.profile;
+    // #768 — degraded-HTTP beacon: the daemon advertises `httpDegraded:
+    // true` while its port bind is failing (Temporal workers still up,
+    // bind retrying). Surface it loudly — this host serves no dashboard /
+    // SSE / TUI traffic until the bind recovers.
+    if (p.httpDegraded === true) {
+      lines.push(`  ⚠ HTTP DEGRADED — daemon serves no HTTP (port bind failing, retrying); Temporal workers are up (#768)`);
+    }
     const profileBits: string[] = [];
     if (p.platform) profileBits.push(`platform: ${p.platform}`);
     if (p.defaultAgent) profileBits.push(`default agent: ${p.defaultAgent}`);

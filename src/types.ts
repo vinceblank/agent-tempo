@@ -294,6 +294,15 @@ export interface HostProfile {
   platform?: NodeJS.Platform;
   capabilities?: string[];
   /**
+   * #768 — `true` while the daemon serves NO HTTP because its port bind
+   * failed (Temporal workers stay up; the bind retries with capped
+   * backoff). Re-advertised on transitions only: `true` entering the
+   * degraded state, `false` when the bind eventually succeeds. Absent on
+   * healthy boots and pre-#768 daemons — consumers MUST treat absent as
+   * "not known degraded", not "healthy".
+   */
+  httpDegraded?: boolean;
+  /**
    * Daemon process start time (epoch ms, `Date.now()` at module load).
    * Resets on every daemon restart; semantics are
    * **daemon-process uptime**, not host-first-seen. Issue #399 Q5.3b.
