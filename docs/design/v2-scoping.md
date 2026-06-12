@@ -9,8 +9,9 @@
 > they guard removed.
 > **Constraint**: the in-flight 1.x critical path (#777, #774, #768, T1.1 PR-2/3) completes on
 > 1.x main first — nothing here disturbs it.
-> Items marked `[R-inventory]` await tempo-researcher's debt sweep for the exhaustive lists;
-> the design does not depend on those lists, only the execution checklists do.
+> Researcher's debt inventory (2026-06-12 sweep) is integrated throughout; counts are
+> spot-checked by them, not line-audited. Their synthesis independently converges on §A's
+> conclusion: one drain/cutover gate is the highest-leverage decision in the release.
 
 ---
 
@@ -18,9 +19,14 @@
 
 ### A.1 The problem, precisely
 
-18 `patched()` call sites exist today (session.ts ×14, maestro.ts ×3, scheduler.ts ×1; zero
-`deprecatePatch` anywhere). Most fire **eagerly on every new run**, so every 1.x run's history
-carries marker records. Removing the `patched()` calls means a 2.0 worker **cannot replay any
+**17 `patched()` markers** exist today (researcher census: 11 replay-only no-ops —
+v0.10…v0.26 stack in session.ts:198-212 + maestro's v0.17/v0.18 + stages — and 6 conditional:
+v0.12-cron-schedule, v0.19-ensemble-chat, v0.20-response-requested-blocked,
+v0.26-can-lease-from-attachment, v1.8-sa-diet ×6 sites, v1.8-memo-observation-fields; zero
+`deprecatePatch` anywhere). They fire **eagerly on every new run**, so every 1.x run's history
+carries marker records. The two v1.8 markers are the youngest and most likely to be straddled
+by live runs at upgrade time — which is precisely why a cutover gate (A.3) that makes
+straddling impossible beats reasoning about each marker's drain state individually. Removing the `patched()` calls means a 2.0 worker **cannot replay any
 1.x-recorded run** — and our session/maestro/scheduler workflows are deliberately long-lived
 (they never complete; they `continueAsNew`), so 1.x histories never age out on their own.
 The same boundary problem applies to every other 2.0 removal: the legacy-SA dual-read
@@ -99,9 +105,12 @@ tax to preserve in-place upgrades of sessions nobody needs preserved.
   conductor bootstrap. P1 items (gates/stages/worktree/lineup/search views) close during the
   beta window; P2 (wizards, palette, theming) are explicitly never ported.
 - **CLI absorption**: minimal — most TUI-only verbs already have CLI homes (`hosts`,
-  `restore`, `status`); audit for a CLI `recall` gap `[R-inventory]`. The operator pillar's
-  "CLI + command-center" split: CLI = lifecycle + scripting, command-center = live
-  board + conversational operation.
+  `restore`, `status`). Researcher confirms exactly **one external importer**: `cli.ts:755`
+  (~32-line dynamic import) — the amputation is clean. But that import site is also the
+  **bare-command default**: today bare `agent-tempo` bootstraps then launches the TUI, so 2.0
+  must pick a new default (decision point §E.8). Droppable deps: `ink` ×3, `react`,
+  `@types/react`; `qrcode-terminal` only after verifying the dashboard pairing-QR path
+  doesn't share it.
 - **Web dashboard: STAYS** (recommendation = reaffirm D3's recorded decision): it is the
   zero-dependency fallback surface — mission-control needs the optional Pi dep + Node ≥
   22.19, while daemon/players stay Node 20. Deleting two surfaces in one breaking release
@@ -116,14 +125,17 @@ tax to preserve in-place upgrades of sessions nobody needs preserved.
 
 ## C. Simplification beyond the confirmed pillars
 
-### C.1 B3 tool merges (45 → ~35)
+### C.1 B3 tool merges (43 → ~35–37)
 Breaking-allowed changes the calculus: aliases are no longer load-bearing. Recommendation:
 merge coat-check ×4→1, state ×3→1, schedule ×3→1, stages ×2→1, gates partially (create vs
 evaluate stay distinct) — via the transport-neutral descriptor layer; ship **one beta with
 descriptor aliases** for muscle-memory migration, drop aliases at 2.0 GA. Do NOT merge
 high-frequency distinct tools (cue/report/ensemble) — tool-selection accuracy beats registry
-size there. Net: ~10 fewer registered tools × every player's context, plus the boilerplate
-compression measured in the cost spike.
+size there. Net: ~1,000 LOC and ~8 fewer registered tools × every player's context, effort S
+per family and fully parallelizable (researcher). Their extras, adopted: `migrate` is
+`restart --host` sugar (fold); `listen` deprecates post-T1.1 (the doorbell makes the one-shot
+drain pointless); `set_name` folds into an identity tool; audit which tools existed only to
+serve the TUI.
 
 ### C.2 B2 attachment-core extraction — sequencing reaffirmed, window assigned
 2.0 does not change the *order* (post-T1.1: the doorbell PR-2/3 rewrite the poll loops —
@@ -134,14 +146,26 @@ beta.1.** Pi's event-driven phase model remains the direction; the target is a s
 
 ### C.3 Config + surface trim
 - Env unification: `CLAUDE_TEMPO_*` → `AGENT_TEMPO_*`, single names, no dual-read (2.0-beta.1).
-- Delete: `legacy-migration.ts`, `removed-verbs.ts` hint table (#288-era; its TUI successors
-  get one release of hints then join it), dead `PersistedConfig` fields (legacy `httpToken`
-  read path per auth.ts), pre-rebrand matcher marker (#775 debt trigger). `[R-inventory]`
-  completes this list.
-- Wire-protocol 2.0 document: regenerate WIRE-PROTOCOL.md as v2 (removals: `pendingReset`
-  query per #762's recorded deprecation, superseded two-call patterns like `hostProfiles`
-  where `hostProfilesWithExistence` won, v0.25 shim optionals); drift-detector
-  `SECTION_TO_KIND` updated in the same commit per process.
+- Delete (researcher's shim census, integrated): `legacy-migration.ts` — note the nuance:
+  dropping it breaks 0.x→2.0 DIRECT upgrades, which §A.3's cutover already forbids, so drop
+  + document the 1.x hop (the protocols align); `removed-verbs.ts` (9 of its 10 hints point
+  at the TUI — wrong after deletion anyway; replace wholesale with TUI-era hints for one
+  release, then delete); `tui/removed-commands.ts` (dies free); the `httpToken` single-token
+  shim (auth.ts:116-185 + server.ts:127 + config.ts:300 → readToken/adminToken only);
+  `hosts.ts:94-110` legacy poller-identity; `daemon-command.ts:406-445` claude-tempo
+  service-file cleanup; `CLAUDE_TEMPO_DEBUG` (grpc-shutdown-guard.ts:59); the migration
+  marker file; pre-rebrand matcher marker (#775 recorded debt trigger — this rebrand-playbook
+  item fires here); copilot pid-file fallback (hard-terminate.ts:78-83, TODO-v1.7); legacy
+  `./logs` fallback (commands.ts:2020,2056); 6 rebrand string leftovers. Ops docs:
+  v0.26-migration deletable now; v1.0 rebrand doc kept as rollback reference; sa-diet doc
+  becomes the 2.0 SA-drop runbook.
+- Wire-protocol 2.0 document: regenerate WIRE-PROTOCOL.md as v2. Researcher's 9-item
+  deprecation list adopted: `pendingReset` query (#762's recorded deprecation), the SA
+  dual-read fallback (search-attributes.ts:149 TODO, 3 call sites), the 4 LEGACY SAs +
+  operator drop runbook, guardrailPolicy note verification (#743), plus the maestro V1
+  refresh activity (maestro.ts:114 TODO(#748)) and superseded two-call patterns
+  (`hostProfiles` where `hostProfilesWithExistence` won). Drift-detector `SECTION_TO_KIND`
+  updated in the same commit per process. SSE surface confirmed clean — no v2 removals.
 
 ### C.4 New-user roughness (ease-of-use half of the theme)
 - **SA preflight remains the #1 onboarding wall** (cap collisions, manual `temporal operator`
@@ -200,3 +224,4 @@ current evidence says banners sufficed → keep parked, revisit at 2.0 GA review
 | 5 | Env unification in beta.1 | **Yes** (breaking window is open; do all the renames at once) | Defer: drags dual-reads through 2.x |
 | 6 | B2 in 2.0 betas | **beta.2+, contingent on T1.1 PR-2/3 settled** | Defer to 2.x: safer, but loses the beta window where internal churn is free |
 | 7 | B4(a) pause-axis collapse in 2.0 | **No — keep parked** (B4c banners resolved the operational pain) | Fold in: one suspension axis, but adds a breaking surface with no incident pressure behind it |
+| 8 | Bare `agent-tempo` default after TUI deletion | **Bootstrap (six-step, unchanged) + `status` + next-step hints** — incl. a `command-center` suggestion when the Pi seat is available. Safe, informative, no side effects beyond provisioning | `up` (researcher's other suggestion): most helpful for the returning user, but bare-command-starts-an-ensemble is a surprising side effect for a first-run user; plain help: safest, least useful |
