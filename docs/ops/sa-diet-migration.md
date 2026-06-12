@@ -94,6 +94,15 @@ T0.1 (same release) adds `costProfile: 'local' | 'cloud'`
   read), cadence stretches 5s → 20s (60s when the daemon has zero SSE
   subscribers), and the daemon aggregate confirms SA-sourced phase
   transitions with one direct query before emitting SSE events.
+  **#751/#763 additionally**: the aggregate's 750ms poll demand-gates on
+  SSE subscribers — zero subscribers stretches it to a 30s slow reconcile
+  (the first board to connect wakes it immediately); per-tick duplications
+  are deduped (the snapshot's `listEnsembles` existence gate and `listHosts`
+  reuse the tick's prelude, the chat window is fetched once, and
+  `isAnySessionHeld` uses an ensemble-scoped scan instead of a third full
+  cluster scan + per-player metadata fan-out). Per-tick visibility-list
+  budget drops 3 → 2 and raw queries roughly halve; an unwatched daemon's
+  aggregate cost drops ~40× on top.
   Note: when an observer connects to an idle cloud maestro, the cadence
   snap-back (60s → 20s) takes effect on the **next refresh completion** —
   the board can feel stale for up to ~60s after opening a dashboard.

@@ -679,6 +679,10 @@ export async function handle(
     if (!ctx.aggregate) {
       return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
     }
+    // T0.4/#751 (#763) — first-subscriber wake: if the cloud-profile
+    // demand gate stretched the poll, snap back + tick immediately so a
+    // fresh board doesn't wait out the idle reconcile interval.
+    ctx.aggregate.wake();
     return handleSseRequest(req, res, {
       client: ctx.client,
       bus: ctx.aggregate.globalBus(),
@@ -718,6 +722,8 @@ export async function handle(
       }
     }
     const bus = ctx.aggregate.getOrCreateEnsembleBus(ensemble);
+    // T0.4/#751 (#763) — first-subscriber wake (see the global route above).
+    ctx.aggregate.wake();
     return handleSseRequest(req, res, {
       client: ctx.client,
       bus,
