@@ -1325,6 +1325,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       });
 
       // ── Stage tracking: update player status in any active stage ──
+      //
+      // NOTE (#777): the transition + message logic below is FAITHFULLY
+      // COPIED at the setStage handler's reconcile block — keep the two in
+      // sync when editing either. Extraction is deferred to 2.0's P2, where
+      // v0.27's marker deletion merges the sites for free (see #782).
       for (const stage of stages) {
         if (stage.status !== 'active') continue;
 
