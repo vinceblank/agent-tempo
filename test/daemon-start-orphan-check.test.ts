@@ -12,9 +12,14 @@ import type { DaemonProcessInfo, DaemonStatus } from '../src/cli/daemon';
 
 describe('evaluateStartPreflight (#157 PR B)', function () {
   // Helper — build a plausible scanner result entry.
-  const proc = (pid: number, suffix = 'repos/agent-tempo/dist/daemon.js'): DaemonProcessInfo => ({
+  const proc = (
+    pid: number,
+    suffix = 'repos/agent-tempo/dist/daemon.js',
+    pathVerified = true,
+  ): DaemonProcessInfo => ({
     pid,
     commandLine: `node /home/dev/${suffix}`,
+    pathVerified,
   });
 
   it('returns "already-running" when the tracked pid is live (no-op)', function () {
@@ -51,6 +56,17 @@ describe('evaluateStartPreflight (#157 PR B)', function () {
     if (result.action === 'abort') {
       expect(result.orphans.map((o) => o.pid).sort()).to.deep.equal([2222, 3333]);
     }
+  });
+
+  it('does NOT abort on structural matches without an install signature (#771 trust tiers)', function () {
+    // Another project's `node dist/daemon.js` must not block `daemon start`.
+    const status: DaemonStatus = { running: false };
+    const result = evaluateStartPreflight(
+      [proc(1111, 'code/other-project/dist/daemon.js', /* pathVerified */ false)],
+      status,
+      /* force */ false,
+    );
+    expect(result).to.deep.equal({ action: 'spawn', cleanupStalePid: false });
   });
 
   it('returns "spawn" with cleanupStalePid=false when scanner is empty and force is false', function () {

@@ -52,6 +52,15 @@ import { ENV } from '../config';
 /** Subsystems that initiate Temporal client calls. Keep low-cardinality. */
 const ACTION_SOURCES = [
   'maestro',
+  // T0.6/#774 (architect verification prerequisite) — the maestro source,
+  // split by CALLING WORKFLOW so the meter can attribute the unwatched
+  // residual between the per-ensemble loop (chat-gated), the global
+  // maestro (never gated — the prime residual suspect), and other callers.
+  // 'maestro' stays in the union for docs/tests; activities now emit the
+  // split keys.
+  'maestro-ensemble',
+  'maestro-global',
+  'maestro-session',
   'aggregate',
   'pi-pump',
   'sdk-poller',
@@ -121,12 +130,19 @@ export function currentActionSource(): ActionSource {
  * factories in this codebase close over `client`/`config` instead — true
  * for all current call sites).
  */
-export function tagActionSource<T extends object>(source: ActionSource, fns: T): T {
+export function tagActionSource<T extends object>(
+  source: ActionSource | (() => ActionSource),
+  fns: T,
+): T {
+  // T0.6/#774 — `source` may be a resolver invoked PER CALL: the maestro
+  // activity factory serves multiple workflow types, so the tag is derived
+  // from the activity context at invocation time, not factory time.
+  const resolve = typeof source === 'function' ? source : () => source;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fns)) {
     out[key] = typeof value === 'function'
       ? (...args: unknown[]) =>
-          sourceStorage.run(source, () => (value as (...a: unknown[]) => unknown)(...args))
+          sourceStorage.run(resolve(), () => (value as (...a: unknown[]) => unknown)(...args))
       : value;
   }
   return out as T;

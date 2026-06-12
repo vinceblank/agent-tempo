@@ -80,6 +80,35 @@ describe('createWorkerWithSlotRetry — happy path', () => {
   });
 });
 
+describe('createWorkerWithSlotRetry — sticky failover default (#777)', () => {
+  it("injects stickyQueueScheduleToStartTimeout '1s' into the worker opts", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const create = async (opts: Parameters<typeof Worker.create>[0]) => {
+      seen = opts as unknown as Record<string, unknown>;
+      return sentinelWorker;
+    };
+    await createWorkerWithSlotRetry(EMPTY_OPTS, { create });
+    expect(seen).to.exist;
+    // The choke-point default: a missed sticky dispatch must fail over to
+    // the normal queue in 1s, not the SDK's silent 10s (which equaled the
+    // stages.test.ts retry budget — the #181-class flake, #777).
+    expect(seen!.stickyQueueScheduleToStartTimeout).to.equal('1s');
+  });
+
+  it('caller-provided stickyQueueScheduleToStartTimeout wins over the default', async () => {
+    let seen: Record<string, unknown> | undefined;
+    const create = async (opts: Parameters<typeof Worker.create>[0]) => {
+      seen = opts as unknown as Record<string, unknown>;
+      return sentinelWorker;
+    };
+    await createWorkerWithSlotRetry(
+      { stickyQueueScheduleToStartTimeout: '5s' } as unknown as Parameters<typeof Worker.create>[0],
+      { create },
+    );
+    expect(seen!.stickyQueueScheduleToStartTimeout).to.equal('5s');
+  });
+});
+
 describe('createWorkerWithSlotRetry — slot-overlap retry path', () => {
   it('retries on a slot-overlap throw, succeeds on the second attempt', async () => {
     const rec = makeRecorder();

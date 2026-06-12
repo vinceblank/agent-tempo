@@ -32,8 +32,10 @@ import { queryHandleWithTimeout } from './utils/query-timeout';
 import type { AttachmentInfo, AttachmentPhase } from './types';
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { createWorkers } from './worker';
+import type { DoorbellSink } from './activities/outbox';
 import { createTemporalConnection } from './connection';
 import { InnerLoopRegistry } from './http/inner-loop';
+import { DoorbellRegistry } from './http/doorbell';
 import { IngestTokenRegistry } from './http/ingest-registry';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { actionCountingInterceptors } from './utils/action-counters';
@@ -1109,6 +1111,12 @@ async function main() {
   // so the shutdown handler — declared just below — can drain them.
   const innerLoop = new InnerLoopRegistry();
   const ingestTokens = new IngestTokenRegistry();
+  // T1.1 PR-1 — cue-doorbell registry + the late-wired sink the outbox
+  // delivery activities ring. Both the worker and startHttpServer run in THIS
+  // process; `current` is filled immediately (the holder indirection exists
+  // for non-daemon worker processes, where it stays null → ring() no-ops).
+  const doorbells = new DoorbellRegistry();
+  const doorbellSink: DoorbellSink = { current: doorbells };
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -1145,6 +1153,9 @@ async function main() {
     // (streams end cleanly rather than dangling).
     ingestTokens.revokeAll();
     innerLoop.close();
+    // T1.1 — end every open doorbell stream (adapters see :closed + reconnect
+    // with backoff; while disconnected they poll at the T0.2 ceiling, §2.5).
+    doorbells.close();
     sharedWorker?.shutdown();
     hostWorker?.shutdown();
   };
@@ -1159,7 +1170,7 @@ async function main() {
 
   // Create workers (signal handlers already active via mutable refs)
   log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const workers = await createWorkers(config, ingestTokens, observerPresence);
+  const workers = await createWorkers(config, ingestTokens, observerPresence, doorbellSink);
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
@@ -1302,6 +1313,11 @@ async function main() {
           // and /inner/ingest validates against the tokens the spawn path minted.
           innerLoop,
           ingestTokens,
+          // T1.1 — the same registry instance the outbox activities ring, so a
+          // `GET /doorbell/:e/:p` subscriber hears deliverCue/deliverReset.
+          // (Daemon-lifetime singleton — a #768 bind RETRY re-serves the same
+          // registry; subscriptions opened after recovery hear rings normally.)
+          doorbells,
         });
         httpServerHandle = handle;
         log(`HTTP listening on http://${handle.bindAddr}:${handle.port}`);

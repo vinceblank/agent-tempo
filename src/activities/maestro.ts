@@ -1,5 +1,5 @@
 import { Client } from '@temporalio/client';
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { conductorWorkflowId, sessionWorkflowId } from '../config';
 import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
 import { scanEnsembleSessions, scanEnsembleSessionsCloud, resolveSession, type EnsembleSessionInfo } from './resolve';
@@ -161,7 +161,27 @@ export function createMaestroActivities(
 
   // #753 — attribute every Temporal call made by these activities (however
   // deep, e.g. scanEnsembleSessions → queryHandleWithTimeout) to the maestro.
-  return tagActionSource('maestro', {
+  //
+  // T0.6/#774 (architect verification prerequisite) — the tag is SPLIT by
+  // the CALLING workflow, resolved per invocation from the activity
+  // context: the same factory serves the per-ensemble maestro (chat-gated)
+  // and the global maestro (never gated — the prime unwatched-residual
+  // suspect), and the meter must tell them apart. Anything else (incl.
+  // direct test invocation outside an activity context) lands in
+  // 'maestro-session'. NOTE: bySource report keys for the maestro line
+  // changed from 'maestro' to these three.
+  const maestroSource = (): 'maestro-ensemble' | 'maestro-global' | 'maestro-session' => {
+    try {
+      switch (activityInfo().workflowType) {
+        case 'agentMaestroWorkflow': return 'maestro-ensemble';
+        case 'agentGlobalMaestroWorkflow': return 'maestro-global';
+        default: return 'maestro-session';
+      }
+    } catch {
+      return 'maestro-session'; // outside an activity context (tests, direct calls)
+    }
+  };
+  return tagActionSource(maestroSource, {
     async refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]> {
       try {
         const sessions = await scanEnsembleSessions(client, ensemble);
