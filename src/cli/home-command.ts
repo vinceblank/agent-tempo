@@ -11,6 +11,7 @@
  */
 import * as os from 'os';
 import * as out from './output';
+import { PI_NODE_FLOOR, PI_PACKAGE } from '../pi/probe';
 import type { BootstrapResult, StepName, StepOutcome } from './startup';
 
 /** Friendly labels for the six bootstrap steps (+ migration pre-step). */
@@ -98,14 +99,17 @@ export function renderHome(result: BootstrapResult | undefined, opts: RenderHome
     lines.push('  agent-tempo up                  start an ensemble here (--lineup <name> for a preset)');
   }
   if (opts.piAvailable) {
-    lines.push(`  agent-tempo command-center${hasEnsembles ? '      live board + operator seat (Pi)' : '      operator seat once an ensemble is up (Pi)'}`);
+    const desc = hasEnsembles
+      ? 'live board + operator seat (Pi)'
+      : 'operator seat once an ensemble is up (Pi)';
+    lines.push(`  agent-tempo command-center      ${desc}`);
   }
   lines.push('  agent-tempo dashboard           web dashboard (zero-dependency fallback)');
   if (hasEnsembles) {
     lines.push('  agent-tempo status <ensemble>   one-shot ensemble detail');
   }
   if (!opts.piAvailable) {
-    lines.push('  npm install -g @earendil-works/pi-coding-agent   unlock the command-center seat (Node ≥ 22.19)');
+    lines.push(`  npm install -g ${PI_PACKAGE}   unlock the command-center seat (Node ≥ ${PI_NODE_FLOOR})`);
   }
   return lines;
 }

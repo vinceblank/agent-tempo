@@ -736,7 +736,7 @@ async function main() {
       // dashboard. `--skip-preflight` renders the degraded no-result home.
       const config = getConfig(overrides);
       const { runHome } = await import('./cli/home-command');
-      const { probePi } = await import('./pi/probe');
+      const { probePi, checkPiNodeFloor } = await import('./pi/probe');
       const pkgVersion = (require('../package.json') as { version: string }).version;
       await runHome({
         bootstrap: args.skipPreflight
@@ -745,7 +745,10 @@ async function main() {
               const { bootstrap } = await import('./cli/startup');
               return bootstrap({ config });
             },
-        piAvailable: probePi().available,
+        // The command-center seat needs BOTH the Pi package and the Node
+        // floor (the same pair command-center-command itself enforces) —
+        // suggesting it on an old Node would dead-end the user.
+        piAvailable: probePi().available && checkPiNodeFloor().ok,
         version: pkgVersion,
       });
       break;
