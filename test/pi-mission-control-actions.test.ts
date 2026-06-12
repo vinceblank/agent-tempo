@@ -451,10 +451,12 @@ describe('mission-control planner LLM tools (#700 P2)', () => {
     return { pi, tools };
   }
 
-  it('registers ask / handoff / cue / recruit / observe_board', () => {
+  it('registers ask / handoff / cue / recruit / observe_board + the #790 ensemble tools', () => {
     const { pi, tools } = fakePiTools();
     registerPlannerTools(pi, new Controller('ens', actions(new FakeFetch())));
-    expect([...tools.keys()].sort()).to.deep.equal(['ask', 'cue', 'handoff', 'observe_board', 'recruit']);
+    expect([...tools.keys()].sort()).to.deep.equal([
+      'ask', 'bind_ensemble', 'cue', 'handoff', 'list_ensembles', 'observe_board', 'recruit',
+    ]);
   });
 
   it('observe_board returns the board as text', async () => {

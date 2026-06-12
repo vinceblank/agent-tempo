@@ -71,6 +71,25 @@ export function initBoard(ensemble: string, tailLimit = DEFAULT_TAIL_LIMIT): Boa
   };
 }
 
+/**
+ * #790 — re-key the board to a NEW ensemble, IN PLACE (the extension's render
+ * tick and the planner's `observe_board` hold the model reference — replacing
+ * the object would strand them on the old board). Everything ensemble-scoped
+ * resets (players, selection, tail, flags); the next coarse `snapshot` event
+ * from the re-opened SSE repopulates authoritatively. Bumps revision so the
+ * throttled render shows the empty re-bound board immediately rather than the
+ * stale one.
+ */
+export function rebindBoard(model: BoardModel, ensemble: string): void {
+  model.ensemble = ensemble;
+  model.players = new Map();
+  model.selected = null;
+  model.innerTail = [];
+  model.paused = false;
+  model.held = false;
+  model.revision++;
+}
+
 /** Project a PlayerSummaryV1 (snapshot / player.added) into a row. */
 function rowFromSummary(p: PlayerSummaryV1): PlayerRow {
   return {

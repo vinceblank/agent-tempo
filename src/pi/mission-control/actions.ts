@@ -8,6 +8,7 @@
  */
 import { readPortFile } from '../../http/port-file';
 import type { AnswerEntry } from '../../types';
+import type { EnsembleSummary } from '../../client/interface';
 
 /** Env var holding the daemon admin (T3) token (writes + inner tail). */
 export const ADMIN_TOKEN_ENV = 'AGENT_TEMPO_HTTP_ADMIN_TOKEN';
@@ -37,7 +38,8 @@ function resolveFetch(): ActionFetch | null {
 
 /** HTTP client for the daemon operator-action surface. All calls bearer-authed. */
 export class MissionControlActions {
-  private readonly ensemble: string;
+  /** Mutable since #790 — `/ensemble <name>` re-binds the client in place. */
+  private ensemble: string;
   private readonly adminToken: string | undefined;
   private readonly baseUrlOverride: string | undefined;
   private readonly fetchFn: ActionFetch | null;
@@ -153,6 +155,27 @@ export class MissionControlActions {
 
   private ens(): string {
     return encodeURIComponent(this.ensemble);
+  }
+
+  /**
+   * #790 — re-point every ensemble-scoped route at a new ensemble (the
+   * `/ensemble <name>` re-bind). The token/baseUrl/transport stay — only the
+   * URL segment changes.
+   */
+  setEnsemble(ensemble: string): void {
+    this.ensemble = ensemble;
+  }
+
+  // ── Multi-ensemble home (#790) ──
+  /**
+   * List all known ensembles (`GET /v1/ensembles`, Tier-1 read). Visibility-
+   * backed (#673: eventually consistent — a just-created ensemble may lag by
+   * seconds), so callers offering a bind-validation should leave an escape
+   * hatch for the lag window.
+   */
+  async listEnsembles(): Promise<{ ok: true; ensembles: EnsembleSummary[] } | { ok: false; error: string }> {
+    const res = await this.getJson<EnsembleSummary[]>('/v1/ensembles');
+    return res.ok ? { ok: true, ensembles: res.data } : res;
   }
 
   // ── Ensemble write surface (T2) ──
