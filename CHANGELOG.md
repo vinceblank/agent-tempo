@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-<!-- DRAFT for 1.8.0 — version header and date left blank; G5 cutover verb will complete. T0.6 and T1.1 doorbell PR-3 pending. -->
+<!-- DRAFT for 1.8.0 — version header and date left blank; G5 cutover verb will complete. T1.1 PRs #776/#783/#803 open (stacked); entries added below. T0.6 pending. -->
 
 ### Cost — Temporal Tier-0 programme (#747)
 
@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Pi pump combined intake query (T0.3, closes #750)** — new `pendingIntake` workflow query returns `{messages, pendingReset}` in one round-trip, halving Pi cue-pump Temporal action count (7,200 → 3,600 query actions/hr per idle Pi player). Old workflows without `pendingIntake` fall back to the legacy two-query path transparently. `pendingReset` is a deprecation candidate at next major; `pendingMessages` is deliberately retained (every non-Pi adapter's primary intake). Refs #747. (PR #762)
 - **Aggregate demand gate + per-tick scan dedup (T0.4, closes #751, #763)** — cloud profile: zero SSE subscribers → 750ms poll stretches to 30s slow reconcile; first subscriber connect wakes immediately. Per-tick deduplication removes the existence-gate second list scan, the `listHosts` re-fetch, the double `getEnsembleChat` fetch, and the `isAnySessionHeld` cluster-wide fan-out (now ensemble-scoped SA-filtered query). Per-tick list budget: cloud 2 / local 3 (unchanged). Refs #747. (PR #764)
 - **`costProfile` operator path (closes #765)** — `agent-tempo config set costProfile <local|cloud>` (alias `cost-profile`) and `config show` now expose and validate the cost-profile axis. Daemon boot logs the resolved profile (`aggregate: costProfile=<x>`) — one grep confirms the active profile without counter forensics. **Ops note**: flipping `costProfile=cloud` takes effect on daemon restart; maestros inherit their `costProfile` from start-time input and require a shutdown/restore or terminate of `agent-maestro-*` workflows to pick up the change. Refs #747, #763. (PR #766)
+
+### Latency — T1.1 cue doorbell (PRs #776/#783/#803, Refs #747)
+
+- **Daemon doorbell registry + route** — `deliverCue`/`deliverReset` activities ring an in-process `DoorbellRegistry` after the Temporal signal lands durably. Subscribed adapters receive a content-free `ding` and poll immediately instead of waiting for their next backoff tick. Route: `GET /doorbell/:ensemble/:playerId` SSE (loopback + `X-Ingest-Token`; outside `/v1/`; no event IDs, no replay by design). **Zero Temporal wire surface** — no signals, queries, or updates added. Ingest-token minting extended from Pi-only to all six SDK-family adapter spawns. (PR #776)
+- **`DoorbellClient` + `WakeableSleep`** — reconnecting SSE consumer (`src/adapters/sdk/doorbell-client.ts`) wired into all five SDK-class adapters (copilot, claude-api, opencode, claude-code-headless, mock) via `SdkAttachment`. On `ding`: `pollBackoff.reset()` + `WakeableSleep.wake()` → immediate poll at the 2s fast cadence. Connected idle ceiling raises from 30s (T0.2) to `SDK_POLL_DOORBELL_MAX_MS` (default 60s; `AGENT_TEMPO_SDK_POLL_DOORBELL_MAX_MS` override). When disconnected or never connected, falls back to the T0.2 30s ceiling automatically. Reconnect loop with capped backoff; one `[agent-tempo:doorbell]` breadcrumb per connect/disconnect transition. (PR #783)
+- **Pi pump IdleBackoff + doorbell** — the Pi cue pump's fixed 1s `setInterval` replaced with a sequential self-scheduling IdleBackoff loop (1s base × 1.5 → 30s disconnected / 60s connected ceiling) + `DoorbellClient` ding-triggered delivery. An idle connected Pi player drops from 86,400 poll ticks/day (T0.3: 1 query each) to ~1,440 + dings (~60× reduction). D14 reset-priority and ding-during-tick coalescing rigorously tested; escalation and re-entrancy guards operate per-tick and are cadence-independent. (PR #803)
+
+> **T1.1 invariant**: doorbell loss is indistinguishable from doorbell-never-sent — polling via Temporal remains the guaranteed delivery path. **A doorbell is NOT demand**: connections live on `DoorbellRegistry`, not the `EnsembleEventBus`, so T0.4's demand gate and T0.1's presence gate are protected. See `docs/concepts.md` §Doorbell and `docs/INNER-LOOP-PROTOCOL.md` §Doorbell.
 
 ### Reliability — Daemon lifecycle
 
