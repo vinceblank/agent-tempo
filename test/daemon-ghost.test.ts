@@ -25,9 +25,11 @@ import {
   assertDaemonPortFree,
   parseWindowsNetstatOwner,
   classifyPortDivergence,
+  resolveDaemonPort,
   DAEMON_PID_PATH,
   type DaemonProcessInfo,
 } from '../src/cli/daemon';
+import { DEV_DAEMON_PORT, ENV, PROD_DAEMON_PORT } from '../src/config';
 
 const GHOST_PID = 2800; // the incident's actual ghost pid
 const PORT = 8473;
@@ -131,6 +133,65 @@ describe('#758 stopDaemon — port-based ghost sweep', function () {
     });
     expect(gracefullySignalled).to.deep.equal([GHOST_PID]);
     expect(forceKilled).to.deep.equal([]); // already signalled — drain window
+  });
+});
+
+describe('#758 cross-profile safety (architect must-fix on #769)', function () {
+  it("the OTHER profile's TRACKED daemon is never swept, even when port resolution lands on its port", function () {
+    // Defense-in-depth half (a): a stale/corrupt port file (or any other
+    // resolution accident) aims the sweep at the prod port from a dev
+    // stop. The prod daemon's cmdline matches a daemon, so only the
+    // exclusion set protects it.
+    const forceKilled: number[] = [];
+    stopDaemon({
+      scan: () => [daemonProc(GHOST_PID)],
+      killer: () => {},
+      isOtherProfileLikelyRunning: () => true,
+      getOtherProfilePid: () => GHOST_PID, // the other profile TRACKS this pid
+      resolvePort: () => PORT,
+      findPortOwner: () => GHOST_PID,
+      forceKiller: (pid) => { forceKilled.push(pid); return true; },
+    });
+    expect(forceKilled).to.deep.equal([]);
+  });
+
+  describe('resolveDaemonPort dev carve-out — half (b): the UNTRACKED prod daemon is protected by never probing its port', function () {
+    const saved: Record<string, string | undefined> = {};
+    beforeEach(function () {
+      for (const k of [ENV.DAEMON_PORT, ENV.DEV_MODE]) saved[k] = process.env[k];
+    });
+    afterEach(function () {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v == null) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+
+    it('ATTACK SCENARIO: shell AGENT_TEMPO_DAEMON_PORT=8473 + dev mode + no port file → resolves the DEV port, not prod', function () {
+      process.env[ENV.DAEMON_PORT] = String(PROD_DAEMON_PORT);
+      process.env[ENV.DEV_MODE] = '1';
+      expect(resolveDaemonPort(() => null)).to.equal(DEV_DAEMON_PORT);
+    });
+
+    it('prod mode still honors the env override', function () {
+      process.env[ENV.DAEMON_PORT] = '9999';
+      delete process.env[ENV.DEV_MODE];
+      expect(resolveDaemonPort(() => null)).to.equal(9999);
+    });
+
+    it("the port FILE (the dev daemon's actually-bound port) still wins in dev mode", function () {
+      process.env[ENV.DAEMON_PORT] = String(PROD_DAEMON_PORT);
+      process.env[ENV.DEV_MODE] = '1';
+      expect(resolveDaemonPort(() => 9001)).to.equal(9001);
+    });
+
+    it('no file, no env → profile default', function () {
+      delete process.env[ENV.DAEMON_PORT];
+      delete process.env[ENV.DEV_MODE];
+      expect(resolveDaemonPort(() => null)).to.equal(PROD_DAEMON_PORT);
+      process.env[ENV.DEV_MODE] = '1';
+      expect(resolveDaemonPort(() => null)).to.equal(DEV_DAEMON_PORT);
+    });
   });
 });
 

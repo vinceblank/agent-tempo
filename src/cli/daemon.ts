@@ -617,12 +617,25 @@ function killDaemonPid(
  * The HTTP port the CURRENT profile's daemon should own:
  * `daemon.port` file (the port the daemon actually bound) → env override →
  * profile default (8473 prod / 8474 dev).
+ *
+ * **Dev carve-out (#423 posture, architect must-fix on #769):** in dev
+ * mode the `AGENT_TEMPO_DAEMON_PORT` shell env var is IGNORED here — a
+ * shell-wide `=8473` would otherwise make a `--dev daemon stop` resolve
+ * the PROD port and aim the #758 ghost sweep at the prod daemon. The dev
+ * daemon's actually-bound port still wins via the dev profile's port
+ * file when present.
+ *
+ * `readPort` is a test seam (the default reads the real profile port file).
  */
-export function resolveDaemonPort(): number {
-  const fromFile = readPortFile(DAEMON_PORT_PATH);
+export function resolveDaemonPort(
+  readPort: () => number | null = () => readPortFile(DAEMON_PORT_PATH),
+): number {
+  const fromFile = readPort();
   if (fromFile !== null) return fromFile;
-  const fromEnv = Number(process.env[ENV.DAEMON_PORT]);
-  if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) return fromEnv;
+  if (!isDevMode()) {
+    const fromEnv = Number(process.env[ENV.DAEMON_PORT]);
+    if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) return fromEnv;
+  }
   return isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
 }
 
@@ -724,7 +737,13 @@ export interface PortPreflightDeps {
   resolvePort?: () => number;
   findPortOwner?: (port: number) => number | null;
   scan?: () => DaemonProcessInfo[];
-  /** Total wait for a draining prior daemon to release the port. Default 10s. */
+  /**
+   * Total wait for a draining prior daemon to release the port. Default 15s
+   * — aligned with the worker shutdown ceiling (SHUTDOWN_GRACE_TIME 10s +
+   * SHUTDOWN_FORCE_TIME 15s in worker.ts): a draining daemon is guaranteed
+   * dead-or-exited within ~15s, so waiting any less risks refusing a
+   * legitimate stop→start, and any more just delays the ghost error.
+   */
   waitMs?: number;
   /** Poll interval while waiting. Default 250ms. */
   pollMs?: number;
@@ -745,7 +764,7 @@ export interface PortPreflightDeps {
 export async function assertDaemonPortFree(deps: PortPreflightDeps = {}): Promise<void> {
   const port = (deps.resolvePort ?? resolveDaemonPort)();
   const probe = deps.findPortOwner ?? findPortOwnerPid;
-  const waitMs = deps.waitMs ?? 10_000;
+  const waitMs = deps.waitMs ?? 15_000;
   const pollMs = deps.pollMs ?? 250;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
@@ -883,11 +902,17 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   // port gets a loud warning + the manual command instead.
   const port = (opts.resolvePort ?? resolveDaemonPort)();
   const owner = (opts.findPortOwner ?? findPortOwnerPid)(port);
-  const signalledPids = new Set<number>([
+  // Exclusion set: pids we already gracefully signalled (drain window) PLUS
+  // the OTHER profile's tracked daemon (architect must-fix on #769 — if
+  // port resolution ever lands on the other profile's port, e.g. a stale/
+  // corrupt port file, the sweep must not be able to kill a tracked prod
+  // daemon from a dev stop; complements the resolveDaemonPort dev carve-out).
+  const excludedPids = new Set<number>([
     ...(status.pid !== undefined ? [status.pid] : []),
     ...zombies.map((z) => z.pid),
+    ...(() => { const p = otherPidLookup(); return p !== undefined ? [p] : []; })(),
   ]);
-  if (owner !== null && !signalledPids.has(owner)) {
+  if (owner !== null && !excludedPids.has(owner)) {
     let looksLikeDaemon = false;
     try {
       looksLikeDaemon = (scanned ?? scan()).some((p) => p.pid === owner);
@@ -907,8 +932,9 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
       );
     }
   }
-  // owner ∈ signalledPids → we already signalled it; graceful shutdown
-  // takes a moment to release the port — nothing more to do here.
+  // owner ∈ excludedPids → either we already signalled it (graceful
+  // shutdown takes a moment to release the port) or it's the other
+  // profile's tracked daemon — nothing more to do here.
 
   return stopped;
 }
