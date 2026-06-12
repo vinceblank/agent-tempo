@@ -1,5 +1,5 @@
 import * as readline from 'readline';
-import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources } from '../config';
+import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources, COST_PROFILES } from '../config';
 import { getConfig } from '../config';
 import type { AgentType } from '../types';
 import { isSecretKey } from '../utils/secrets';
@@ -210,6 +210,11 @@ export function configSet(key: string, value: string): void {
     'default-agent': 'defaultAgent',
     claudeBin: 'claudeBin',
     'claude-bin': 'claudeBin',
+    // #765 — the T0.1 cost-profile axis was resolvable from config.json but
+    // had NO operator write path (this map rejected the key), which is how
+    // a cloud deploy silently ran 'local' (#763 window-B forensics).
+    costProfile: 'costProfile',
+    'cost-profile': 'costProfile',
   };
 
   const configKey = keyMap[key];
@@ -222,6 +227,15 @@ export function configSet(key: string, value: string): void {
   // Validate agent type — restrict to the conductor-capable production agents.
   if (configKey === 'defaultAgent' && !(VALID_DEFAULT_AGENTS as readonly string[]).includes(value)) {
     out.error(`Invalid agent type: "${value}". Must be one of: ${VALID_DEFAULT_AGENTS.join(', ')}.`);
+    process.exit(1);
+  }
+
+  // Validate the cost profile — reject garbage HERE rather than letting
+  // getConfig()'s lenient parse silently fall back to 'local' at runtime
+  // (an operator typo must fail loudly at set time, not surface as a
+  // mystery meter reading later).
+  if (configKey === 'costProfile' && !(COST_PROFILES as readonly string[]).includes(value)) {
+    out.error(`Invalid cost profile: "${value}". Must be one of: ${COST_PROFILES.join(', ')}.`);
     process.exit(1);
   }
 
@@ -246,6 +260,7 @@ export function configShow(): void {
     { key: 'temporalTlsKeyPath', configKey: 'temporalTlsKeyPath' },
     { key: 'defaultAgent', configKey: 'defaultAgent' },
     { key: 'claudeBin', configKey: 'claudeBin' },
+    { key: 'costProfile', configKey: 'costProfile' },
   ];
 
   out.log(`  Config file: ${out.dim(CONFIG_FILE_PATH)}`);

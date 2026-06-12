@@ -1174,6 +1174,14 @@ async function main() {
       // aggregate exists (see ObserverPresenceSource).
       const runner = aggregateRunner;
       observerPresence.current = () => runner.totalSubscriberCount();
+      // #765 — deploy-verifiable profile line: the #763 window-B forensics
+      // burned hours because nothing at boot said which profile the
+      // aggregate actually resolved. Grep target: 'aggregate: costProfile='.
+      log(
+        `aggregate: costProfile=${config.costProfile ?? 'local'}, ` +
+        `demand-gate ${config.costProfile === 'cloud' ? 'armed' : 'off'}, ` +
+        `confirm-on-change ${config.costProfile === 'cloud' ? 'armed' : 'off'}`,
+      );
       httpServerHandle = await startHttpServer({
         client: httpClient,
         namespace: config.temporalNamespace,
