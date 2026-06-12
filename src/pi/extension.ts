@@ -349,6 +349,13 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         intakeSource: wf,
         resolveSession: () => runtimes.get(workflowId)?.session ?? null,
         resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
+        // T1.1 PR-3 — cue doorbell: a daemon ding pops the pump's inter-tick
+        // sleep (sub-second injection) and connected-state raises the idle
+        // ceiling. Same identity the inner-loop client uses; the client
+        // no-ops without AGENT_TEMPO_INGEST_TOKEN (interactive/manual
+        // launches keep pure polling) and is plain loopback HTTP — no Pi
+        // instance dependency, so it survives rebuilds with the pump (D11).
+        doorbell: { ensemble: config.ensemble, playerId: fixedPlayerId },
       });
       // 3c — inner-loop publisher + its loopback-HTTP sink. The client no-ops
       // unless AGENT_TEMPO_INGEST_TOKEN is present (daemon-spawned headless

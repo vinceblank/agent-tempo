@@ -1,5 +1,5 @@
 /**
- * Cue pump — ONE generic 1 s poll loop with TWO intakes per tick:
+ * Cue pump — ONE generic poll loop with TWO intakes per tick:
  *   (a) the single-slot pending RESET (3d D14 + #677 PART B — formerly the
  *       separate `ResetPump`, merged here per S3 of
  *       docs/design/pi-streamline-gate-removal-cc.md), then
@@ -10,6 +10,20 @@
  * `markDelivered` / `ackReset`. T0.3 (#750): with an `intakeSource`, both
  * reads collapse into ONE `pendingIntake` query per tick (legacy two-query
  * fallback against pre-#750 workflows lives in `PiWorkflowClient.fetchIntake`).
+ *
+ * ── Cadence (T1.1 PR-3): idle backoff + cue doorbell ──
+ * The former fixed 1s `setInterval` is now a sequential self-scheduling loop:
+ * each EMPTY tick stretches the next delay (×1.5) toward the T0.2 30s ceiling
+ * (60s while the doorbell is connected — latency is the doorbell's job, the
+ * poll is reconciliation); any pending cue/reset snaps back to the 1s base.
+ * A daemon `ding` (cue/reset just delivered to the workflow) pops the
+ * inter-tick sleep + resets the curve ⇒ sub-second injection. The ding is a
+ * HINT (level-triggered, coalesced): a ding mid-tick yields exactly ONE
+ * immediate follow-up tick — never a concurrent tick (the single loop is the
+ * structural guarantee; `draining` covers direct external `tick()` callers).
+ * Doorbell loss/absence degrades to pure polling — today's shipped behavior
+ * is the floor (design doc §5). An idle connected player drops from 86,400
+ * ticks/day to ~1,440 + dings.
  *
  * ── Reset intake (D14 + #677 PART B capability branch) ──
  * D14 (maintainer-ruled): reset = clean-wipe (fresh context, NO replay). Seeded
@@ -66,6 +80,13 @@
 import type { Message, PendingReset } from '../types';
 import type { ExtensionAPI, PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from './pi-types';
 import { withActionSource } from '../utils/action-counters';
+import {
+  IdleBackoff,
+  SDK_POLL_BACKOFF_FACTOR,
+  resolveDoorbellCeilingMs,
+  resolveIdleBackoffConfig,
+} from '../adapters/sdk/idle-backoff';
+import { DoorbellClient, WakeableSleep } from '../adapters/sdk/doorbell-client';
 
 /** Source of pending cues + ack — satisfied by `PiWorkflowClient`. */
 export interface CueSource {
@@ -191,8 +212,32 @@ export interface CuePumpOptions {
    * path; the pump still auto-wipes when a session with `newSession()` is present.
    */
   resolvePi?: PiResolver;
-  /** Poll interval (ms). */
+  /**
+   * Poll cadence (ms). T1.1 PR-3: this is now the BASE of an idle-backoff
+   * curve, not a fixed interval — each empty tick stretches the next delay
+   * (×1.5, capped at the 30s T0.2 ceiling / 60s while the doorbell is
+   * connected); any delivered cue or processed reset snaps back to this base.
+   */
   intervalMs?: number;
+  /**
+   * T1.1 PR-3 — cue-doorbell identity. When present, `start()` opens a
+   * {@link DoorbellClient} stream for this player: a `ding` pops the
+   * inter-tick sleep + resets the backoff (immediate tick at the fast
+   * cadence), and connected-state drives the idle ceiling (§3 matrix). The
+   * client itself no-ops without `AGENT_TEMPO_INGEST_TOKEN` and silently
+   * degrades on every failure — absent token / dead daemon ⇒ pure polling.
+   * The client is plain loopback HTTP with no Pi-instance dependency, so it
+   * survives Pi's instance rebuild with the pump that owns it (D11).
+   * `ingestToken`/`readPort` are test seams (default: spawn env + port file).
+   */
+  doorbell?: {
+    ensemble: string;
+    playerId: string;
+    ingestToken?: string;
+    readPort?: () => number | null;
+  };
+  /** Test seam — injected backoff (defaults to base=intervalMs, ×1.5, 30s cap). */
+  backoff?: IdleBackoff;
   /** Injected clock (tests). Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -213,7 +258,19 @@ export class CuePump {
   private readonly resolvePi: PiResolver;
   private readonly intervalMs: number;
   private readonly now: () => number;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * T1.1 PR-3 — idle backoff (the pump's largest single cost win: an idle
+   * connected player goes from 86,400 ticks/day to ~1,440 + dings). Reset
+   * on any delivered cue / processed reset and on every ding.
+   */
+  private readonly backoff: IdleBackoff;
+  /** Inter-tick sleeper — a ding (or stop) pops it; level-triggered (ding-during-tick coalesces). */
+  private readonly sleeper = new WakeableSleep();
+  private readonly doorbellIdentity: NonNullable<CuePumpOptions['doorbell']> | null;
+  /** The idle ceiling while the doorbell is disconnected/never-connected (T0.2 floor). */
+  private readonly disconnectedCeilingMs: number;
+  private doorbell: DoorbellClient | null = null;
+  private running = false;
   private draining = false;
   /**
    * The last cue injected via the escalation-eligible `pi.sendMessage` route,
@@ -237,20 +294,76 @@ export class CuePump {
     this.resolvePi = opts.resolvePi ?? (() => null);
     this.intervalMs = opts.intervalMs ?? DEFAULT_POLL_MS;
     this.now = opts.now ?? Date.now;
+    // Disconnected/never-connected ceiling = the T0.2 floor (env-overridable),
+    // clamped ≥ the base. Computed once; reused by the constructor curve and
+    // the doorbell disconnect transition below.
+    this.disconnectedCeilingMs = Math.max(this.intervalMs, resolveIdleBackoffConfig().maxMs);
+    this.backoff =
+      opts.backoff ??
+      new IdleBackoff({
+        baseMs: this.intervalMs,
+        factor: SDK_POLL_BACKOFF_FACTOR,
+        maxMs: this.disconnectedCeilingMs,
+      });
+    this.doorbellIdentity = opts.doorbell ?? null;
   }
 
   start(): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => {
-      this.tick().catch((err) => log('cue-pump tick failed:', err));
-    }, this.intervalMs);
-    if (typeof this.timer.unref === 'function') this.timer.unref();
+    if (this.running) return;
+    this.running = true;
+    // T1.1 PR-3 — doorbell stream (no-op without an ingest token; every
+    // failure degrades to pure polling — §5 of the design doc).
+    if (this.doorbellIdentity) {
+      this.doorbell = new DoorbellClient({
+        ...this.doorbellIdentity,
+        onDing: () => this.ding(),
+        onConnectionChange: (connected) => {
+          this.backoff.setCeiling(
+            connected ? resolveDoorbellCeilingMs() : this.disconnectedCeilingMs,
+          );
+        },
+      });
+      this.doorbell.start();
+    }
+    // Self-scheduling loop replaces the former fixed setInterval: structural
+    // non-concurrency (one tick at a time, no overlapping interval fires) +
+    // an interruptible inter-tick sleep. The WakeableSleep timer is unref'd,
+    // so the loop never holds the process open — same as the old interval.
+    void this.runLoop();
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (!this.running) return;
+    this.running = false;
+    this.doorbell?.stop();
+    this.doorbell = null;
+    this.sleeper.wake(); // pop a parked sleep so the loop exits promptly
+  }
+
+  /**
+   * T1.1 PR-3 — doorbell ding: reset to the fast cadence and run the next
+   * tick NOW. If a tick is mid-flight, the wake is level-triggered — it
+   * coalesces into exactly ONE immediate follow-up tick after the current
+   * one completes (never a concurrent tick; the single sequential loop is
+   * the structural guarantee). Dings are hints: the tick they trigger may
+   * find nothing (already-fetched batch) — one wasted query by design.
+   */
+  ding(): void {
+    this.backoff.reset();
+    this.sleeper.wake();
+  }
+
+  /** The sequential tick loop. Delay comes from the idle-backoff curve; activity snaps it back. */
+  private async runLoop(): Promise<void> {
+    while (this.running) {
+      let hadActivity = false;
+      try {
+        hadActivity = await this.tick();
+      } catch (err) {
+        log('cue-pump tick failed:', err);
+      }
+      if (!this.running) return;
+      await this.sleeper.sleep(this.backoff.next(hadActivity));
     }
   }
 
@@ -259,18 +372,23 @@ export class CuePump {
    * notice — see file header), then the cue intake: (1) escalate a
    * previously-injected cue that never woke a turn, (2) fetch pending cues,
    * inject each into the live agent, ack the ones successfully injected.
-   * Re-entrancy guarded so a slow tick never overlaps the next interval. A reset
-   * intake failure never starves the cue intake (logged, non-fatal).
+   * Re-entrancy guarded so a slow tick never overlaps the next interval (the
+   * loop is sequential; the guard covers direct external `tick()` callers). A
+   * reset intake failure never starves the cue intake (logged, non-fatal).
+   *
+   * Returns whether the tick saw ACTIVITY (pending cues or a pending reset) —
+   * drives the T1.1 idle-backoff curve: activity snaps the cadence back to
+   * base, an empty tick stretches it toward the ceiling.
    */
-  async tick(): Promise<void> {
-    if (this.draining) return;
+  async tick(): Promise<boolean> {
+    if (this.draining) return false;
     this.draining = true;
     // #753 — meter the pump's Temporal calls (pendingMessages/pendingReset
     // queries + markDelivered/ackReset signals) under 'pi-pump'.
     return withActionSource('pi-pump', () => this.tickInner());
   }
 
-  private async tickInner(): Promise<void> {
+  private async tickInner(): Promise<boolean> {
     try {
       // T0.3 (#750): combined prefetch — ONE Temporal query serves both
       // intakes (cues + pending reset) instead of two. Prefetching the cue
@@ -279,11 +397,17 @@ export class CuePump {
       // Pi-side wipe never touches, and the cues are still injected AFTER
       // the wipe below — they land in the fresh context exactly as before.
       const intake = this.intakeSource ? await this.intakeSource.fetchIntake() : null;
+      // T1.1 — activity for the backoff curve: a PROCESSED/pending reset or
+      // pending cues snap the cadence back to base (a failed injection still
+      // counts — fast retry is exactly what a held/failed cue wants). A
+      // reset on a cue-only pump (no resetSource) is deliberately NOT
+      // activity — nothing here will ever process it.
+      let hadActivity = false;
 
       // (0) Reset intake FIRST — a wipe lands before any cue injected this tick.
       if (this.resetSource) {
         try {
-          await this.tickReset(this.resetSource, intake);
+          hadActivity = await this.tickReset(this.resetSource, intake);
         } catch (err) {
           log('reset intake failed (cue intake continues):', err);
         }
@@ -298,14 +422,15 @@ export class CuePump {
       await this.maybeEscalate(injector);
 
       const pending = intake ? intake.messages : await this.source.fetchPending();
-      if (pending.length === 0) return;
+      if (pending.length === 0) return hadActivity;
+      hadActivity = true;
 
       if (!injector) {
         // No live injection target yet (no `pi` handle / session) — leave cues
         // queued; next tick retries once an instance attaches/rebinds. Logged so a
         // live bring-up can see cues are HELD (not lost) while waiting to attach.
         log(`no live injector — holding ${pending.length} cue(s) for next tick`);
-        return;
+        return hadActivity;
       }
 
       const delivered: string[] = [];
@@ -334,6 +459,7 @@ export class CuePump {
       if (injector.escalate && lastDeliveredText !== null) {
         this.lastInject = { text: lastDeliveredText, injectedAt: this.now(), escalated: false };
       }
+      return hadActivity;
     } finally {
       this.draining = false;
     }
@@ -352,15 +478,19 @@ export class CuePump {
    * `pendingReset` field is authoritative (including a known-empty `null` —
    * no second ask); without one, query the legacy source here. Branch logic
    * and the race-safe `ackReset(resetId)` id-match are IDENTICAL either way.
+   *
+   * Returns whether a reset was PENDING this tick (whatever branch handled
+   * it) — T1.1 backoff activity, incl. branch 5's left-pending case where a
+   * fast retry is exactly what the waiting reset wants.
    */
   private async tickReset(
     resetSource: ResetSource,
     intake: { pendingReset: PendingReset | null } | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const pr = intake ? intake.pendingReset : await resetSource.fetchPendingReset();
     if (!pr) {
       this.lastNotifiedResetId = null; // slot empty → forget the last notice
-      return;
+      return false;
     }
 
     if (!pr.fresh) {
@@ -369,7 +499,7 @@ export class CuePump {
       log(`reset ${pr.resetId}: fresh=false — no wipe (seeded reset is restart's job)`);
       await resetSource.ackReset(pr.resetId);
       this.lastNotifiedResetId = null;
-      return;
+      return true;
     }
 
     // (3) Session-capable (headless) → auto clean-wipe in place.
@@ -378,7 +508,7 @@ export class CuePump {
       await this.performWipe(session, pr);
       await resetSource.ackReset(pr.resetId);
       this.lastNotifiedResetId = null;
-      return;
+      return true;
     }
 
     // (4) Interactive → can't auto-wipe; notify the operator to run /tempo-reset.
@@ -391,10 +521,12 @@ export class CuePump {
       // ACK-ON-NOTIFY: the request has been DELIVERED to the operator (the most
       // an interactive conductor can do); clear the slot so it doesn't re-poll.
       await resetSource.ackReset(pr.resetId);
-      return;
+      return true;
     }
 
-    // (5) Nothing attached yet — leave it pending; next tick retries.
+    // (5) Nothing attached yet — leave it pending; next tick retries (fast —
+    // the pending reset counts as activity for the backoff curve).
+    return true;
   }
 
   /** D14 clean-wipe (caller guarantees `fresh` + `newSession`) + the "context wiped" notice. */
