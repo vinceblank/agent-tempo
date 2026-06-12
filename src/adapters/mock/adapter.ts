@@ -245,6 +245,7 @@ export class MockAttachment extends SdkAttachment {
       if (shuttingDown) return;
       shuttingDown = true;
       this.polling = false;
+      this.stopDoorbell(); // T1.1 — end the SSE stream before detaching
       try {
         await this.stopV2Lifecycle('user-stop', /* graceful */ true);
       } catch (err) {
@@ -265,6 +266,12 @@ export class MockAttachment extends SdkAttachment {
       log(`ERROR: claimAttachment failed: ${(err as Error)?.message ?? err}`);
       process.exit(1);
     }
+
+    // T1.1 PR-2 — cue doorbell, same wiring as the production adapters ON
+    // PURPOSE (dev/prod parity on the delivery path): ding ⇒ immediate poll
+    // + backoff reset; connected ⇒ 60s idle ceiling. This is the dev-mode
+    // E2E surface for the doorbell state machine.
+    this.startDoorbell(config.ensemble, playerId);
 
     // Stamp metadata so `recall` / `attachment-info` show the mock player
     // populated like a real session.
@@ -303,7 +310,11 @@ export class MockAttachment extends SdkAttachment {
         try {
           // #749: idle backoff — grow on empty/error ticks, snap back to the
           // 2s base whenever a message was processed.
-          await this.abortableSleep(this.pollBackoff.next(hadMessages));
+          // T1.1: raced against the doorbell-interruptible pollSleep so a
+          // ding ends the wait early, while abortableSleep keeps the
+          // reject-on-stop semantics (race rejects ⇒ catch ⇒ break).
+          const delay = this.pollBackoff.next(hadMessages);
+          await Promise.race([this.abortableSleep(delay), this.pollSleep(delay)]);
         } catch {
           // `abortableSleep` rejects with `aborted:stopped` on terminal/stop —
           // we exit the loop and let cleanup finish.

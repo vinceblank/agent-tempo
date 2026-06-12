@@ -49,6 +49,14 @@ export const ENV = {
   SDK_POLL_BASE_MS: 'AGENT_TEMPO_SDK_POLL_BASE_MS',
   SDK_POLL_MAX_MS: 'AGENT_TEMPO_SDK_POLL_MAX_MS',
   /**
+   * T1.1 PR-2 — idle ceiling while the cue doorbell is CONNECTED (default
+   * 60s; latency is the doorbell's job, the poll is reconciliation —
+   * docs/design/t11-cue-doorbell.md §2.4). Clamped to ≥ the resolved base.
+   * Disconnected/never-connected players use SDK_POLL_MAX_MS (the T0.2
+   * floor) — daemon down reverts cost and latency to post-#761 exactly.
+   */
+  SDK_POLL_DOORBELL_MAX_MS: 'AGENT_TEMPO_SDK_POLL_DOORBELL_MAX_MS',
+  /**
    * #131 Phase C — claude-api adapter model override. Recruit-arg takes
    * precedence; this env var is the next fallback before the constants-pinned
    * default (`claude-opus-4-7`). Ignored by other adapters.

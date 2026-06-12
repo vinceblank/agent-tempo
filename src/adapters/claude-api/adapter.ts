@@ -304,6 +304,11 @@ export class DirectApiAttachment extends SdkAttachment {
       process.exit(1);
     }
 
+    // T1.1 PR-2 — cue doorbell: ding ⇒ immediate poll + backoff reset;
+    // connected ⇒ 60s idle ceiling. No token / daemon down ⇒ silent no-op
+    // (pure #761 polling).
+    this.startDoorbell(config.ensemble, playerIdForWorkflow);
+
     // PID file so callers can find / kill orphaned adapter processes.
     // #690 — write/unlink the EXACT path the spawner computed (ENV.PID_FILE) so the
     // adapter pid can't diverge from the spawner's; helper fallback for a manual launch.
@@ -329,6 +334,7 @@ export class DirectApiAttachment extends SdkAttachment {
     // Drive the poll loop until cleanup is requested.
     // #753 — meter the poll loop's Temporal calls under 'sdk-poller'.
     await withActionSource('sdk-poller', () => this.pollLoop(handle));
+    this.stopDoorbell();
     try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
   }
 
@@ -394,12 +400,14 @@ export class DirectApiAttachment extends SdkAttachment {
         log(`pendingMessages query failed: ${(err as Error)?.message ?? err}`);
         // #749: grow on errors too — mirrors the interactive poller's shape
         // (a wedged worker shouldn't be hammered at 2s).
-        await sleep(this.pollBackoff.next(false));
+        // T1.1: pollSleep is doorbell-interruptible — a ding ends it early.
+        await this.pollSleep(this.pollBackoff.next(false));
         continue;
       }
       if (messages.length === 0) {
-        // #749: idle backoff — 2s → 30s while nothing is pending.
-        await sleep(this.pollBackoff.next(false));
+        // #749: idle backoff — 2s → 30s while nothing is pending (60s
+        // ceiling while the T1.1 doorbell is connected; a ding wakes it).
+        await this.pollSleep(this.pollBackoff.next(false));
         continue;
       }
       // #749: live conversation — snap back to the fast cadence.
