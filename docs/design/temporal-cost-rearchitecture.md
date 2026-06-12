@@ -28,6 +28,15 @@ $50/M actions (first 5M, May 2026 repricing). **Queries ARE billable** — 1 act
 
 **Totals** (researcher): 1 Pi + 9 SDK players + maestros ≈ **2.0M actions/day ≈ $3,000/mo**. Without maestro loops: ~$950/mo. All-interactive, no maestro: ~$78/mo.
 
+> **RESOLVED 2026-06-12 (#763/#764)**: step 0's honest re-measure put the daemon aggregate
+> poll at **~9.4M actions/day** idle (≈78 queries + 3 cluster scans per 750ms tick) — the
+> architect sweep's ~7.8M estimate below was the right order of magnitude; the researcher's
+> 2.0M/day total above under-counted by omitting `aggregate.ts`. The ~3.3M/day "pre-diet
+> baseline" from the first meter window (18.09h, build 4eb50c21) was an
+> instrumentation-suppression artifact identified in #763 — daemon sickness truncated most
+> ticks, measuring ~⅓ of the true cost; the honest healthy-daemon baseline is ~9.4M/day,
+> the epic's denominator. The section below is preserved as written for the audit trail.
+
 ### ⚠ Discrepancy to resolve with instrumentation (step 0 of any implementation)
 My independent cadence sweep also found the **daemon HTTP-plane aggregate poll** (`src/http/aggregate.ts`): 750ms cadence, **unconditional** ("Subscriber count is irrelevant" — file header), fanning out ~68 queries/tick for a 10-player ensemble (prelude + ensemble-level + 3 wire-meta queries/player via `snapshot.ts getPlayerWireMeta` + duplicated `listHosts` + duplicated `getEnsembleChat` 50/200 windows). Naïve math: ~7.8M actions/day — **larger than the researcher's entire 2.0M/day total**, and absent from their driver list. Possible reconciliations: serial-with-skip means effective cadence ≫750ms under load; `query-timeout.ts` in-flight dedup; visibility `workflow.list` calls possibly not action-billed; or the researcher's pass simply didn't cover `aggregate.ts`. **Don't guess — instrument.** Recommendation: before any fix lands, add per-source action counting (client-side interceptor tagging query/signal source) and read the namespace's actual action metering for a 24h idle window. This is a half-day task and de-risks the whole program. Whichever of maestro-5s vs aggregate-750ms dominates, **both are idle polling and both are fixed by the same Tier-0/Tier-1 moves below.**
 
@@ -48,7 +57,7 @@ Adopting the researcher's split: **Tier 0 = no-architecture-change fixes** (days
 Filter `SESSION_LIST_QUERY` by the existing `AgentTempoEnsemble` SA (it's indexed; the unfiltered scan + pre-filter `getMetadata` per session is simply a bug-shaped inefficiency). Read part/phase from SAs (`AgentTempoPlayerId`, `AgentTempoAttachmentState`, `AgentTempoPlayerType`) instead of 3 per-session queries — the SAs already carry this. Stretch refresh 5s→15–30s; presence-gate on dashboard connections (the `IDLE_TIMEOUT_MS` machinery exists, extend it to gate on daemon-reported subscriber presence).
 - **Reduction**: ~70% of measured total. **Wire blast**: zero (no names touched; SA reads are visibility-side). **Compat**: none needed. **Complexity**: ~100–250 LOC in `resolve.ts`/`maestro.ts` + tests. **Risk: LOW.** One nuance: `getActivityState` feeds the BPM/tempo buckets — keep a slow per-player query for that or derive activity from SA-phase transitions; flag for design review.
 
-**T0.2 — Port the claude-code idle backoff to the 5 SDK pollers** *(driver #3, ~16× idle cut)*
+**T0.2 — Port the claude-code idle backoff to the 5 SDK pollers** *(driver #3, ~15× idle cut — 43,200→2,880/day; an earlier "~16×" here was a rounding slip. Implementation note (#761): the claude-code "reference" backoff turned out to be error-triggered, not idle-triggered — T0.2 introduced idle backoff rather than porting it)*
 The 2s→30s exponential idle backoff already exists in `src/adapters/claude-code/adapter.ts:46-48,:120`. Hoist it into `SdkAttachment` (one place, all five inherit). ~50–100 LOC. **Risk: LOW** (reset-to-fast-on-delivery logic is already proven in the interactive adapter).
 
 **T0.3 — Merge `pendingReset` into the `pendingMessages` cycle** *(halves driver #2 for ~20 LOC)*
@@ -129,7 +138,7 @@ Adapters beat against their **own host's** daemon over loopback (3c ingest plumb
 |---|---|---|---|---|---|
 | 0 | Instrument per-source action counts | enables all | none | none | 0.5d |
 | 1 | T0.1 maestro SA-filter + SA reads + cadence | ~70% of bill | LOW | none | days |
-| 2 | T0.2 SDK poller idle backoff | ~16× idle/player | LOW | none | <1d |
+| 2 | T0.2 SDK poller idle backoff | ~15× idle/player | LOW | none | <1d |
 | 3 | T0.3 merge pendingReset into pendingMessages | ½ Pi pump | LOW | additive | <1d |
 | 4 | T0.4 aggregate dedup + demand gating | daemon idle→~0 | LOW | none | 1–2d |
 | 5 | B4(c) pause/hold loudness | n/a (correctness) | none | additive | 1d |
