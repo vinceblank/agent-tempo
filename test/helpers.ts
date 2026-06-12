@@ -593,10 +593,24 @@ async function awaitWorkerSlotRelease(): Promise<void> {
  * immediately — that test is already failing, and the next create still has the
  * widened slot-retry as its backstop).
  */
-async function runWorkerUntil<T>(worker: Worker, fn: () => Promise<T>): Promise<T> {
+export async function runWorkerUntil<T>(worker: Worker, fn: () => Promise<T>): Promise<T> {
   const result = await worker.runUntil(fn);
   await awaitWorkerSlotRelease();
   return result;
+}
+
+/**
+ * The pre-built workflow bundle loaded by `setupTestEnv` — exported (#760)
+ * so test files composing their own worker with custom counting activity
+ * stubs (e.g. test/maestro-chat-gate.test.ts) don't re-read the bundle.
+ * Throws before `setupTestEnv` for the same fail-loud reason as
+ * `requireTestEnv`.
+ */
+export function getWorkflowBundle(): { code: string } {
+  if (!workflowBundle) {
+    throw new Error('getWorkflowBundle() called before setupTestEnv()');
+  }
+  return workflowBundle;
 }
 
 /** The SlotKey-overlap signature — retryable. Tolerant to phrasing drift. */

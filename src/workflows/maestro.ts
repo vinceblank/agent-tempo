@@ -162,6 +162,10 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
   // costProfile field, so they resolve to the legacy 5s default and the V1
   // refresh activity — identical commands on replay.
   const cloudProfile = input.costProfile === 'cloud';
+  // T0.6 (#760) — the chat gate NEEDS a marker (unlike T0.1's V2 switch):
+  // post-#759 cloud maestros recorded chat-fetch activities on unwatched
+  // ticks, so skipping those without a marker would mismatch their replay.
+  const chatGateEnabled = patched('v1.8-t06-chat-gate');
   let refreshIntervalMs = resolveRefreshIntervalMs(input, /* observersPresent */ true);
 
   let players: MaestroPlayerInfo[] = input.players ?? [];
@@ -591,6 +595,11 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
 
     if (shutdownRequested) break;
 
+    // T0.6 (#760) — this tick's observer presence, from the recorded V2
+    // activity result. Defaults to true (local profile / V1 path / refresh
+    // failure → never skip the chat fetch on missing information).
+    let observersPresent = true;
+
     // ── Refresh Ensemble State ──
     try {
       // T0.1 (#748) — cloud-profile maestros (input-gated: only runs whose
@@ -603,6 +612,7 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
       if (cloudProfile) {
         const v2 = await refreshEnsembleStateV2({ ensemble: input.ensemble });
         newPlayers = v2.players;
+        observersPresent = v2.observersPresent;
         refreshIntervalMs = resolveRefreshIntervalMs(input, v2.observersPresent);
       } else {
         newPlayers = await refreshEnsembleState(input.ensemble);
@@ -704,22 +714,38 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     }
 
     // ── Refresh Ensemble Chat ──
+    //
+    // T0.6 (#760) — cloud profile: skip the chat fetch (≤4 queries/tick)
+    // when the daemon reported ZERO SSE observers this tick. Chat is a
+    // pure observation feed — the conductor relay path doesn't consume
+    // the maestro's cache — so an unwatched ensemble loses nothing;
+    // staleness inherits the accepted T0.1 cadence-stretch contract (the
+    // first watched tick re-fetches from the durable high-water marks).
+    // Gated behind its own patched marker: post-#759 cloud maestros have
+    // chat activities RECORDED on unwatched ticks, so an ungated skip
+    // would be a replay command mismatch (input-driven gating only
+    // protects pre-#748 runs — verified, contra the initial "no marker
+    // expected" estimate).
     if (patched('v0.19-ensemble-chat')) {
-      try {
-        const chatResult = await fetchEnsembleChat({
-          ensemble: input.ensemble,
-          knownCounts: chatHighWater,
-        });
-        if (chatResult.success) {
-          cachedChat.push(...chatResult.newMessages);
-          const MAX_CACHED_CHAT = 500;
-          const chatExcess = cachedChat.length - MAX_CACHED_CHAT;
-          if (chatExcess > 0) cachedChat.splice(0, chatExcess);
-          chatHighWater = chatResult.currentCounts;
-          cachedChatMeta = { hasConductor: chatResult.hasConductor };
+      if (chatGateEnabled && cloudProfile && !observersPresent) {
+        // Unwatched — leave the cache + high-water marks untouched.
+      } else {
+        try {
+          const chatResult = await fetchEnsembleChat({
+            ensemble: input.ensemble,
+            knownCounts: chatHighWater,
+          });
+          if (chatResult.success) {
+            cachedChat.push(...chatResult.newMessages);
+            const MAX_CACHED_CHAT = 500;
+            const chatExcess = cachedChat.length - MAX_CACHED_CHAT;
+            if (chatExcess > 0) cachedChat.splice(0, chatExcess);
+            chatHighWater = chatResult.currentCounts;
+            cachedChatMeta = { hasConductor: chatResult.hasConductor };
+          }
+        } catch {
+          // Chat refresh failed — keep stale cache, retry next cycle
         }
-      } catch {
-        // Chat refresh failed — keep stale cache, retry next cycle
       }
     }
 
