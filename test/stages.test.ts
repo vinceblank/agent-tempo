@@ -40,11 +40,16 @@ let ENSEMBLE: string;
  */
 async function retry<T>(
   assertFn: () => Promise<T>,
-  // Default timeout bumped from 5s→10s in #178 to absorb Node 24 CI latency
-  // spikes (#196/#197 saw the "completes stage when all players report result"
-  // test flake on first CI run, pass on rerun). 50ms polling × 200 iterations
-  // still well under worst-case scheduler variance.
-  { timeoutMs = 10_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+  // #777 — budget bumped 10s→20s. The old 10s was EXACTLY equal to the two
+  // server-side bounded waits that can silently stall a workflow task:
+  // `stickyQueueScheduleToStartTimeout` (SDK default 10s — now 1s via the
+  // helpers.ts choke point, the root-cause fix) and `workflowTaskTimeout`
+  // (10s). A poll budget equal to a bounded wait loses the race by
+  // definition — the assertion gives up at the precise moment the task
+  // recovers ('waiting'≠'reported' / 'active'≠'failed', the #181 lineage:
+  // #178 bumped 5s→10s INTO that equality). 20s strictly dominates every
+  // bounded wait plus processing headroom.
+  { timeoutMs = 20_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   // eslint-disable-next-line no-constant-condition
@@ -272,6 +277,138 @@ describe('pipeline stages', function () {
       await retry(async () => {
         const stages2: StageEntry[] = await handle.query(stagesQuery);
         expect(stages2[0].status).to.equal('complete');
+      });
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result();
+    });
+  });
+
+  // ── #777 — stage-creation reconciliation (commutative signal handling) ──
+  //
+  // The buffered-drain inversion (playerReport's handler registers before
+  // setStage's, so a report buffered alongside a setStage is consumed against
+  // an empty stages array) silently lost transitions under CPU contention —
+  // proven by the captured history in test/fixtures/777-wedge-history.txt.
+  // These tests pin the ruled fix: a pre-stage report within the staleness
+  // window counts at creation, most-recent-wins, original receipt time kept.
+
+  it('reconciles a pre-stage report into a freshly created stage (#777)', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'stage-cond-r1', ensemble: ENSEMBLE }),
+      });
+
+      // Report FIRST — the arrival order that loses the transition pre-fix.
+      await handle.signal(playerReportSignal, {
+        playerId: 'alice', text: 'done early', type: 'result',
+      });
+      await handle.signal(setStageSignal, {
+        name: 'recon', players: ['alice', 'bob'], createdBy: 'stage-cond-r1',
+      });
+
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        const alice = stages[0].players.find((p: any) => p.playerId === 'alice')!;
+        expect(alice.status).to.equal('reported');
+        expect(alice.reconciled, 'reconciled marker').to.equal(true);
+        expect(alice.reportText).to.equal('done early');
+        expect(alice.reportedAt, 'original receipt time kept').to.be.a('string');
+        expect(stages[0].players.find((p: any) => p.playerId === 'bob')!.status).to.equal('waiting');
+        expect(stages[0].status).to.equal('active');
+      });
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result();
+    });
+  });
+
+  it('pre-stage blocker halts a halt-policy stage at creation (#777)', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'stage-cond-r2', ensemble: ENSEMBLE }),
+      });
+
+      await handle.signal(playerReportSignal, {
+        playerId: 'alice', text: 'broken before stage', type: 'blocker',
+      });
+      await handle.signal(setStageSignal, {
+        name: 'recon-halt', players: ['alice', 'bob'], failurePolicy: 'halt', createdBy: 'stage-cond-r2',
+      });
+
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('failed');
+        expect(stages[0].players.find((p: any) => p.playerId === 'alice')!.status).to.equal('blocked');
+
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        const failure = messages.find((m: any) => m.text.includes('[stage failed]') && m.text.includes('halted'));
+        expect(failure, 'halt message at creation').to.exist;
+        expect(failure!.text).to.include('broken before stage');
+      });
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result();
+    });
+  });
+
+  it('most recent pre-stage report wins at reconciliation — blocker then result → reported (#777)', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'stage-cond-r3', ensemble: ENSEMBLE }),
+      });
+
+      // Architect-ratified state-summary semantics: the player's LATEST
+      // standing counts; a superseded blocker must not halt a fresh stage.
+      await handle.signal(playerReportSignal, {
+        playerId: 'alice', text: 'was stuck', type: 'blocker',
+      });
+      await handle.signal(playerReportSignal, {
+        playerId: 'alice', text: 'recovered', type: 'result',
+      });
+      await handle.signal(setStageSignal, {
+        name: 'recon-latest', players: ['alice'], failurePolicy: 'halt', createdBy: 'stage-cond-r3',
+      });
+
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        const alice = stages[0].players[0];
+        expect(alice.status).to.equal('reported');
+        expect(alice.reportText).to.equal('recovered');
+        // Single-player stage, everyone reported → completes at creation.
+        expect(stages[0].status).to.equal('complete');
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        expect(messages.find((m: any) => m.text.includes('[stage complete]')), 'completion message').to.exist;
+      });
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result();
+    });
+  });
+
+  it('stale pre-stage report does NOT reconcile (#777 staleness bound)', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'stage-cond-r4', ensemble: ENSEMBLE }),
+        // TEST KNOB — shrink the 5-minute window so staleness is testable.
+        stageReconcileWindowMs: 100,
+      });
+
+      await handle.signal(playerReportSignal, {
+        playerId: 'alice', text: 'long ago', type: 'result',
+      });
+      // Let the report age past the (shrunk) window. Real wall-clock sleep —
+      // createLocal does not time-skip.
+      await new Promise((r) => setTimeout(r, 400));
+      await handle.signal(setStageSignal, {
+        name: 'recon-stale', players: ['alice'], createdBy: 'stage-cond-r4',
+      });
+
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].players[0].status).to.equal('waiting');
+        expect(stages[0].players[0].reconciled).to.equal(undefined);
+        expect(stages[0].status).to.equal('active');
       });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
