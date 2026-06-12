@@ -406,11 +406,15 @@ const TASK_QUEUE_BASE = 'test-agent-tempo';
  * `withWorker` callback always resolves to the queue that callback's worker
  * is polling, with zero call-site edits.
  *
- * **Safety constraint**: this mutable module global is safe because Mocha
- * runs test files serially in one process and the `withWorker*` helpers are
- * never invoked concurrently (verified: no `Promise.all` wraps a
- * `withWorker*` call anywhere in `test/`). A future parallel-Mocha migration
- * must revisit this — concurrent mints would make reads timing-dependent.
+ * **SERIAL-WITHWORKER CONSTRAINT (#721)**: this mutable module global is
+ * safe because no two `withWorker*` invocations ever run concurrently
+ * WITHIN one process — no `Promise.all`/`allSettled` wraps a `withWorker*`
+ * call anywhere in `test/` (standing invariant, enforced by
+ * `tests/conformance/serial-withworker-fence.test.ts`). Note the precise
+ * boundary: parallel-Mocha with per-FILE worker processes would be safe
+ * as-is (module state is per-process); only INTRA-process concurrent
+ * `withWorker*` calls are forbidden — concurrent mints would make live-
+ * binding reads timing-dependent.
  *
  * Initial value is the pre-#721 literal as a defensive fallback for any read
  * before the first `setupTestEnv()`/`withWorker*` call.
@@ -609,8 +613,13 @@ export const _isAccessDeniedError = isAccessDeniedError;
 // #694 symptom 2 (beta.4 band-aid) — budget bumped 4→6 attempts / 100→200ms base
 // per QA's diagnosis. Old max wait ~900ms (100+200+400+jitter); new max ~6.6s
 // (200+400+800+1600+3200 + jitter×5) — covers the Rust-bridge slot-release lag on
-// a loaded Windows runner. The STRUCTURAL fix (per-test unique task queue) is
-// tracked separately; this only widens the retry window.
+// a loaded Windows runner.
+//
+// #721 landed the structural fix for the MAIN queue (unique mint per
+// withWorker) — this retry is now the HOST-QUEUE BACKSTOP only (the shared
+// `agent-tempo-test-host` queue still carries the #642 race). Do NOT retire
+// it before #772 (per-test unique host queues) lands + the CI soak there
+// passes.
 const SLOT_RETRY_DEFAULT_ATTEMPTS = 6;
 const SLOT_RETRY_DEFAULT_BASE_MS = 200;
 const SLOT_RETRY_DEFAULT_FACTOR = 2;
@@ -628,6 +637,10 @@ const SLOT_RETRY_DEFAULT_JITTER_MS = 100;
  * NEXT caller's create is far less likely to race the not-yet-released slot (the
  * retry above is the backstop). ~223 withWorker calls × 20ms ≈ 4.5s/shard —
  * negligible vs. total test runtime. Not injectable: always wanted post-shutdown.
+ *
+ * Post-#721 the main queue is minted unique per withWorker, so this barrier
+ * serves the shared HOST queue (`agent-tempo-test-host`) only. Do NOT retire
+ * before #772 lands + its CI soak passes.
  */
 const SLOT_RELEASE_BARRIER_MS = 20;
 async function awaitWorkerSlotRelease(): Promise<void> {
@@ -678,6 +691,9 @@ export interface CreateWorkerRetryOpts {
  * exponential backoff + jitter; RETHROWS any other error immediately so real
  * worker-init failures surface unmasked. Exported for unit testing
  * (`test/worker-slot-retry.test.ts`); all `withWorker*` helpers call it.
+ *
+ * Host-queue backstop — see #772 before retiring (main-queue collisions are
+ * structurally gone since #721's per-withWorker mint).
  *
  * Resolves with the worker on first success. Rejects with the last attempt's
  * error if every attempt hits the overlap.

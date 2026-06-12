@@ -18,10 +18,11 @@
  *   3. `setupTestEnv()` re-mints, so file-scope reads never see a previous
  *      file's queue (or the bare pre-#721 literal).
  *
- * NOTE: the live-binding design assumes Mocha's serial, single-process
- * execution — see the `TASK_QUEUE` doc-comment in `helpers.ts`. If these
- * tests start failing under a parallel-Mocha migration, that assumption is
- * what broke.
+ * NOTE: the live-binding design rests on the SERIAL-WITHWORKER CONSTRAINT
+ * (#721) — no two `withWorker*` invocations may run concurrently within one
+ * process (enforced by tests/conformance/serial-withworker-fence.test.ts).
+ * Parallel-Mocha with per-FILE worker processes is safe (module state is
+ * per-process); intra-process concurrency is the only forbidden shape.
  */
 import { expect } from 'chai';
 import {
