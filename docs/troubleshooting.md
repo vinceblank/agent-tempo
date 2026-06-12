@@ -25,6 +25,21 @@
 > in most cases. Fall back to the steps below only if `daemon stop` itself fails or exits
 > while processes remain.
 
+> **Port-based ghost hygiene (#758):** the PID file is a hint; the daemon **port**
+> (8473 prod / 8474 dev) is the ground truth. Since #758:
+> `daemon stop` cross-checks port ownership and force-terminates an untracked
+> agent-tempo daemon holding the port (works even when the cross-profile guard
+> skips the cmdline reaper — the port is profile-scoped); `daemon start`
+> pre-flights the port (waits out a draining prior daemon, then refuses with the
+> owning pid instead of spawning a process that can't bind); `daemon status`
+> reports `PHANTOM DAEMON` (PID file says X, port owned by Y) and
+> `GHOST DAEMON` (no PID file, port owned) divergences explicitly. A non-daemon
+> process squatting the port is **never killed automatically** — stop/start name
+> the pid and the manual command instead. Note for Windows operators: a bash
+> `kill <pid>` from Git Bash can be a silent no-op on Windows processes — use
+> `taskkill /T /F /PID <pid>` or `Stop-Process -Id <pid> -Force` (what #758's
+> force path does internally).
+
 ### Inspect
 
 ```bash
