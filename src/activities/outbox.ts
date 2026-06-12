@@ -368,10 +368,38 @@ export function shouldSkipDuplicateSpawn(
   return phase === 'attached' || phase === 'processing' || phase === 'awaiting';
 }
 
+/**
+ * T1.1 PR-1 — late-wired doorbell sink (the ObserverPresenceSource pattern:
+ * activity construction happens before the HTTP plane exists, so the daemon
+ * fills `current` at boot). A worker process that is not the daemon keeps
+ * `current: null` — ring() is a no-op and fallback polling covers it (§2.1).
+ * Defined here (not in src/http) so activities never import the HTTP plane.
+ */
+export interface DoorbellSink {
+  current: {
+    ring(ensemble: string, playerId: string): void;
+    closePlayer(ensemble: string, playerId: string): void;
+  } | null;
+}
+
+/**
+ * Ring the doorbell sink, swallowing EVERYTHING — a ring must never fail or
+ * retry the delivery activity it follows (t11 §1: doorbell loss must be
+ * indistinguishable from doorbell-never-sent).
+ */
+function ringDoorbell(doorbells: DoorbellSink | undefined, ensemble: string, playerId: string): void {
+  try {
+    doorbells?.current?.ring(ensemble, playerId);
+  } catch {
+    /* never propagate — §1 */
+  }
+}
+
 export function createOutboxActivities(
   client: Client,
   config: Config,
   ingestTokens?: IngestTokenRegistry,
+  doorbells?: DoorbellSink,
 ): OutboxActivities {
   // #753 — attribute every Temporal call made by these activities (however
   // deep, e.g. deliverCue → resolveSession → queryHandleWithTimeout) to the
@@ -393,6 +421,10 @@ export function createOutboxActivities(
           ...(broadcastId !== undefined ? { broadcastId } : {}),
           ...(attachmentTicket !== undefined ? { attachmentTicket } : {}),
         });
+        // T1.1 — the signal above has landed durably in history; ring the
+        // doorbell so a connected adapter polls now instead of at its
+        // backoff ceiling. Fire-and-forget: never fails this activity.
+        ringDoorbell(doorbells, ensemble, targetPlayerId);
         return { success: true };
       } catch (err) {
         // #236: transient RPC errors (e.g. DEADLINE_EXCEEDED on the signal call)
@@ -592,6 +624,22 @@ export function createOutboxActivities(
       }
 
       try {
+        // T1.1 PR-1 — mint a per-player ingest token for every SDK-family
+        // spawn (was Pi-only since 3c Tier-2). The token authenticates the
+        // adapter's loopback HTTP calls: `POST /inner/ingest` (Pi fine-tail)
+        // and `GET /doorbell/:e/:p` (PR-2's DoorbellClient, all SDK
+        // adapters). Single-token-per-workflowId (mint REPLACES) means a
+        // restart re-mints and naturally revokes the stale token. Injected
+        // into the subprocess env as AGENT_TEMPO_INGEST_TOKEN. Interactive
+        // terminal spawns are deliberately excluded — no doorbell client
+        // exists for them (PR-2's consumers are SdkAttachment + the Pi
+        // runtime); minting extends trivially if that ever changes.
+        const ingestToken =
+          agent === 'mock' || agent === 'copilot' || agent === 'claude-api' ||
+          agent === 'opencode' || agent === 'claude-code-headless' || agent === 'pi'
+            ? ingestTokens?.mint(sessionWorkflowId(ensemble, targetName))
+            : undefined;
+
         if (agent === 'mock') {
           // ADR 0014 PR-2 — mock adapter spawns headless. No terminal,
           // no Claude binary, no MCP server child. Talks to Temporal
@@ -612,6 +660,7 @@ export function createOutboxActivities(
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned mock adapter (pid ${pid}) in ${workDir} as "${targetName}" (mode=${mockMode ?? 'echo'}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
         } else if (agent === 'copilot') {
@@ -632,6 +681,7 @@ export function createOutboxActivities(
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'claude-api') {
@@ -657,6 +707,7 @@ export function createOutboxActivities(
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned claude-api adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'opencode') {
@@ -684,6 +735,7 @@ export function createOutboxActivities(
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned opencode adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'claude-code-headless') {
@@ -712,6 +764,7 @@ export function createOutboxActivities(
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned claude-code-headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${permissionMode ? ` (permissionMode=${permissionMode})` : ''}${dangerouslySkipPermissions ? ' (dangerouslySkipPermissions=true)' : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'pi') {
@@ -722,12 +775,6 @@ export function createOutboxActivities(
           if (allowedTools && allowedTools.length > 0) {
             log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi players run the full tool surface, skipping allowedTools`);
           }
-          // 3c Tier-2 — mint a per-player ingest token scoped to this player's
-          // session workflowId so the headless Pi subprocess can authenticate its
-          // `POST /inner/ingest` frames. Single-token-per-workflowId (mint
-          // REPLACES) means a restart re-mints and naturally revokes the stale
-          // token. Injected into the subprocess env as AGENT_TEMPO_INGEST_TOKEN.
-          const ingestToken = ingestTokens?.mint(sessionWorkflowId(ensemble, targetName));
           const { pid } = spawnPiHeadless({
             name: targetName,
             ensemble,
@@ -912,6 +959,11 @@ export function createOutboxActivities(
         // revokeIngestToken(workflowId) on detach — deferred; residual surface
         // negligible (dead holder + loopback-only + single-token replacement).
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
+        // T1.1 — end the player's doorbell streams too (the registry-side
+        // lifecycle mirror of the token revoke; swallow-everything wrapper).
+        try {
+          doorbells?.current?.closePlayer(ensemble, targetPlayerId);
+        } catch { /* never propagate */ }
 
         if (notifyConductor) {
           try {
@@ -954,6 +1006,9 @@ export function createOutboxActivities(
           ...(reason !== undefined ? { reason } : {}),
           ...(requestedBy !== undefined ? { requestedBy } : {}),
         });
+        // T1.1 — ring so a stretched pump's next tickReset looks at
+        // ding-latency, not its ceiling. D14 semantics untouched (§2.1).
+        ringDoorbell(doorbells, ensemble, targetPlayerId);
         log(`Reset queued for "${targetPlayerId}"${reason ? ` (reason: ${reason})` : ''}`);
         return { success: true };
       } catch (err) {

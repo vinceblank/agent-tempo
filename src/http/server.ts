@@ -34,6 +34,8 @@ import {
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
 import { handleInnerIngest, handleInnerPresence, handleInnerSse } from './inner-loop-routes';
+import type { DoorbellRegistry } from './doorbell';
+import { handleDoorbellSse } from './doorbell-routes';
 import {
   corsResponseHeaders,
   evaluateOrigin,
@@ -159,6 +161,12 @@ export interface HttpServerOptions {
    */
   innerLoop?: InnerLoopRegistry;
   ingestTokens?: IngestTokenRegistry;
+  /**
+   * T1.1 PR-1 — the cue-doorbell registry. When provided (with
+   * `ingestTokens`) the `GET /doorbell/:e/:p` adapter SSE route lights up;
+   * absent → 404. Same source-plane auth as the inner-loop ingress.
+   */
+  doorbells?: DoorbellRegistry;
 }
 
 export interface HttpServerHandle {
@@ -272,6 +280,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       sseConnectionCap,
       innerLoop: opts.innerLoop ?? null,
       ingestTokens: opts.ingestTokens ?? null,
+      doorbells: opts.doorbells ?? null,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -367,6 +376,8 @@ interface HandleContext {
   innerLoop: InnerLoopRegistry | null;
   /** 3c Tier-2 ingest-token registry (source-plane auth) — null when unwired. */
   ingestTokens: IngestTokenRegistry | null;
+  /** T1.1 cue-doorbell registry — null when unwired. */
+  doorbells: DoorbellRegistry | null;
 }
 
 /**
@@ -428,6 +439,26 @@ export async function handle(
         return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
       }
       return handleInnerPresence(req, res, innerDeps, decodeURIComponent(presenceMatch[1]), decodeURIComponent(presenceMatch[2]));
+    }
+  }
+
+  // T1.1 PR-1 — cue-doorbell SSE (adapter-facing). Same source-plane auth as
+  // the inner ingress above (loopback + X-Ingest-Token), matched BEFORE the
+  // outer bearer gate. Deliberately OUTSIDE /v1 (architect ruling): the
+  // doorbell carries no RBAC tier, no SSE envelope, no Last-Event-ID replay —
+  // none of the versioned observer contract. Only live when the daemon wired
+  // both registries; else falls through to 404.
+  if (ctx.doorbells && ctx.ingestTokens) {
+    const doorbellMatch = pathname.match(/^\/doorbell\/([^/]+)\/([^/]+)$/);
+    if (doorbellMatch) {
+      if (method !== 'GET') {
+        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
+      }
+      return handleDoorbellSse(
+        req, res,
+        { doorbells: ctx.doorbells, ingestTokens: ctx.ingestTokens },
+        decodeURIComponent(doorbellMatch[1]), decodeURIComponent(doorbellMatch[2]),
+      );
     }
   }
 

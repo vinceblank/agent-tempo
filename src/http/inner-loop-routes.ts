@@ -60,11 +60,14 @@ function headerValue(v: string | string[] | undefined): string | undefined {
  * Run the shared INGRESS gate (loopback + ingest-token vs URL workflowId).
  * Returns the resolved workflowId on success, or `null` after having written a
  * uniform `403` (no info leak — callers just `return` on null).
+ *
+ * Exported for the doorbell route (T1.1 PR-1) — same source-plane auth, same
+ * uniform-403 contract; the deps shape only requires `ingestTokens`.
  */
-function gateIngress(
+export function gateIngress(
   req: IncomingMessage,
   res: ServerResponse,
-  deps: InnerLoopDeps,
+  deps: Pick<InnerLoopDeps, 'ingestTokens'>,
   ensemble: string,
   playerId: string,
 ): string | null {
