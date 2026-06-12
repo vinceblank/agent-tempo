@@ -8,6 +8,8 @@ This document is the authoritative reference for all Temporal signal, query, upd
 >
 > **Adding a new `## Section` to this file** also requires a matching entry in the `SECTION_TO_KIND` map in `test/wire-protocol.test.ts` — the drift detector throws on unknown section headers.
 
+> **T1.1 cue doorbell (PRs #776/#783/#803, Refs #747)**: This feature adds **zero** Temporal signals, queries, or updates to this protocol. The doorbell is a content-free latency hint delivered over the daemon HTTP plane only — ring-on-cue-delivery, in-process, ephemeral, at-most-once. Nothing in this document changes. The absence is documented explicitly per the design mandate (`docs/design/t11-cue-doorbell.md` §1: "No payload. No persistence, no replay. No new acks, no new workflow state."). See `docs/INNER-LOOP-PROTOCOL.md` §Doorbell for the HTTP route reference.
+
 ---
 
 ## Workflow Names

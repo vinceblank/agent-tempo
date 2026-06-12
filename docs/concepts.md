@@ -375,6 +375,21 @@ surfaced in the TUI home view and `agent-tempo status`:
 The maestro session itself is excluded from adapter counts. Source:
 `src/client/index.ts` (classification block, `liveAdapterCount` + `maestroPaused` query).
 
+**Doorbell** (T1.1, #776/#783/#803) — A content-free latency hint delivered over the daemon HTTP plane so SDK-family adapters and the Pi cue pump poll immediately after a cue lands, instead of waiting for their next backoff tick.
+
+Core invariant (load-bearing): **doorbell loss is indistinguishable from doorbell-never-sent.** Polling via Temporal (`pendingMessages` / `pendingIntake`) remains the guaranteed delivery path; the doorbell only decides *when* the next poll fires, never *whether* a message is delivered.
+
+Three structural consequences of the invariant:
+- **No payload** — the `ding` event carries nothing. The adapter's reaction is its existing poll + ack sequence.
+- **No persistence, no replay** — in-memory, ephemeral, at-most-once. A doorbell lost to a daemon restart was, by definition, never sent (daemon down ↔ delivery activities paused — shared fate).
+- **No new Temporal wire surface** — zero signals, queries, or updates. See `docs/WIRE-PROTOCOL.md` Stability Guarantee note.
+
+**Not demand** (the critical T0.4 invariant): doorbell connections live on `DoorbellRegistry`, not the `EnsembleEventBus`, so `totalSubscriberCount()` never sees them. A dormant ensemble with many doorbell subscribers stays dormant from the aggregate's perspective — T0.4's demand gate and T0.1's presence gate are protected.
+
+Route: `GET /doorbell/:ensemble/:playerId` (loopback + `X-Ingest-Token`, same ingress model as `/inner/ingest`). See `docs/INNER-LOOP-PROTOCOL.md` §Doorbell.
+
+Idle ceiling with doorbell connected: `SDK_POLL_DOORBELL_MAX_MS` (default 60s, `AGENT_TEMPO_SDK_POLL_DOORBELL_MAX_MS` override). When doorbell is disconnected or never connected, falls back to the T0.2 30s ceiling automatically — today's behavior is the floor. Source: `src/http/doorbell.ts`, `src/adapters/sdk/doorbell-client.ts`, `src/pi/cue-pump.ts`.
+
 ---
 
 ## Related
