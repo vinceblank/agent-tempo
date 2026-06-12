@@ -46,11 +46,21 @@ vi.mock('../../src/adapters/claude-code-headless/pre-flight', () => ({
   probeClaudeBinary: vi.fn(),
   probeClaudeAuth: vi.fn(),
 }));
+// #734 — partial mock: the Node-floor gate for `agent: 'pi'` is AUTHORITATIVE
+// and non-bypassable (reads real `process.versions.node`), so on the node-20
+// CI matrix leg it would trip BEFORE the Copilot-via-Pi gate this suite needs
+// to reach. Pin it ok:true and keep every other probe.ts export real
+// (probeCopilotPiPreflight must run its actual gate logic).
+vi.mock('../../src/pi/probe', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/pi/probe')>();
+  return { ...actual, checkPiNodeFloor: vi.fn(() => ({ ok: true as const })) };
+});
 
 // SUT + mocked symbols (typed via `vi.mocked` for autocomplete).
 import { renderToMcp } from '../../src/tools/descriptor';
 import { buildRecruitTool } from '../../src/tools/recruit';
 import { probeSdkInstall } from '../../src/utils/sdk-probe';
+import { checkPiNodeFloor } from '../../src/pi/probe';
 import {
   probeClaudeBinary,
   probeClaudeAuth,
@@ -59,6 +69,7 @@ import type { Config } from '../../src/config';
 import type { AgentType } from '../../src/types';
 
 const probeSdkMock = vi.mocked(probeSdkInstall);
+const nodeFloorMock = vi.mocked(checkPiNodeFloor);
 const probeBinMock = vi.mocked(probeClaudeBinary);
 const probeAuthMock = vi.mocked(probeClaudeAuth);
 
@@ -183,6 +194,8 @@ type AdapterCase = {
   setupMissing: () => void;
   /** Substrings that the fail message MUST contain. */
   expectedSubstrings: string[];
+  /** Extra recruit args the gate needs (e.g. `model` for Copilot-via-Pi). */
+  extraArgs?: Record<string, unknown>;
 };
 
 const cases: AdapterCase[] = [
@@ -229,6 +242,32 @@ const cases: AdapterCase[] = [
     },
     expectedSubstrings: ['copilot', '@github/copilot-sdk', 'force: true'],
   },
+  {
+    // #734 — the guard removal made the Copilot-via-Pi preflight at
+    // recruit.ts (`parsedModel?.provider === 'github-copilot'`) reachable via
+    // recruit for the first time. This row smokes the WIRING (recruit →
+    // parsePiProviderModel → probeCopilotPiPreflight), not just the probe
+    // unit: deps-missing must surface the probe's actionable message through
+    // recruit's fail() with the bypass hint.
+    label: 'pi + Copilot model (Pi optional deps not installed) — #734',
+    agent: 'pi' as AgentType,
+    extraArgs: { model: 'github-copilot/gpt-4o' },
+    setupMissing: () => {
+      // `vi.resetAllMocks()` in beforeEach wipes the module-mock factory's
+      // implementation, so re-pin the Node floor here (both the deps-missing
+      // and the force-bypass test run this setup).
+      nodeFloorMock.mockReturnValue({ ok: true });
+      // Only the two Pi optional deps (@earendil-works/pi-coding-agent +
+      // @earendil-works/pi-ai) go missing; every other SDK probe stays green.
+      probeSdkMock.mockImplementation(
+        (pkg: string) => !pkg.startsWith('@earendil-works/'),
+      );
+    },
+    expectedSubstrings: [
+      'Copilot-via-Pi requires the Pi optional dependencies',
+      'force: true',
+    ],
+  },
 ];
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -258,7 +297,7 @@ describe('recruit pre-flight — parametrized adapter gates (#532)', () => {
     }
   });
 
-  describe.each(cases)('$label', ({ agent, setupMissing, expectedSubstrings }) => {
+  describe.each(cases)('$label', ({ agent, setupMissing, expectedSubstrings, extraArgs }) => {
     it('fails fast with an actionable message when the probe reports missing', async () => {
       setupMissing();
       const { capture, outboxEntries } = setup();
@@ -266,6 +305,7 @@ describe('recruit pre-flight — parametrized adapter gates (#532)', () => {
         workDir: '/tmp/work',
         name: 'new-player',
         agent,
+        ...(extraArgs ?? {}),
       });
       expect(result.isError).toBe(true);
       for (const sub of expectedSubstrings) {
@@ -284,6 +324,7 @@ describe('recruit pre-flight — parametrized adapter gates (#532)', () => {
         name: 'new-player',
         agent,
         force: true,
+        ...(extraArgs ?? {}),
       });
       // Bypass means the recruit proceeds all the way to the outbox.
       expect(result.isError).not.toBe(true);
