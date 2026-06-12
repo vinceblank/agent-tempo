@@ -9,9 +9,11 @@
 > they guard removed.
 > **Constraint**: the in-flight 1.x critical path (#777, #774, #768, T1.1 PR-2/3) completes on
 > 1.x main first — nothing here disturbs it.
-> Researcher's debt inventory (2026-06-12 sweep) is integrated throughout; counts are
-> spot-checked by them, not line-audited. Their synthesis independently converges on §A's
-> conclusion: one drain/cutover gate is the highest-leverage decision in the release.
+> Researcher's debt inventory (2026-06-12 sweep) is integrated throughout — **source of
+> record: [PR #779 comment "2.0 debt inventory"](https://github.com/vinceblank/agent-tempo/pull/779#issuecomment-4694637520)**
+> (includes caveats; counts spot-checked by them, not line-audited). Their synthesis
+> independently converges on §A's conclusion: one drain/cutover gate is the
+> highest-leverage decision in the release.
 
 ---
 
