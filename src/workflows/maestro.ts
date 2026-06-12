@@ -613,7 +613,7 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
         const v2 = await refreshEnsembleStateV2({ ensemble: input.ensemble });
         newPlayers = v2.players;
         observersPresent = v2.observersPresent;
-        refreshIntervalMs = resolveRefreshIntervalMs(input, v2.observersPresent);
+        refreshIntervalMs = resolveRefreshIntervalMs(input, observersPresent);
       } else {
         newPlayers = await refreshEnsembleState(input.ensemble);
       }
@@ -727,9 +727,9 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     // protects pre-#748 runs — verified, contra the initial "no marker
     // expected" estimate).
     if (patched('v0.19-ensemble-chat')) {
-      if (chatGateEnabled && cloudProfile && !observersPresent) {
-        // Unwatched — leave the cache + high-water marks untouched.
-      } else {
+      // Unwatched cloud tick → skip; cache + high-water marks stay untouched.
+      const skipChatThisTick = chatGateEnabled && cloudProfile && !observersPresent;
+      if (!skipChatThisTick) {
         try {
           const chatResult = await fetchEnsembleChat({
             ensemble: input.ensemble,
