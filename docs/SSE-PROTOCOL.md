@@ -64,6 +64,7 @@ calls (which carry their own Temporal-backed durability).
 | `POST` / `GET` coat-check (#713) | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` — note the GET redeem is T2 (it mutates fetch-audit counters), not the usual T1 read tier |
 | `GET /v1/players/:e/:p/inner` SSE | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
 | `POST /inner/ingest`, `GET /inner/presence` | Source plane (loopback + `X-Ingest-Token`) | Daemon-minted per-player `AGENT_TEMPO_INGEST_TOKEN` |
+| `GET /doorbell/:ensemble/:playerId` | Source plane (loopback + `X-Ingest-Token`) | Same token as above — T1.1 cue-doorbell hint route; see `docs/INNER-LOOP-PROTOCOL.md` §Doorbell |
 
 T2 and T3 both require the admin token — there is no T2-only token. The admin token grants all tiers (3 ⊇ 2 ⊇ 1). See §3.1 for the full two-token model.
 

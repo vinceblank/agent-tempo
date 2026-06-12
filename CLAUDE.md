@@ -53,7 +53,7 @@ src/
 │   ├── opencode/      # OpenCodeAttachment — headless multi-provider adapter via SST OpenCode subprocess (#449)
 │   ├── pi/            # Headless Pi adapter — descriptor + spawn entry (Phase 3a). No BaseAttachment; the Pi extension singleton owns lifecycle (claim/heartbeat/tools/cue pump). `adapter.ts` is the process entry; `index.ts` is the registry descriptor.
 │   ├── mock/          # MockAttachment — dev-mode-only SDK adapter (ADR 0014 PR-2). prepack strips dist/adapters/mock from npm tarball.
-│   └── sdk/           # SDK-style adapter base (used by Copilot bridge and opencode)
+│   └── sdk/           # SDK-style adapter base (used by Copilot bridge and opencode). Key files: `idle-backoff.ts` (T0.2 IdleBackoff helper — base 2s, cap 30s/60s, reset-on-delivery), `doorbell-client.ts` (T1.1 DoorbellClient + WakeableSleep — reconnecting SSE consumer for `/doorbell`; ding→reset()+wake(); connected ceiling 60s; disconnected falls back to 30s T0.2 floor)
 ├── client/
 │   ├── interface.ts   # TempoClient TypeScript interface and related types
 │   └── index.ts       # TempoClient factory implementation and barrel re-exports
@@ -85,6 +85,8 @@ src/
 │   ├── inner-loop.ts  # InnerLoopRegistry + InnerSubscription — daemon-local fine-tail sink (3c MD-F); drop-oldest bounded queue (256) + `compacted{dropped,sinceTs}` marker; NOT on Temporal/bus, ephemeral no-replay
 │   ├── ingest-registry.ts # IngestTokenRegistry — per-player ingest token (mint-on-pi-spawn / revoke-on-destroy / revokeAll-on-shutdown); timing-safe validation; cross-player-spoof guard
 │   ├── inner-loop-routes.ts # 3 inner-loop HTTP routes: POST /inner/ingest + GET /inner/presence (INGRESS, loopback + X-Ingest-Token, uniform 403); GET /inner (EGRESS operator SSE, requireTier(3))
+│   ├── doorbell.ts    # DoorbellRegistry — in-process Map<"{ensemble}:{playerId}", Set<waiter>>; ring-with-no-listener drops on floor; level-triggered coalescing; never throws (T1.1 PR-1, #776)
+│   ├── doorbell-routes.ts # GET /doorbell/:ensemble/:playerId SSE route — content-free ding events; loopback + X-Ingest-Token auth (same ingress model as inner-loop); NO event IDs / Last-Event-ID / replay by design; :ka keepalive every 15s (T1.1 PR-1, #776)
 │   ├── auth.ts        # 3e MD-E RBAC: two-token model (readToken T1 / adminToken T1+T2+T3 env-var-only); loadRbacTokens; requireTier(tier, input) → TierGuardResult; tierForToken; loadReadToken (env>config>legacy httpToken>auto-gen); loadAdminToken (env-only); TLS/legacy startup warnings in startHttpServer
 │   ├── cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
@@ -108,7 +110,7 @@ src/
 │   └── descriptor.ts  # Transport-neutral tool descriptor (TempoToolDescriptor) + renderToMcp; per-tool `build*Tool` factories live in each tool file (MD-B, Phase 1)
 ├── pi/                # Pi-native integration — a Pi session as a first-class player over the Temporal core
 │   ├── extension.ts   # `export default function(pi)` — interactive runtime entry. Holds the MODULE-SCOPE singleton `Map<workflowId, PiPlayerRuntime>` that survives Pi's per-switch instance rebuild (rebind, not re-claim); full tool surface via renderToPi; Option-C reason-discriminated teardown
-│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient (lease/heartbeat 90/30, handle getter), cue pump (D10 steer/followUp; one 1s loop with a second pendingReset intake — S3 merge, D14 clean-wipe + /tempo-reset operator notice)
+│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient (lease/heartbeat 90/30, handle getter), cue pump (D10 steer/followUp; IdleBackoff loop 1s base→30s disconnected/60s connected ceiling + ding wake via DoorbellClient; pendingIntake combined query T0.3; S3 merge, D14 clean-wipe + /tempo-reset operator notice)
 │   ├── lazy-proxy.ts  # D11 createLazyProxy — Client/WorkflowHandle proxy resolving the live module-scope target per call (survives instance rebuild)
 │   ├── headless.ts    # Headless Pi runtime (Phase 3a) — boots Pi's createAgentSession with inline extension; `noExtensions: true` closes S2 exec-tool bypass; SIGTERM/SIGINT shutdown → reliable detach + dispose
 │   ├── render-tools.ts # renderToPi — registers the shared tool descriptors on Pi's ExtensionAPI (TypeBox params via the converter)

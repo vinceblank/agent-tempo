@@ -83,6 +83,49 @@ The publisher polls this (at most once per second, rate-limited) to decide wheth
 
 ---
 
+---
+
+## Doorbell
+
+> **T1.1 — Cue Doorbell** (PRs #776/#783/#803, Refs #747). Design: `docs/design/t11-cue-doorbell.md`.
+
+The doorbell is a **content-free latency hint** on the same source plane as the inner-loop: an in-process ring fires after each `deliverCue`/`deliverReset` activity so subscribed adapters poll immediately instead of waiting for their next backoff tick. It is _not_ a delivery channel — polling via Temporal (`pendingMessages` / `pendingIntake`) remains the guaranteed delivery path.
+
+### `GET /doorbell/:ensemble/:playerId` — adapter delivery hint (loopback only)
+
+**Auth:** loopback remote address (`127.0.0.1` / `::1`) **AND** `X-Ingest-Token: <token>` header — identical to the inner-loop INGRESS model. Mounted before the outer bearer gate. Uniform `403` on any failure (no diagnostic detail).
+
+**Not** under `/v1/`: this endpoint is not part of the versioned observer contract (deliberate architect ruling — see design doc §2.3).
+
+**SSE framing:**
+```
+event: ding
+data: {}
+
+:ka
+
+:closed
+```
+
+- Each `event: ding` is a content-free hint; `data: {}` is a minimal valid SSE payload with no semantic content.
+- `:ka` keepalive comments every **15 s** on idle streams.
+- `:closed` comment when the player is destroyed (`closePlayer` closes all doorbell streams alongside token revocation).
+- No event IDs. No `Last-Event-ID` header support. No ring-buffer replay — by design: replayed doorbells would violate the invariant (a persisted doorbell ≈ a delivery guarantee the invariant forbids).
+
+**What the adapter does on ding:**
+1. `pollBackoff.reset()` — snaps the T0.2 `IdleBackoff` back to the 2s base.
+2. `WakeableSleep.wake()` — cancels the parked backoff sleep, triggering an immediate poll tick.
+
+**Failure behavior:** every failure row (no token, port missing, 403/404/5xx, refused, stream drop) degrades to **silent disconnected polling** at the T0.2 30s ceiling — indistinguishable from doorbell-never-connected.
+
+**Idle ceiling knob:** `SDK_POLL_DOORBELL_MAX_MS` (default 60 000 ms; `AGENT_TEMPO_SDK_POLL_DOORBELL_MAX_MS` env override, clamped ≥ base). Only active when the client is connected; disconnected ceiling automatically reverts to the T0.2 30s floor.
+
+**A doorbell is NOT demand** (hard rule protecting T0.4/T0.1): doorbell connections register on `DoorbellRegistry`, not the `EnsembleEventBus`. `totalSubscriberCount()` never sees them; rings never `wake()` the aggregate demand gate. Enforced structurally and by `tests/conformance/doorbell-not-demand.test.ts`.
+
+**Ingest-token scope:** as of T1.1, the per-player ingest token (see Ingest Auth Model below) is minted for **all SDK-family adapter spawns** (copilot, claude-api, opencode, claude-code-headless, mock, pi) — extended from Pi-only by PR-1. Interactive terminal spawns (`spawnInTerminal`) are excluded (no doorbell client on the interactive adapter).
+
+---
+
 ## Ingest Auth Model
 
 Each headless Pi player is minted a **per-player, single-use ingest token** at spawn:
