@@ -42,7 +42,15 @@ export const HEARTBEAT_INTERVAL_MS = 60_000;
  */
 export const HEARTBEAT_STALE_MULTIPLIER = 2;
 
-/** Entry point for the daemon process (compiled JS). */
+/**
+ * Entry point for the daemon process (compiled JS).
+ *
+ * ⚠ Packaging dependency (#771): the ghost-scanner's structural matcher
+ * ({@link parseDaemonEntryScript}) keys on the entry script being
+ * `dist/daemon.js`, and {@link isPathVerifiedDaemonScript} compares
+ * against this exact path. If the daemon entry ever moves or is renamed,
+ * the matcher breaks wholesale — update both together.
+ */
 const DAEMON_ENTRY_PATH = path.resolve(__dirname, '..', 'daemon.js');
 
 export interface DaemonStatus {
@@ -128,7 +136,7 @@ function readHeartbeatAge(): number | null {
 }
 
 /**
- * @internal — exported for unit testing {@link DAEMON_CMDLINE_RE} edge cases
+ * @internal — exported for unit testing the scanner-match edge cases
  * without needing to spin up a real child process. Filters a scanner result
  * to the "orphan" subset: matching processes that aren't tracked by any
  * known PID file. Used by `daemon start`'s pre-flight check (#157 PR B).
@@ -466,15 +474,118 @@ export interface DaemonProcessInfo {
   pid: number;
   /** Full command line as reported by the OS. */
   commandLine: string;
+  /**
+   * #771 — `true` when the daemon entry script's path carries an
+   * agent-tempo install signature (see {@link isPathVerifiedDaemonScript}).
+   * Trust tiers:
+   *  - Sites that act on a scan match ALONE (zombie reaper, `daemon start`
+   *    orphan abort, `daemon status` listing) require `pathVerified` — a
+   *    structural `node …/dist/daemon.js` match could be some OTHER
+   *    project's daemon, and killing/aborting on it would be a regression.
+   *  - Sites that CROSS-VERIFY the PID against the profile-scoped port
+   *    owner (#758 ghost sweep, `assertDaemonPortFree`) accept any
+   *    structural match: a process holding OUR port file's port and
+   *    running a `dist/daemon.js` entry is ours, whatever path it lives at
+   *    — this is exactly the local-repo false-negative #771 fixes.
+   */
+  pathVerified: boolean;
 }
 
 /**
- * Matches a node process running the compiled daemon entry — both global-install
- * paths (`...\agent-tempo\dist\daemon.js`) and dev-tree paths. Narrow enough to
- * exclude unrelated `node` processes on the system; never force-kills based on
- * this match alone (self-healing is gated by explicit user action per #157).
+ * #771 — structural daemon-entry matcher, replacing the #769 path-substring
+ * regex (which false-negatived on local-repo paths like
+ * `C:\repos\claude-tempo\dist\daemon.js` and could false-positive on any
+ * process whose argv merely CONTAINED `agent-tempo/dist/daemon.js`, e.g. a
+ * grep or log viewer — QA flag on #769).
+ *
+ * Tokenizes the command line (double-quote aware, so `"C:\Program
+ * Files\nodejs\node.exe"` stays one token) and returns the daemon entry
+ * script path when:
+ *  1. the executable token's basename is `node` / `node.exe`, AND
+ *  2. the FIRST non-flag argument (the entry script) ends in
+ *     `dist/daemon.js` (either separator, relative `dist\daemon.js` ok).
+ *
+ * Returns `null` otherwise — including when `dist/daemon.js` appears only
+ * in later arguments (a viewer/grep inspecting a daemon path, never the
+ * daemon itself). Exported @internal for unit tests.
  */
-const DAEMON_CMDLINE_RE = /\bnode(?:\.exe)?\b.*\bagent-tempo\b.*[\\/]dist[\\/]daemon\.js\b/i;
+export function parseDaemonEntryScript(commandLine: string): string | null {
+  const tokens = tokenizeCommandLine(commandLine);
+  if (tokens.length < 2) return null;
+  // win32 basename splits on BOTH separators on every platform — a Linux CI
+  // run must still parse Windows-style fixture command lines (and vice versa).
+  const exe = path.win32.basename(tokens[0]).toLowerCase();
+  if (exe !== 'node' && exe !== 'node.exe') return null;
+  const script = tokens.slice(1).find((t) => !t.startsWith('-'));
+  if (script === undefined) return null;
+  return /(^|[\\/])dist[\\/]daemon\.js$/i.test(script) ? script : null;
+}
+
+/**
+ * Split a raw command line into tokens, treating `"…"` spans as atomic and
+ * stripping the quotes.
+ *
+ * Known limitation (#775 review): POSIX `ps` output is UNQUOTED — a daemon
+ * path containing spaces (`/Users/my name/repo/dist/daemon.js`) tokenizes
+ * as multiple arguments, so the matcher misses it (pinned by test). This
+ * fails SAFE: a missed daemon degrades to the warn-only path, never a
+ * wrong kill. Windows is unaffected (Win32_Process command lines carry
+ * their original quoting).
+ */
+function tokenizeCommandLine(commandLine: string): string[] {
+  const tokens: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (const c of commandLine.trim()) {
+    if (c === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && /\s/.test(c)) {
+      if (cur) {
+        tokens.push(cur);
+        cur = '';
+      }
+      continue;
+    }
+    cur += c;
+  }
+  if (cur) tokens.push(cur);
+  return tokens;
+}
+
+/**
+ * #771 — install-signature check on a daemon entry script path. `true` when:
+ *  - the path contains an `agent-tempo` (or pre-rebrand `claude-tempo`)
+ *    package/repo directory segment — covers global installs and most
+ *    checkouts, including pre-v1.0 ghosts; OR
+ *  - the path equals THIS install's own compiled daemon entry
+ *    ({@link DAEMON_ENTRY_PATH} — the exact path `startDaemon` spawns, so
+ *    self-spawned daemons verify by construction), compared slash- and
+ *    case-insensitively — covers a local repo of any directory name when
+ *    the CLI runs from the same tree (the dominant dev path per #771).
+ *
+ * Exported @internal for unit tests (inject `installEntry`).
+ */
+export function isPathVerifiedDaemonScript(
+  script: string,
+  installEntry: string = DAEMON_ENTRY_PATH,
+): boolean {
+  if (/\b(?:agent|claude)-tempo\b/i.test(script)) return true;
+  const norm = (s: string) => s.replace(/[\\/]+/g, '/').toLowerCase();
+  return norm(script) === norm(installEntry);
+}
+
+/** Build a {@link DaemonProcessInfo} from a matched command line, or `null` when it isn't a daemon entry. */
+function toDaemonProcessInfo(
+  pid: number,
+  commandLine: string,
+  installEntry?: string,
+): DaemonProcessInfo | null {
+  const script = parseDaemonEntryScript(commandLine);
+  if (script === null) return null;
+  return { pid, commandLine, pathVerified: isPathVerifiedDaemonScript(script, installEntry) };
+}
 
 /**
  * Shell out to the platform process list and return any matching daemon
@@ -493,19 +604,24 @@ export function scanAgentTempoDaemons(
   exec: (cmd: string, args: readonly string[]) => string = (cmd, args) =>
     execFileSync(cmd, args as string[], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }),
   platform: NodeJS.Platform = process.platform,
+  /** #771 test seam — this install's compiled daemon entry path. */
+  installEntry?: string,
 ): DaemonProcessInfo[] {
   try {
     if (platform === 'win32') {
-      return scanWindows(exec);
+      return scanWindows(exec, installEntry);
     }
-    return scanPosix(exec);
+    return scanPosix(exec, installEntry);
   } catch {
     return [];
   }
 }
 
 /** Windows scan via PowerShell → CSV. Falls back to `wmic` if PowerShell is missing. */
-function scanWindows(exec: (cmd: string, args: readonly string[]) => string): DaemonProcessInfo[] {
+function scanWindows(
+  exec: (cmd: string, args: readonly string[]) => string,
+  installEntry?: string,
+): DaemonProcessInfo[] {
   // PowerShell CSV output puts ProcessId in col 0, CommandLine in col 1.
   // `-NoProfile` avoids loading user profile scripts that would slow startup.
   const ps =
@@ -513,16 +629,19 @@ function scanWindows(exec: (cmd: string, args: readonly string[]) => string): Da
     'Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation';
   try {
     const out = exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
-    return parseCsvMatches(out);
+    return parseCsvMatches(out, installEntry);
   } catch {
     // Fall through to wmic — legacy, still present on most Windows SKUs.
     const out = exec('wmic', ['process', 'where', "name='node.exe'", 'get', 'ProcessId,CommandLine', '/format:csv']);
-    return parseCsvMatches(out);
+    return parseCsvMatches(out, installEntry);
   }
 }
 
 /** POSIX scan via `ps -eo pid,command`. */
-function scanPosix(exec: (cmd: string, args: readonly string[]) => string): DaemonProcessInfo[] {
+function scanPosix(
+  exec: (cmd: string, args: readonly string[]) => string,
+  installEntry?: string,
+): DaemonProcessInfo[] {
   const out = exec('ps', ['-eo', 'pid,command']);
   const matches: DaemonProcessInfo[] = [];
   for (const line of out.split('\n')) {
@@ -532,42 +651,70 @@ function scanPosix(exec: (cmd: string, args: readonly string[]) => string): Daem
     const m = /^(\d+)\s+(.+)$/.exec(trimmed);
     if (!m) continue;
     const pid = parseInt(m[1], 10);
-    const commandLine = m[2];
-    if (!isNaN(pid) && DAEMON_CMDLINE_RE.test(commandLine) && pid !== process.pid) {
-      matches.push({ pid, commandLine });
-    }
+    if (isNaN(pid) || pid === process.pid) continue;
+    const info = toDaemonProcessInfo(pid, m[2], installEntry);
+    if (info) matches.push(info);
   }
   return matches;
 }
 
 /** Parse CSV output from PowerShell's ConvertTo-Csv or wmic and filter matches. */
-function parseCsvMatches(csv: string): DaemonProcessInfo[] {
+function parseCsvMatches(csv: string, installEntry?: string): DaemonProcessInfo[] {
   const matches: DaemonProcessInfo[] = [];
   for (const line of csv.split(/\r?\n/)) {
-    // CSV rows: quoted fields separated by commas. Both PowerShell and wmic
-    // emit a header row + blank lines. Keep the parser permissive — we only
-    // need ProcessId (numeric) and a line that contains the daemon signature.
-    if (!line || /^"?ProcessId\b/i.test(line) || /^Node,Command/i.test(line)) continue;
-    // Find a plausible ProcessId (column order differs between PS and wmic:
-    // PS puts it first, wmic puts it last). Take the first numeric token
-    // that isn't obviously part of the command line (i.e. inside a long
-    // quoted path). In practice both formats surface the pid as a bare or
-    // single-quoted token unadjacent to path-like text.
-    const pidMatch = line.match(/(?:^|,)"?(\d+)"?(?=,|$)/);
-    if (!pidMatch) continue;
-    const pid = parseInt(pidMatch[1], 10);
+    if (!line.trim()) continue;
+    // #771 — properly split the row into CSV fields (doubled-quote escapes)
+    // instead of substring-matching the full line: the structural matcher
+    // needs the real CommandLine string, with the executable as the first
+    // token. Header rows fall out naturally — they have no numeric field.
+    const fields = splitCsvRow(line);
+    // Column order differs (PowerShell: ProcessId first; wmic: last) — take
+    // the first all-digit field as the pid, and the first field that parses
+    // as a daemon entry command line as the match.
+    const pidField = fields.find((f) => /^\d+$/.test(f.trim()));
+    if (pidField === undefined) continue;
+    const pid = parseInt(pidField, 10);
     if (isNaN(pid) || pid === process.pid) continue;
-    // Match the daemon signature against the FULL LINE. CSV quoting (both
-    // PowerShell's doubled-quote `""` form and backslash-escape variants)
-    // doesn't hide the literal `node.exe` and `agent-tempo\dist\daemon.js`
-    // substrings from a substring regex — splitting into quoted fields would
-    // wrongly separate `node.exe` from `agent-tempo\dist\daemon.js` when
-    // they're in different CSV columns (e.g. `"node.exe" "...\daemon.js"`).
-    if (DAEMON_CMDLINE_RE.test(line)) {
-      matches.push({ pid, commandLine: line });
+    for (const f of fields) {
+      const info = toDaemonProcessInfo(pid, f, installEntry);
+      if (info) {
+        matches.push(info);
+        break;
+      }
     }
   }
   return matches;
+}
+
+/** Split one CSV row into unescaped fields (RFC-4180 doubled-quote style, as emitted by PowerShell and wmic). */
+function splitCsvRow(line: string): string[] {
+  const fields: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      fields.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  fields.push(cur);
+  return fields;
 }
 
 /**
@@ -630,13 +777,32 @@ function killDaemonPid(
 export function resolveDaemonPort(
   readPort: () => number | null = () => readPortFile(DAEMON_PORT_PATH),
 ): number {
+  return resolveDaemonPortInfo(readPort).port;
+}
+
+/**
+ * #775 hardening — where the resolved port came from. PROVENANCE gates the
+ * ghost sweep's structural-only kill (see {@link stopDaemon}):
+ *  - `file` — written by a daemon we own at bind time. Ground truth.
+ *  - `env` — pinned by the operator for this profile. Strong intent.
+ *  - `default` — just the profile fallback (8473/8474); a foreign
+ *    project's daemon could coincidentally squat it.
+ */
+export type DaemonPortSource = 'file' | 'env' | 'default';
+
+/** Provenance-aware variant of {@link resolveDaemonPort} — same resolution order. */
+export function resolveDaemonPortInfo(
+  readPort: () => number | null = () => readPortFile(DAEMON_PORT_PATH),
+): { port: number; source: DaemonPortSource } {
   const fromFile = readPort();
-  if (fromFile !== null) return fromFile;
+  if (fromFile !== null) return { port: fromFile, source: 'file' };
   if (!isDevMode()) {
     const fromEnv = Number(process.env[ENV.DAEMON_PORT]);
-    if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) return fromEnv;
+    if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv <= 65535) {
+      return { port: fromEnv, source: 'env' };
+    }
   }
-  return isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
+  return { port: isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT, source: 'default' };
 }
 
 /**
@@ -813,6 +979,13 @@ export interface StopDaemonOpts {
   getOtherProfilePid?: () => number | undefined;
   /** #758 — port resolver — defaults to {@link resolveDaemonPort}. */
   resolvePort?: () => number;
+  /**
+   * #775 — provenance-aware port resolver. Takes precedence over
+   * `resolvePort` when both are given. When only the legacy `resolvePort`
+   * seam is provided (existing tests), its result is treated as
+   * file-sourced — preserving pre-provenance sweep semantics.
+   */
+  resolvePortInfo?: () => { port: number; source: DaemonPortSource };
   /** #758 — port-owner probe — defaults to {@link findPortOwnerPid}. */
   findPortOwner?: (port: number) => number | null;
   /** #758 — forceful ghost terminator — defaults to {@link forceKillPid}. */
@@ -879,7 +1052,20 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   } else {
     try {
       scanned = scan();
-      zombies = selectOrphans(scanned, [status.pid, otherPidLookup()]);
+      // #771 — the reaper kills on a scan match ALONE, so it only acts on
+      // pathVerified matches: a structural `node …/dist/daemon.js` hit
+      // without an agent-tempo install signature could be another project's
+      // daemon. (The #758 ghost sweep below handles the unverified case
+      // safely — it cross-verifies the PID against the port owner.)
+      const candidates = selectOrphans(scanned, [status.pid, otherPidLookup()]);
+      zombies = candidates.filter((z) => z.pathVerified);
+      const skipped = candidates.length - zombies.length;
+      if (skipped > 0) {
+        log(
+          `zombie reaper: leaving ${skipped} node dist/daemon.js process(es) without an ` +
+          'agent-tempo install signature alone (#771) — not verifiably ours',
+        );
+      }
     } catch {
       // Scanner failures are non-fatal — we already did the primary stop above.
       zombies = [];
@@ -898,9 +1084,21 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   // file + reaper skipped → nothing ever reached the ghost). The port is
   // profile-scoped, so killing its owner can never touch the other
   // profile. Safety: only force-kill when the owner's command line
-  // matches an agent-tempo daemon — an unrelated process squatting the
-  // port gets a loud warning + the manual command instead.
-  const port = (opts.resolvePort ?? resolveDaemonPort)();
+  // structurally matches a daemon entry (`node …/dist/daemon.js` at ANY
+  // path — #771: port ownership is the verification here, so no install
+  // signature is required) — an unrelated process squatting the port gets
+  // a loud warning + the manual command instead.
+  // #775 hardening — port PROVENANCE gates the structural-only kill below:
+  // a FILE-sourced port was written by a daemon we own; an env-sourced port
+  // was pinned by the operator for this profile. A DEFAULT-sourced port
+  // (no port file, no env) is just the profile fallback — a foreign
+  // project's daemon could coincidentally squat 8473, so that branch
+  // additionally requires the #771 install signature.
+  const portInfo = opts.resolvePortInfo?.()
+    ?? (opts.resolvePort
+      ? { port: opts.resolvePort(), source: 'file' as const } // legacy seam — pre-provenance semantics
+      : resolveDaemonPortInfo());
+  const port = portInfo.port;
   const owner = (opts.findPortOwner ?? findPortOwnerPid)(port);
   // Exclusion set: pids we already gracefully signalled (drain window) PLUS
   // the OTHER profile's tracked daemon (architect must-fix on #769 — if
@@ -913,17 +1111,32 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
     ...(() => { const p = otherPidLookup(); return p !== undefined ? [p] : []; })(),
   ]);
   if (owner !== null && !excludedPids.has(owner)) {
-    let looksLikeDaemon = false;
+    let ownerMatch: DaemonProcessInfo | undefined;
     try {
-      looksLikeDaemon = (scanned ?? scan()).some((p) => p.pid === owner);
+      ownerMatch = (scanned ?? scan()).find((p) => p.pid === owner);
     } catch { /* scanner unavailable — treat as not-verified, warn below */ }
-    if (looksLikeDaemon) {
-      log(`ghost daemon (#758): port ${port} owned by untracked pid ${owner} — force-terminating`);
+    const killable =
+      ownerMatch !== undefined && (portInfo.source !== 'default' || ownerMatch.pathVerified);
+    if (killable) {
+      log(
+        `ghost daemon (#758): port ${port} (resolved from ${portInfo.source}) owned by ` +
+        `untracked pid ${owner} — force-terminating`,
+      );
       if ((opts.forceKiller ?? forceKillPid)(owner, platform)) {
         stopped = true;
       } else {
         log(`WARNING: failed to terminate ghost pid ${owner} — free port ${port} manually`);
       }
+    } else if (ownerMatch !== undefined) {
+      // #775 — structural match on a DEFAULT-sourced port without an
+      // install signature: plausibly a foreign project's daemon that
+      // happens to sit on our fallback port. Warn, never kill.
+      log(
+        `WARNING: daemon port ${port} (profile default — no port file) is owned by pid ${owner}, ` +
+        `which runs a dist/daemon.js entry but carries no agent-tempo install signature — ` +
+        `NOT killing it (#775). If it is yours, terminate it manually ` +
+        `(Windows: taskkill /T /F /PID ${owner} · POSIX: kill ${owner}).`,
+      );
     } else {
       log(
         `WARNING: daemon port ${port} is owned by pid ${owner}, which does not look like an ` +
