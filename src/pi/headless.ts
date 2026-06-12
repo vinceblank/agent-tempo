@@ -53,15 +53,24 @@ interface PiSdkSession {
 }
 
 /**
- * Resolve a Pi `Model` object from a `provider/model` string via pi-ai's
- * `getModel`. Returns `{ model }` on success, `{ fatal }` with an actionable
- * message on an unresolvable model, or `{}` when no model was requested (Pi
- * uses its own default — the 3a anthropic-default path).
+ * Resolve a Pi `Model` object from a `provider/model` string. Returns
+ * `{ model }` on success, `{ fatal }` with an actionable message on an
+ * unresolvable model, or `{}` when no model was requested (Pi uses its own
+ * default — the 3a anthropic-default path).
  *
- * Resolution order:
- *   1. pi-ai built-in index (`getModel`) — fast, no disk I/O.
- *   2. ModelRegistry from models.json — covers custom local providers
- *      (lmstudio, ollama, vllm, etc.) registered via ~/.pi/agent/models.json.
+ * Resolution order — REGISTRY FIRST, for parity with interactive Pi
+ * (architect-verified against the installed SDK source):
+ *   1. ModelRegistry (built-ins merged with ~/.pi/agent/models.json). This
+ *      is interactive Pi's authoritative view: `mergeCustomModels` REPLACES
+ *      a same-provider/id built-in with the models.json entry, and the
+ *      file's `overrides`/`modelOverrides` mutate built-ins (e.g.
+ *      re-pointing a known id at a local proxy). Resolving the raw built-in
+ *      index first would silently ignore those user customizations under
+ *      recruit while interactive `pi` honors them.
+ *   2. pi-ai's raw built-in index (`getModel`) — fallback when the registry
+ *      itself fails to load (the registry already CONTAINS the built-ins,
+ *      so a clean registry miss almost always misses here too; this also
+ *      covers version skew between the two packages).
  */
 async function resolveModel(modelStr: string | undefined): Promise<{ model?: unknown; fatal?: string }> {
   if (!modelStr) return {};
@@ -72,41 +81,40 @@ async function resolveModel(modelStr: string | undefined): Promise<{ model?: unk
   const provider = modelStr.slice(0, slash);
   const modelName = modelStr.slice(slash + 1);
   try {
-    // 1) Try built-in index first (fast, no disk I/O).
-    const piAi = await esmImport(PI_AI_PACKAGE);
-    const getModel = piAi.getModel as (p: string, m: string) => unknown;
-    const builtIn = getModel(provider, modelName);
-    if (builtIn !== undefined && builtIn !== null) return { model: builtIn };
-
-    // 2) Not a built-in — try custom providers from models.json.
-    //    Covers local providers like lmstudio, ollama, vllm, etc.
+    // 1) ModelRegistry first — interactive-Pi parity (see doc-comment).
     try {
       const piSdk = await esmImport(PI_PACKAGE);
       const ModelRegistry = piSdk.ModelRegistry as {
         create(auth: unknown): { find(provider: string, modelId: string): unknown };
       };
       const AuthStorage = piSdk.AuthStorage as { create(): unknown };
-      const custom = ModelRegistry.create(AuthStorage.create()).find(provider, modelName);
-      if (custom !== undefined && custom !== null) return { model: custom };
+      const merged = ModelRegistry.create(AuthStorage.create()).find(provider, modelName);
+      if (merged !== undefined && merged !== null) return { model: merged };
     } catch (registryErr) {
       // DELIBERATE swallow: a registry failure (unreadable/malformed
       // ~/.pi/agent/models.json, AuthStorage init error, SDK export-shape
-      // drift) must surface the same way as a plain model-not-found — both
-      // fall through to the single actionable fatal below, preserving the
-      // fail-clean-before-attach invariant (one clear exit, never a
-      // half-configured attach). The fatal blames the model id, so leave a
-      // breadcrumb naming the REAL failure for the operator whose id is
-      // actually correct:
+      // drift) must surface the same way as a plain model-not-found — fall
+      // through to the raw built-in index, then to the single actionable
+      // fatal below, preserving the fail-clean-before-attach invariant (one
+      // clear exit, never a half-configured attach). The fatal blames the
+      // model id, so leave a breadcrumb naming the REAL failure for the
+      // operator whose id is actually correct:
       log(
         `models.json registry probe failed while resolving "${modelStr}" — ` +
-        `falling through to model-not-found: ` +
+        `falling back to the built-in index: ` +
         (registryErr instanceof Error ? registryErr.message : String(registryErr)),
       );
     }
 
+    // 2) Raw built-in index — registry unavailable/failed, or version skew.
+    const piAi = await esmImport(PI_AI_PACKAGE);
+    const getModel = piAi.getModel as (p: string, m: string) => unknown;
+    const builtIn = getModel(provider, modelName);
+    if (builtIn !== undefined && builtIn !== null) return { model: builtIn };
+
     return {
       fatal:
-        `Pi model "${modelStr}" not found (not in built-in index or models.json). ` +
+        `Pi model "${modelStr}" not found (not in models.json or the built-in index). ` +
         `Run \`pi --list-models\` or check ~/.pi/agent/models.json for custom providers. ` +
         `Omit the model arg to use Pi's configured default.`,
     };
