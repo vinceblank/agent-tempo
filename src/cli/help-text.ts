@@ -27,11 +27,10 @@ export function printHelp(): void {
 ${out.bold('agent-tempo')} — Multi-session Claude Code coordination via Temporal
 
 ${out.bold('Getting started:')}
-  ${out.cyan('agent-tempo up')}                  Start infrastructure, then launch the TUI with ${out.dim('agent-tempo')}
+  ${out.cyan('agent-tempo up')}                  Start infrastructure, then ${out.dim('agent-tempo')} for status or ${out.dim('agent-tempo command-center')} for the live board
 
 ${out.bold('Usage:')}
-  agent-tempo                         Launch the TUI (auto-provisions + opens home view)
-  agent-tempo <ensemble>              Launch the TUI directly into an ensemble view
+  agent-tempo                         Status home — auto-provisions, then prints ensembles + next steps
   agent-tempo <command> [options]
 
 ${out.bold('Commands:')}
@@ -60,10 +59,10 @@ ${out.bold('Commands:')}
   ${out.cyan('preflight')}                Run preflight checks only
   ${out.cyan('help')}                     Show this help message
 
-${out.bold('Removed — use the TUI:')}
-  ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown')}
-  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `agent-tempo` · /recruit · /destroy')}
-  ${out.dim('resume')}                              → ${out.dim('/play')}
+${out.bold('Removed — use the command-center (or dashboard):')}
+  ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('command-center → /destroy · /restart · /ensemble-down · /migrate')}
+  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('`agent-tempo up` · /recruit · /destroy')}
+  ${out.dim('resume / tui')}                        → ${out.dim('/play · bare `agent-tempo` (status) or `command-center` (live board)')}
   See https://github.com/vinceblank/agent-tempo/issues/285 for the full migration table.
 
 ${out.bold('Connection options (all commands):')}
@@ -105,11 +104,11 @@ ${out.bold('Config command:')}
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
   ${out.dim('agent-tempo up')}
-  ${out.dim('agent-tempo')}            # Launch the TUI
+  ${out.dim('agent-tempo')}            # Status home + next steps
 
 ${out.bold('Typical workflow:')}
   ${out.dim('agent-tempo up')}                 Start infrastructure (once per host)
-  ${out.dim('agent-tempo')}                    Launch the TUI
+  ${out.dim('agent-tempo command-center')}     Live board + operator seat (Pi; dashboard = fallback)
   ${out.dim('agent-tempo status myband')}      Check who's active in an ensemble
 
 ${out.bold('Environment:')}

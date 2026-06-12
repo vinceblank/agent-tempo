@@ -11,8 +11,6 @@ source files below rather than grepping multiple directories.
 > #   /name:\s*'([^']+)',\s*description:/  over src/tools/*.ts (excluding descriptor.ts)
 > # CLI commands
 > grep -E "^\s+\\\$\{out\.cyan\('[a-z]" src/cli/help-text.ts
-> # TUI slash commands
-> grep "usage:" src/tui/commands.ts
 > # Adapter types
 > grep "AGENT_TYPES" src/types.ts
 > # HTTP endpoints
@@ -83,7 +81,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 
 | Command | Description |
 |---------|-------------|
-| `tui [ensemble]` | Launch the Terminal UI (auto-provisions on first run; default bare invocation) |
+| `home` | One-shot status home — bootstrap, ensembles snapshot, next-step hints (default bare invocation; auto-provisions on first run) |
 | `up [ensemble]` | Start infrastructure — Temporal, daemon, MCP registration. Optional `--lineup <name>` loads an ensemble; `--scenario <name>` (dev-mode only, ADR 0014 §5.5) forces every `agent: "mock"` player in the lineup into `mockMode: scripted` with the named scenario. |
 | `down [ensemble]` | Stop infrastructure; workflows stay parked |
 | `down --destroy [-y]` | Terminate every workflow across every ensemble, then stop infrastructure |
@@ -114,48 +112,22 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 
 **Count:** 26 commands (including `down --destroy` as a distinct flag variant)  
 **Full reference:** [docs/cli.md](cli.md)  
-**Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints.
+**Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints.  
+**Removed (2.0 / #789):** `tui` — the Ink terminal TUI was deleted; the verb prints a migration hint. Bare invocation is now the one-shot status home; live supervision moved to `command-center` and `dashboard`.
 
 ---
 
-## 3. TUI Slash Commands
+## 3. TUI Slash Commands — removed (2.0 / #789)
 
-Source: `src/tui/commands.ts` — `COMMANDS` record, `description:` + `usage:` fields.
+The Ink terminal TUI (`src/tui/`) was deleted in #789. This surface — 28 slash commands
+sourced from `src/tui/commands.ts` — is gone, and `scripts/check-surface-drift.js` no longer
+checks it. Live operator control moved to the mission-control command center
+(`agent-tempo command-center`, slash commands registered via `pi.registerCommand` in
+`src/pi/mission-control/extension.ts`) and the web dashboard (`agent-tempo dashboard`);
+bare `agent-tempo` is now a one-shot status home.
 
-| Command | Description |
-|---------|-------------|
-| `/attachment-info <player>` | Inspect the V2 attachment state of a session |
-| `/back` | Return to maestro view |
-| `/broadcast <message>` | Send a message to all active players |
-| `/destroy <player\|ensemble> [reason]` | Terminally destroy a player (y/N) or an ensemble (typed-name) |
-| `/ensemble [name]` | Switch active ensemble by name; no args navigates home |
-| `/exit` | Exit the TUI (alias for `/quit`) |
-| `/gates` | List quality gates and their status |
-| `/go` | Release all held players (unlock outbox) |
-| `/help [command]` | Show available commands; pass a command name for detailed usage |
-| `/home` | Return to the home view (does not touch workflows) |
-| `/hosts [--all]` | List daemons polling this Temporal namespace with advertised capabilities |
-| `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
-| `/migrate <player> <host> [--fresh] [--force]` | Restart a session on a different host |
-| `/pause [ensemble]` | Pause every session + scheduler + maestro in the ensemble |
-| `/play [ensemble]` | Resume a paused ensemble |
-| `/players [name]` | List active players or show player detail |
-| `/quit` | Exit the TUI |
-| `/recall [player] [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent]` | Read a player's message history |
-| `/recruit <name> [--type <type>] [--dir <path>]` | Spawn a new player session |
-| `/recruit-conductor` | Recruit a conductor for the current ensemble |
-| `/restore [ensemble]` | Restore a parked ensemble — reattach orphans, unpause maestro + scheduler |
-| `/restart <player> [--fresh] [--no-force]` | Restart a session; steals live lease by default |
-| `/schedule [create \| delete <name>]` | Manage schedules — list, create, or delete |
-| `/search <term>` | Search message history |
-| `/shutdown [ensemble]` | Graceful ensemble teardown — detach adapters, pause maestro + scheduler |
-| `/stages` | List stages and their status |
-| `/status` | Show ensemble players and status |
-| `/worktree [list \| create <player> \| remove <player>]` | Manage git worktrees for player isolation |
-
-**Count:** 28 commands (`/quit` and `/exit` are both registered; `/back` and `/help` handled in App.tsx)  
-**Full reference:** [docs/tui.md](tui.md)  
-**Removed (v0.27):** `/resume`, `/detach`, `/disband`, `/pause_ensemble`, `/resume_ensemble` — show migration hints.
+**Removed (2.0 / #789):** `/attachment-info`, `/back`, `/broadcast`, `/destroy`, `/ensemble`, `/exit`, `/gates`, `/go`, `/help`, `/home`, `/hosts`, `/lineup`, `/migrate`, `/pause`, `/play`, `/players`, `/quit`, `/recall`, `/recruit`, `/recruit-conductor`, `/restore`, `/restart`, `/schedule`, `/search`, `/shutdown`, `/stages`, `/status`, `/worktree`  
+**Removed (v0.27):** `/resume`, `/detach`, `/disband`, `/pause_ensemble`, `/resume_ensemble` — showed migration hints until the TUI itself was removed.
 
 ---
 
@@ -232,4 +204,4 @@ Summary counts (as of v0.27):
 
 Documented in full in [`docs/SSE-PROTOCOL.md`](SSE-PROTOCOL.md). Not duplicated here.
 
-Event types, payload schemas, and ring-buffer replay semantics are the stable contract between the daemon and consumers (TUI, CLI follower, third-party integrations).
+Event types, payload schemas, and ring-buffer replay semantics are the stable contract between the daemon and consumers (mission-control, CLI follower, third-party integrations).

@@ -1,6 +1,6 @@
 # SSE Protocol Reference
 
-This document is the authoritative reference for the **HTTP/SSE event source** exposed by the agent-tempo daemon (#94, #95). It mirrors the role of [`WIRE-PROTOCOL.md`](WIRE-PROTOCOL.md) for the Temporal layer: every endpoint, event name, and payload here is part of a stable contract between the daemon and any consumer (TUI, web dashboard, CLI follower, third-party integration).
+This document is the authoritative reference for the **HTTP/SSE event source** exposed by the agent-tempo daemon (#94, #95). It mirrors the role of [`WIRE-PROTOCOL.md`](WIRE-PROTOCOL.md) for the Temporal layer: every endpoint, event name, and payload here is part of a stable contract between the daemon and any consumer (mission-control, web dashboard, CLI follower, third-party integration).
 
 ## Stability guarantee
 
@@ -20,7 +20,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | Default bind | `127.0.0.1:8473` | Loopback only by default. Port: `t-e-m-p-o` mnemonic; not IANA-registered — operators MAY override. |
 | Bind override | `AGENT_TEMPO_HTTP_BIND=0.0.0.0` | Forces token mode (see §3). Daemon refuses to start if token mode prerequisites unmet. |
 | Port override | `AGENT_TEMPO_DAEMON_PORT` | |
-| Port discovery | `~/.agent-tempo/daemon.port` | Atomic-write file containing the bound port. TUI reads this on startup so the port is config-free for local consumers. Removed on daemon shutdown. |
+| Port discovery | `~/.agent-tempo/daemon.port` | Atomic-write file containing the bound port. Local consumers (mission-control, the status home) read this on startup so the port is config-free. Removed on daemon shutdown. |
 | Snapshot Content-Type | `application/json; charset=utf-8` | |
 | Stream Content-Type | `text/event-stream; charset=utf-8` | |
 | Encoding | UTF-8 | Required by SSE spec. |
@@ -32,7 +32,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 
 | Method | Path | Returns | Description |
 |---|---|---|---|
-| `GET` | `/v1/health` | `application/json` | `{ ok, namespace, version, uptimeMs, ensembleCount, subscriberCount }`. **Never authenticated** — used by reverse proxies, supervisord probes, the TUI bootstrap state machine. |
+| `GET` | `/v1/health` | `application/json` | `{ ok, namespace, version, uptimeMs, ensembleCount, subscriberCount }`. **Never authenticated** — used by reverse proxies, supervisord probes, the CLI bootstrap state machine. |
 | `GET` | `/v1/ensembles` | `application/json` | `EnsembleSummary[]` — replaces existing `TempoClient.listEnsembles()` polling. |
 | `GET` | `/v1/state/:ensemble` | `application/json` | Single-ensemble snapshot, including `lastEventId` (see §7.2). |
 | `GET` | `/v1/hosts` | `application/json` | `HostInfo[]` — mirror of `TempoClient.listHosts()`. Cached 3 s server-side (matches existing TempoClient cache). |
@@ -240,7 +240,7 @@ interface OrphanV1 {
   phase: AttachmentPhase;
   detachedSince: string | null;
   lastHeartbeatAt: string | null;
-  /** Render-ready TUI slash command the operator pastes to recover. */
+  /** Render-ready migrate command the operator runs to recover. */
   migrateCommand: string;
 }
 ```
@@ -249,7 +249,7 @@ interface OrphanV1 {
 - **Filter**: optional `?ensemble=<name>` narrows to a single ensemble. Omitted → all ensembles.
 - **Cache**: 3 s server-side cache keyed by `ensembleFilter ?? '__all__'` (mirrors `/v1/hosts`). The filter and unfiltered call have independent cache entries.
 - **`hostLiveness`** is joined server-side against `listHosts()` so consumers don't have to re-issue a hosts query per row. `'live'` / `'stale'` mirror `HostInfo.freshness`; `'missing'` covers both null `preferredHost` AND absent-from-hosts cases.
-- **`migrateCommand`** is a TUI slash-command string the operator pastes into any local session. Always positional `<player> <host>`; falls back to `--force --yes-steal=<lastKnownHost>` (with `(unknown)` placeholder if even that is missing) when `preferredHost` is null. Wording matches `src/tui/commands.ts:handleMigrate` — flag form is `--yes-steal=` NOT `--confirm-steal-from-host`.
+- **`migrateCommand`** is a render-ready `migrate` invocation the operator runs from any local session (MCP `migrate` tool). Always positional `<player> <host>`; falls back to `--force --yes-steal=<lastKnownHost>` (with `(unknown)` placeholder if even that is missing) when `preferredHost` is null. Flag form is `--yes-steal=` NOT `--confirm-steal-from-host`.
 - **Partial-tolerance**: a per-candidate `attachmentInfo` / `orphanSummary` query failure does NOT fail the request — the row is dropped silently and the remainder of the listing is returned with HTTP 200. Mirrors `queryOrphanedSessions`'s existing skip-and-log contract.
 - **View-only in v1**: no click-to-adopt / click-to-destroy on the response. Recovery is operator-side via `migrateCommand`.
 
@@ -442,7 +442,7 @@ Contrast with `event: gap`, which is a **hard gap** spanning all event kinds and
 
 | Source signal | Cadence | Rule |
 |---|---|---|
-| Daemon aggregate poll | every **750 ms** (local profile) | Single internal loop; mirrors today's TUI fan-out once per tick. Under `costProfile: 'local'` subscriber count has zero impact on Temporal RPC volume. **T0.4/#751 demand gate**: under `costProfile: 'cloud'`, zero live SSE subscribers stretches the cadence to a 30 s slow reconcile; the first subscriber's connect wakes the loop (immediate tick + 750 ms resumes). Consumers already tolerate this by design (`Last-Event-ID` replay + snapshot-on-connect); worst case a freshly opened board reads ≤1 reconcile-interval stale for one tick. |
+| Daemon aggregate poll | every **750 ms** (local profile) | Single internal loop; one client-style query fan-out per tick. Under `costProfile: 'local'` subscriber count has zero impact on Temporal RPC volume. **T0.4/#751 demand gate**: under `costProfile: 'cloud'`, zero live SSE subscribers stretches the cadence to a 30 s slow reconcile; the first subscriber's connect wakes the loop (immediate tick + 750 ms resumes). Consumers already tolerate this by design (`Last-Event-ID` replay + snapshot-on-connect); worst case a freshly opened board reads ≤1 reconcile-interval stale for one tick. |
 | **Aggregate poll backpressure** | serial-with-skip | If a tick's Temporal queries don't complete before the next 750 ms boundary, the next tick is **skipped** and the daemon emits a structured warn-log (`[agent-tempo:aggregate] tick skipped — prior tick still in flight (Xms)`). The daemon NEVER has more than one in-flight aggregate fetch. Overlapping ticks would risk unbounded RPC volume during Temporal slowness; serial-with-skip is the conservative ceiling. Persistent skips (e.g. ≥5 in 60 s) are an operator alert signal — surface in `/v1/health` as a future field if metrics warrant. |
 | **Per-ensemble fan-out carry-forward (#550)** | bounded by `MAX_CONSECUTIVE_FAILURES = 20` | When per-ensemble fan-out (`buildEnsembleSnapshot` per ensemble) fails transiently — timeout, query error, network blip — the ensemble is **carried forward** in the cluster-diff input rather than emitting `ensemble.destroyed`. Only `EnsembleNotFoundError` from the existence gate counts as genuine destruction. The cluster diff's `liveEnsembleNames` = (`'ok'` ∪ `'failed'`) outcomes; `'gone'` is the only kind that triggers `ensemble.destroyed`. After 20 consecutive `'failed'` outcomes (~15 s at 750 ms cadence — matches the tick watchdog ceiling), the ensemble is promoted to `'gone'` and a single `ensemble.destroyed` event fires. Carry-forward means per-track diff state (`playerPhases`, `flags`, `schedulesHash`, `chatIds`) is NOT updated for `'failed'` ticks — the next successful tick observes the truthful prior state and emits player-level events with one-tick delay. Prevents the pre-#550 phantom-destroy bug where a transient per-ensemble timeout silently triggered `ensemble.destroyed` to every connected dashboard subscriber. |
 | `ClaudeTempoAttachmentState` change | ≤ once / 250 ms / playerId | Latest-wins debounce |
@@ -482,23 +482,23 @@ CORS rejection sends a normal CORS-failure response (browser handles it). `/v1/h
 
 ## 11. State source
 
-The daemon maintains an **in-memory aggregate** fed by a single internal poll loop at 750 ms cadence. Each tick fans out the same Temporal queries the TUI runs today (one `workflow.list` + per-ensemble `maestroPlayersByEnsemble` + `maestroEnsembleChat` + `getSchedules`), diffs against the previous snapshot, and emits events.
+The daemon maintains an **in-memory aggregate** fed by a single internal poll loop at 750 ms cadence. Each tick fans out a fixed set of Temporal queries (one `workflow.list` + per-ensemble `maestroPlayersByEnsemble` + `maestroEnsembleChat` + `getSchedules`), diffs against the previous snapshot, and emits events.
 
 **Why an aggregate, not direct Temporal-history streaming**
 
 The Temporal SDK has no broad "subscribe to namespace events" API. Visibility-query polling is the realistic path. The aggregate is the abstraction that hides this from clients.
 
-**Subscriber count has zero impact on Temporal RPC volume** (local profile). Five TUIs and one web dashboard all read from one snapshot-per-tick. Under `costProfile: 'cloud'` the T0.4/#751 demand gate makes ZERO subscribers stretch the poll to a slow reconcile — N≥1 subscribers still share one snapshot-per-tick.
+**Subscriber count has zero impact on Temporal RPC volume** (local profile). Five mission-control boards and one web dashboard all read from one snapshot-per-tick. Under `costProfile: 'cloud'` the T0.4/#751 demand gate makes ZERO subscribers stretch the poll to a slow reconcile — N≥1 subscribers still share one snapshot-per-tick.
 
 **Phase 3 deferred optimization** — replace the internal poll with worker-side activity hooks pushing events to the daemon over a Temporal signal, OR `client.workflow.handle().describe()` polled at much lower frequency when a subscriber is attached. **Don't design for it now** — pick the bottleneck after metrics. The aggregate abstraction lets that swap happen without API change.
 
 ### Per-player drill-in views (deliberately Temporal-direct)
 
-The endpoints `/v1/players/:ensemble/:playerId` and `/v1/messages/:ensemble/:playerId` are intentionally **out of scope** for v1 (see §2). PR-4's player-detail view continues to call `TempoClient.getPlayerMetadata` and `TempoClient.getPlayerMessages` directly against Temporal (today's path at `src/tui/App.tsx:853–863`). This is **by design**:
+The endpoints `/v1/players/:ensemble/:playerId` and `/v1/messages/:ensemble/:playerId` are intentionally **out of scope** for v1 (see §2). PR-4's player-detail view (in the since-removed TUI, #789) called `TempoClient.getPlayerMetadata` and `TempoClient.getPlayerMessages` directly against Temporal. This is **by design**:
 
 - Per-player drill-ins are user-invoked (one player open at a time), not background streams. SSE's value — many subscribers, one source — doesn't apply to a 1:1 view.
 - Surfacing them through SSE would inflate the aggregate (per-player message history × every ensemble × every connected client) without solving any current problem.
-- Future readers should NOT treat the App.tsx direct-Temporal calls as "incomplete migration" — they're the right shape for this access pattern.
+- Future readers should NOT treat direct-Temporal calls for drill-in views as "incomplete migration" — they're the right shape for this access pattern.
 
 If a future use case demands per-player streams (e.g. real-time co-pilot pairing UX), revisit by adding `/v1/events/:ensemble/:playerId` as an additive endpoint — non-breaking, doesn't disturb the rest of the surface.
 
@@ -574,7 +574,7 @@ Ten POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a bi
 
 ### Auth posture (3e MD-E)
 
-- Loopback bind + no `Origin` header → no auth (TUI/CLI parity; the TUI already writes via Temporal directly).
+- Loopback bind + no `Origin` header → no auth (CLI parity; local CLI verbs already write via Temporal directly).
 - Non-loopback bind OR cross-origin browser → **T2 (admin token) required**. A read token holder gets `403 { error: 'insufficient-tier', detail: '…set AGENT_TEMPO_HTTP_ADMIN_TOKEN' }`. An unauthenticated request gets `401 { error: 'unauthorized' }` (L2 floor, checked before tier enforcement).
 
 ### Error mapping

@@ -27,7 +27,7 @@ other players address you via `cue`.
 - `gone` — Terminal; workflow COMPLETES after `destroy`
 
 Phase transitions are deterministic and recorded as workflow history events. External
-observers (the TUI, the CLI `ensemble` tool, the Maestro dashboard, the daemon
+observers (mission-control, the CLI `ensemble` tool, the Maestro dashboard, the daemon
 `reconcileOnBoot` path) read the current phase from `ClaudeTempoAttachmentState` or the
 `attachmentInfo` query — both are authoritative.
 
@@ -103,17 +103,17 @@ Three discovery surfaces let you see them when you do need to:
   - `[stale]` — preferred host registered a profile but no poller seen recently. Probably down.
   - `[missing]` — preferred host has no registered profile at all (never came back, or maestro
     restarted and the profile expired). Almost certainly safe to deliberately steal.
-  Each cross-host group includes the TUI `/migrate <player> <local> --force` command the
+  Each cross-host group includes the `migrate <player> <local> --force` invocation the
   operator would run to steal the session to the local host. The verb **never** enqueues a
   restart itself — it's a discovery tool, not a recovery action.
 
-- **TUI `/migrate <player> <host> --force`** — the deliberate-action recovery edge. Reattaches
+- **MCP `migrate <player> <host> --force`** — the deliberate-action recovery edge. Reattaches
   the session on the local host, stealing it from whichever host currently owns the attachment.
   Replaces the operator-judgment role that a timer-based reclaim cannot fulfill — a clock cannot
   distinguish "host decommissioned" from "host offline for the weekend," and PR-F §3 Site 3
   forbids unprompted cross-host takeover. The §16.5-Option-B `--yes-steal=<currentHost>`
-  deliberate-action gate is now enforced on both surfaces (MCP `restart`/`migrate` tools and the
-  TUI `/migrate` handler, #580) — `--force` against a target whose current attachment lives on
+  deliberate-action gate is enforced on the MCP `restart`/`migrate` tools
+  (#580) — `--force` against a target whose current attachment lives on
   another host hard-rejects until the operator types the holder's hostname exactly. The same
   finger habit that mashes `y` at any prompt cannot satisfy a name-the-target check.
 
@@ -190,9 +190,9 @@ Three surfaces expose orphans, in increasing scope:
   Backed by `restoreOrphansOnce` in `mode: 'local'`.
 - `agent-tempo restore --all-hosts` — read-only cluster-view listing
   (#151). Same query, just doesn't auto-restore — emits each row as a
-  `crossHost` skip the operator can act on with `/migrate`.
+  `crossHost` skip the operator can act on with the `migrate` tool.
 - **Dashboard `/orphans` view** (#579) — the cluster-view rendered as a
-  table with `migrateCommand` strings the operator pastes into a TUI
+  table with `migrateCommand` strings the operator runs from a player
   session on the recovery host. View-only in v1.
 
 All three share `queryOrphanedSessions` (`src/reconcile/orphans.ts`) as
@@ -363,7 +363,7 @@ Uses Global Maestro as the primary source with graceful fallback to per-ensemble
 direct workflow list queries.
 
 **Ensemble state** — Every ensemble is classified into one of three states by TempoClient and
-surfaced in the TUI home view and `agent-tempo status`:
+surfaced in the status home (bare `agent-tempo`) and `agent-tempo status`:
 
 - **online** — the maestro hub is unpaused (or, if no hub exists yet, at least one player has a
   live adapter attached).

@@ -44,7 +44,6 @@ function findTsx(dir, results = []) {
 /** Directories whose *.tsx files are checked. */
 const SEARCH_DIRS = [
   path.join(ROOT, 'dashboard', 'src'),
-  path.join(ROOT, 'src', 'tui'),
 ];
 
 /** Pattern that should never appear in rendered component files. */

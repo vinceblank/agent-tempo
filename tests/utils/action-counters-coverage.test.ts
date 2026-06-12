@@ -22,7 +22,6 @@ const EXCLUDED = new Set([
   'cli/ensure-infra.ts',
   'cli/startup.ts',
   'cli/upgrade-command.ts',
-  'tui/index.ts',
 ]);
 
 function listTsFiles(dir: string): string[] {

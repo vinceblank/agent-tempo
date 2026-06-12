@@ -57,11 +57,6 @@ function normalizeCli(s) {
   return s.split(/\s+/)[0];
 }
 
-/** Normalize a TUI command: take only the first whitespace-delimited token. */
-function normalizeTui(s) {
-  return s.split(/\s+/)[0];
-}
-
 // ── 1. MCP Tools ──────────────────────────────────────────────────────────────
 
 function extractMcpToolsFromSource() {
@@ -122,27 +117,10 @@ function extractCliCommandsFromSource() {
   return commands;
 }
 
-// ── 3. TUI Slash Commands ─────────────────────────────────────────────────────
-
-function extractTuiCommandsFromSource() {
-  const src = read('src/tui/commands.ts');
-
-  // Scope to the COMMANDS record so we don't accidentally match TypeScript
-  // interface declarations or comments above the record.
-  const recordStart = src.indexOf('export const COMMANDS');
-  if (recordStart === -1) {
-    throw new Error('COMMANDS record not found in src/tui/commands.ts');
-  }
-  const section = src.slice(recordStart);
-
-  const commands = new Set();
-  // Each command has:  usage: '/name [args]',
-  // Capture the leading /name token from the usage string.
-  for (const m of section.matchAll(/usage:\s*'\/([\w-]+)/g)) {
-    commands.add('/' + m[1]);
-  }
-  return commands;
-}
+// ── 3. TUI Slash Commands — RETIRED (#789): the Ink TUI was deleted; the
+// surface and its registry section are gone. Mission-control slash commands
+// are a candidate for a future drift surface (registered via
+// pi.registerCommand in src/pi/mission-control/extension.ts).
 
 // ── Diff helper ───────────────────────────────────────────────────────────────
 
@@ -185,17 +163,13 @@ const cliSource   = extractCliCommandsFromSource();
 const cliRegistry = parseRegistryTableFirstCol(registry, '## 2. CLI Commands');
 const cliDrift    = diff('CLI commands', cliSource, cliRegistry, normalizeCli, normalizeCli);
 
-// Surface 3 — TUI slash commands (source gives /name; registry column can
-// include arguments; normalize both sides to first whitespace token).
-const tuiSource   = extractTuiCommandsFromSource();
-const tuiRegistry = parseRegistryTableFirstCol(registry, '## 3. TUI Slash Commands');
-const tuiDrift    = diff('TUI slash commands', tuiSource, tuiRegistry, normalizeTui, normalizeTui);
+// Surface 3 (TUI slash commands) retired in #789 — see note above.
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
 let driftFound = false;
 
-for (const { label, undocumented, phantom } of [mcpDrift, cliDrift, tuiDrift]) {
+for (const { label, undocumented, phantom } of [mcpDrift, cliDrift]) {
   if (undocumented.length === 0 && phantom.length === 0) {
     console.log(`✓  ${label}: clean`);
     continue;

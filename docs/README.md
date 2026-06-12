@@ -18,14 +18,12 @@ Reference documentation for agent-tempo. See the main [README](../README.md) for
 | [configuration.md](configuration.md) | Configuration — env vars, config file, Temporal Cloud |
 | [dev-mode.md](dev-mode.md) | Dev mode — isolated `--dev` profile, mock adapter, scenario library |
 | [copilot.md](copilot.md) | Copilot CLI integration (experimental) |
-| [tui.md](tui.md) | Interactive TUI — slash commands, messaging, scheduling, ensemble management |
-| [tui-performance.md](tui-performance.md) | TUI performance — Ink/React lessons for `src/tui/` contributors |
 | [daemon.md](daemon.md) | Worker Daemon — background process that runs Temporal workers |
 | [release-process.md](release-process.md) | Release process — version bump, tag, and publish sequence |
 | [troubleshooting.md](troubleshooting.md) | Troubleshooting — stale sessions, common issues, upgrade notes |
 | [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md) | Wire protocol — stable Temporal signal/query/update/workflow names |
 | [SSE-PROTOCOL.md](SSE-PROTOCOL.md) | HTTP/SSE event source — daemon streaming endpoints, event types, and payload schemas (#94, #95) |
-| [SURFACE-REGISTRY.md](SURFACE-REGISTRY.md) | Surface registry — canonical inventory of all MCP tools, CLI commands, and TUI slash commands for drift detection |
+| [SURFACE-REGISTRY.md](SURFACE-REGISTRY.md) | Surface registry — canonical inventory of all MCP tools, CLI commands, and other public surfaces for drift detection |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture — session model, three-layer stack, ensemble coordination |
 | [github-app.md](github-app.md) | GitHub App integration — bot identity, permissions, token rotation |
 | [adr/README.md](adr/README.md) | Architectural Decision Records — index of all ADRs |

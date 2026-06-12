@@ -140,7 +140,7 @@ lose their adapter transition to `detached` and wait for a fresh `claimAttachmen
 
 Each session workflow has an attachment phase tracked on the `ClaudeTempoAttachmentState`
 search attribute and returned by the `attachmentInfo` query. The five user-facing buckets
-the CLI and TUI render are derived from the seven underlying phases:
+the CLI and mission-control render are derived from the seven underlying phases:
 
 | Label | Phases | When you see it |
 |-------|--------|-----------------|

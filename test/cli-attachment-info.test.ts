@@ -4,8 +4,7 @@
  * `src/utils/attachment-format.ts` in #264 so the TUI consumer could reuse
  * it without drifting. These Mocha cases stay here to keep the CLI-side
  * workflow/wire-protocol suite validating the pure pure-data-in / string-out
- * contract; the TUI integration has companion vitest coverage at
- * `tests/tui/attachment-info.test.ts`.
+ * contract. (The former TUI companion suite was deleted with the TUI, #789.)
  *
  * Covers:
  *   - Happy path: currentAttachment present → all fields including heartbeat
