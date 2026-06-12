@@ -25,6 +25,10 @@ Three structural consequences, each load-bearing:
 2. **No persistence, no replay.** Doorbells are in-memory, ephemeral, at-most-once — the
    inner-loop class of traffic (`src/http/inner-loop.ts`: "NOT on Temporal/bus, ephemeral
    no-replay"). A doorbell that dies with a daemon restart was, by the invariant, never sent.
+   *(Implementation refinement, PR-1 / architect-ruled: a live connection holds at most ONE
+   pending bit — level-triggered, not a queue. Rings while the consumer is mid-iteration
+   coalesce into a single ding; the bit dies with the connection. No count, no ordering, no
+   payload, no survival — the drop cases above are untouched.)*
 3. **No new acks, no new workflow state.** Nothing on the Temporal wire changes. The wire
    surface of this feature is exactly zero signals/queries/updates.
 
