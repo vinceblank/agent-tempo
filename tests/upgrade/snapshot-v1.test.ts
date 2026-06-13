@@ -31,7 +31,7 @@ function sampleSnapshot(overrides: Partial<UpgradeSnapshot> = {}): UpgradeSnapsh
   return {
     version: UPGRADE_SNAPSHOT_VERSION,
     createdAt: '2026-06-12T00:00:00.000Z',
-    cliVersion: '1.8.0',
+    cliVersion: '1.7.0',
     phase: 'snapshot',
     ensembles: [
       {

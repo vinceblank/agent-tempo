@@ -78,8 +78,14 @@ import {
 // Pure helpers (vitest-testable; no Temporal)
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Default minimum daemon version every connected host must meet to cut over. */
-export const DEFAULT_VERSION_FLOOR = '1.8.0';
+/**
+ * Default minimum daemon version every connected host must meet to cut over.
+ * `1.7.0` is the stable that ships the `upgrade-to-2` verb (the version ruling
+ * corrected the stable line from 1.8.0 → 1.7.0; both `!` commits were non-major
+ * from the 1.6.2 baseline). A daemon below this lacks the cutover-compatible
+ * code, so preflight refuses it.
+ */
+export const DEFAULT_VERSION_FLOOR = '1.7.0';
 
 /** Default bounded wait for the DRAIN phase. */
 export const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
@@ -101,7 +107,7 @@ export function parseMajorMinor(version: string): { major: number; minor: number
 
 /**
  * Does `version` meet `floor` (by `major.minor`)? Lenient on prereleases —
- * `1.8.0-beta.8` meets a `1.8.0` floor because it rides the 1.8 line, which
+ * `1.7.0-beta.9` meets a `1.7.0` floor because it rides the 1.7 line, which
  * carries the cutover-compatible code. Unknown / unparseable versions FAIL
  * (a daemon we cannot version-check is refused loudly, never assumed safe).
  */
@@ -258,7 +264,7 @@ export async function runUpgradeToV2(
   if (refusals.length > 0) {
     log('[upgrade] REFUSED — connected daemon(s) below the version floor:');
     for (const r of refusals) log(`    ✗ ${r.hostname}: ${r.reason}`);
-    log('[upgrade] Upgrade every daemon to 1.8.x first, then re-run. (No state was touched.)');
+    log('[upgrade] Upgrade every daemon to 1.7.x first, then re-run. (No state was touched.)');
     return { status: 'refused', phase: 'preflight', refusals };
   }
   if (Object.keys(profiles).length === 0) {

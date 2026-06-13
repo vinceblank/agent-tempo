@@ -66,7 +66,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
     return {
       client: getClient(),
       home,
-      cliVersion: '1.8.0-test',
+      cliVersion: '1.7.0-test',
       log: SILENT,
       ...overrides,
     };
@@ -137,7 +137,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       expect(snap, 'snapshot file written').to.not.be.null;
       expect(snap!.version).to.equal(1);
       expect(snap!.phase).to.equal('done');
-      expect(snap!.cliVersion).to.equal('1.8.0-test');
+      expect(snap!.cliVersion).to.equal('1.7.0-test');
 
       const ens = snap!.ensembles.find((e) => e.name === ensemble);
       expect(ens, 'ensemble captured').to.exist;
@@ -187,7 +187,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       writeSnapshot(home, {
         version: 1,
         createdAt: preservedCreatedAt,
-        cliVersion: '1.8.0-test',
+        cliVersion: '1.7.0-test',
         phase: 'snapshot',
         ensembles: [
           {
@@ -308,9 +308,9 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
         args: [
           {
             pollIntervalMs: 60_000,
-            // A single host (this host) advertising a stale daemon — the
-            // same-host-stale-daemon case from #801.
-            hostProfiles: { 'test-host': { hostname: 'test-host', version: '1.7.0' } },
+            // A single host (this host) advertising a stale daemon below the
+            // 1.7.0 floor — the same-host-stale-daemon case from #801.
+            hostProfiles: { 'test-host': { hostname: 'test-host', version: '1.6.2' } },
           },
         ],
       });
@@ -320,7 +320,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
         expect(result.status).to.equal('refused');
         expect(result.refusals, 'refusal listed').to.have.length(1);
         expect(result.refusals![0].hostname).to.equal('test-host');
-        expect(result.refusals![0].version).to.equal('1.7.0');
+        expect(result.refusals![0].version).to.equal('1.6.2');
         // Refused BEFORE writing anything.
         expect(readSnapshot(home)).to.be.null;
       } finally {
