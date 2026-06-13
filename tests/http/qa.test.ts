@@ -16,7 +16,7 @@ import type { AnswerEntry } from '../../src/types';
 
 interface CallLog { method: string; args: unknown[] }
 
-function makeMockClient(opts: { throws?: Partial<Record<string, Error>>; answer?: AnswerEntry | null } = {}):
+function makeMockClient(opts: { throws?: Partial<Record<string, Error>>; answer?: AnswerEntry | null; phase?: string } = {}):
   { client: TempoClient; calls: CallLog[] } {
   const calls: CallLog[] = [];
   const handler = (method: string, ret: unknown) => async (...args: unknown[]) => {
@@ -28,6 +28,9 @@ function makeMockClient(opts: { throws?: Partial<Record<string, Error>>; answer?
     ensureMaestroSession: handler('ensureMaestroSession', 'maestro-wf'),
     sendAsMaestro: handler('sendAsMaestro', undefined),
     getAnswer: handler('getAnswer', opts.answer ?? null),
+    // #822 — the ask deliverability preflight queries the target phase. Default
+    // 'attached' (deliverable); override via `opts.phase` for the detached path.
+    attachmentInfo: handler('attachmentInfo', { phase: opts.phase ?? 'attached' }),
   };
   const proxy = new Proxy(base, {
     get(target, prop: string) {
@@ -85,6 +88,34 @@ describe('POST /v1/ensembles/:e/ask (#700 P2)', () => {
     expect(sent?.args[1]).toBe('tempo-eng');
     expect(sent?.args[2]).toContain('[Q q-1]');
     expect(sent?.args[2]).toContain('respond');
+  });
+
+  // #822 — ask is a cue-class sibling: a detached target parks the [Q] cue.
+  it('detached target → 202 + queued:true warning (the [Q] cue queues undelivered)', async () => {
+    const b = await boot(makeMockClient({ phase: 'detached' }));
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'tempo-conductor', question: 'done?', questionId: 'q-9' }),
+    });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.queued).toBe(true);
+    expect(body.phase).toBe('detached');
+    expect(body.warning).toContain('detached');
+    // Warn-but-queue: the [Q] cue STILL enqueued + the ask is still tracked.
+    expect(b.calls.find((c) => c.method === 'sendAsMaestro')).toBeDefined();
+  });
+
+  it('live target → no queued warning (delivery:live)', async () => {
+    const b = await boot(makeMockClient({ phase: 'awaiting' }));
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'tempo-eng', question: 'q', questionId: 'q-2' }),
+    });
+    const body = await res.json();
+    expect(body.delivery).toBe('live');
+    expect(body.queued).toBe(false);
+    expect(body.warning).toBeUndefined();
   });
 
   it('400 missing-field / invalid-question-id / invalid-player-name', async () => {

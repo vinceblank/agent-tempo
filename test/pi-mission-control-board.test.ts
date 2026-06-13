@@ -9,6 +9,7 @@ import {
   selectPlayer,
   sortedPlayerIds,
   tailability,
+  setConnection,
 } from '../src/pi/mission-control/board';
 import { parseInnerSse } from '../src/pi/mission-control/inner-tail';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
@@ -227,3 +228,72 @@ describe('mission-control board — suspension flags (#752)', () => {
     expect(m.held).to.equal(true);
   });
 });
+
+describe('mission-control board — connection axis (#823)', () => {
+  it('initBoard starts in connecting; the reducer never flips it to live', () => {
+    const m = initBoard('ens');
+    expect(m.connection).to.equal('connecting');
+    // A snapshot replayed into the model must NOT silently assert the stream is
+    // live — connection liveness is owned by the extension's stream loop.
+    applyTempoEvent(m, ev('snapshot', { players: [summary({ playerId: 'a' })], state: 'online', flags: { paused: false, held: false } }));
+    expect(m.connection).to.equal('connecting');
+  });
+
+  it('setConnection transitions state + bumps revision; no-op when unchanged', () => {
+    const m = initBoard('ens');
+    const r0 = m.revision;
+    setConnection(m, 'live');
+    expect(m.connection).to.equal('live');
+    expect(m.revision).to.be.greaterThan(r0);
+    const r1 = m.revision;
+    setConnection(m, 'live'); // unchanged → no bump
+    expect(m.revision).to.equal(r1);
+  });
+
+  it("gone CLEARS the player list + selection + tail + flags (hard 404 / destroy)", () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'b' })));
+    applyTempoEvent(m, ev('flags.changed', { ensemble: 'ens', paused: true, held: true, at: 't' }));
+    selectPlayer(m, 'a');
+    applyInnerFrame(m, frame());
+    setConnection(m, 'gone');
+    expect(m.connection).to.equal('gone');
+    expect(m.players.size).to.equal(0);
+    expect(m.selected).to.equal(null);
+    expect(m.innerTail).to.have.length(0);
+    expect(m.paused).to.equal(false);
+    expect(m.held).to.equal(false);
+  });
+
+  it('reconnecting KEEPS the last-known rows (transient drop self-heals)', () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    setConnection(m, 'reconnecting');
+    expect(m.connection).to.equal('reconnecting');
+    expect(m.players.has('a')).to.equal(true); // rows retained
+  });
+
+  it('carries an optional connection detail (e.g. the 401 auth hint)', () => {
+    const m = initBoard('ens');
+    setConnection(m, 'reconnecting', 'auth rejected');
+    expect(m.connectionDetail).to.equal('auth rejected');
+    // A detail-only change still bumps (different reason for the same state).
+    const r0 = m.revision;
+    setConnection(m, 'reconnecting', 'still retrying');
+    expect(m.connectionDetail).to.equal('still retrying');
+    expect(m.revision).to.be.greaterThan(r0);
+  });
+
+  it('rebindBoard returns connection to connecting and clears the detail', () => {
+    const m = initBoard('ens');
+    setConnection(m, 'reconnecting', 'auth rejected');
+    // rebindBoard is exercised via the public re-key path.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { rebindBoard } = require('../src/pi/mission-control/board');
+    rebindBoard(m, 'other');
+    expect(m.connection).to.equal('connecting');
+    expect(m.connectionDetail).to.equal(undefined);
+  });
+});
+

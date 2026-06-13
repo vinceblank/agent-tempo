@@ -2,7 +2,7 @@
  * Mission-control render unit tests (3f) — PURE BoardModel → string[].
  */
 import { expect } from 'chai';
-import { initBoard, applyTempoEvent, applyInnerFrame, selectPlayer } from '../src/pi/mission-control/board';
+import { initBoard, applyTempoEvent, applyInnerFrame, selectPlayer, setConnection, pushCommandLog } from '../src/pi/mission-control/board';
 import { renderBoard } from '../src/pi/mission-control/render';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
 import type { InnerFrame } from '../src/pi/inner-loop-publisher';
@@ -84,8 +84,12 @@ describe('mission-control renderBoard', () => {
     expect(lines[0]).to.contain('[PAUSED]');
     expect(lines[1]).to.contain('ENSEMBLE PAUSED');
     expect(lines[1]).to.contain('cues queue');
-    expect(lines[1]).to.contain('play');
-    expect(lines[1]).to.contain('release: true');
+    // #821 — the hint now names the one-obvious-resume verb `/resume` (clears
+    // both PAUSE + HELD) and keeps `/play release` for the two-axis primitive.
+    // The old `release: true` text was wrong board syntax.
+    expect(lines[1]).to.contain('/resume');
+    expect(lines[1]).to.contain('/play release');
+    expect(lines[1]).to.not.contain('release: true');
   });
 
   it('renders a [HELD] marker when only held players exist', () => {
@@ -103,5 +107,85 @@ describe('mission-control renderBoard', () => {
     expect(joined).to.not.contain('[PAUSED]');
     expect(joined).to.not.contain('[HELD]');
     expect(joined).to.not.contain('!!');
+  });
+
+  // #823 — connection-state banners. The view must converge to reality instead
+  // of freezing on the last snapshot after a destroy / stream drop.
+  it('renders a loud ENSEMBLE DESTROYED banner and NO stale rows when connection is gone', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'eng' })));
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'qa' })));
+    setConnection(m, 'gone'); // hard 404 — clears players
+    const lines = renderBoard(m);
+    const joined = lines.join('\n');
+    expect(lines[0]).to.contain('ENSEMBLE GONE');
+    expect(joined).to.contain('ENSEMBLE DESTROYED');
+    expect(joined).to.contain('/ensemble');
+    // The stale roster must NOT be asserted as live (#823 symptom).
+    expect(joined).to.not.contain('eng');
+    expect(joined).to.not.contain('qa');
+  });
+
+  it('renders an honest [STREAM ENDED] banner (NOT "reconnecting") + KEEPS last-known rows', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'eng', part: 'building X' })));
+    setConnection(m, 'reconnecting');
+    const lines = renderBoard(m);
+    const joined = lines.join('\n');
+    // #827 review: the label must not oversell auto-recovery — the stream ended
+    // and reopens on re-bind, it does NOT reconnect on its own.
+    expect(lines[0]).to.contain('[STREAM ENDED]');
+    expect(joined).to.not.contain('RECONNECTING');
+    expect(joined).to.contain('last-known state');
+    expect(joined).to.contain('re-bind');
+    // Rows are retained (stale, shown under the banner) rather than cleared.
+    expect(joined).to.contain('eng');
+    expect(joined).to.contain('building X');
+  });
+
+  it('surfaces the connection detail (e.g. the 401 auth hint) in the stream-ended banner', () => {
+    const m = initBoard('demo');
+    setConnection(m, 'reconnecting', 'auth rejected — set AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.contain('STREAM ENDED');
+    expect(joined).to.contain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+  });
+
+  it('shows no connection banner while connecting (normal startup) or live', () => {
+    const m = initBoard('demo'); // initial state is 'connecting'
+    expect(renderBoard(m).join('\n')).to.not.contain('STREAM ENDED');
+    setConnection(m, 'live');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.not.contain('STREAM ENDED');
+    expect(joined).to.not.contain('ENSEMBLE GONE');
+  });
+
+  // #821 — the persistent command-log footer.
+  it('renders a recent-command footer with the persisted result lines', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    pushCommandLog(m, '✓ cue → bob', 'ok');
+    pushCommandLog(m, '⚠ cue → cond queued (detached — delivers on re-attach)', 'warn');
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.contain('── recent ──');
+    expect(joined).to.contain('✓ cue → bob');
+    expect(joined).to.contain('⚠ cue → cond queued');
+  });
+
+  it('keeps the command-log footer visible on a GONE board (the destroy ack persists)', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    pushCommandLog(m, '✓ ensemble-down --destroy', 'ok');
+    setConnection(m, 'gone');
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.contain('ENSEMBLE DESTROYED');
+    expect(joined).to.contain('✓ ensemble-down --destroy'); // ack still on screen
+  });
+
+  it('omits the footer entirely when no commands have run', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    expect(renderBoard(m).join('\n')).to.not.contain('── recent ──');
   });
 });
