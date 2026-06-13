@@ -229,6 +229,127 @@ describe('computeHostProfile copilot probe (#532 PR-2)', function () {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// computeHostProfile — pi / opencode / claude-api probes (#819)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Asserts that the daemon's host-profile advertisement includes optional
+// adapter types when their dep-injection probes report availability.
+// Uses the same DI seam pattern as the copilot probe tests above: the
+// production defaults call the real filesystem/process probes; here we
+// inject stubs to make the tests deterministic without touching the host.
+
+describe('computeHostProfile pi probe (#819)', function () {
+  const baseConfig = {
+    defaultAgent: 'claude' as const,
+    claudeBin: 'claude',
+  } as unknown as Config;
+
+  it('advertises `pi` in availableAgentTypes when probe returns { available: true }', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probePiSync: () => ({ available: true }),
+    });
+    expect(profile.availableAgentTypes).to.include('pi');
+  });
+
+  it('excludes `pi` from availableAgentTypes when probe returns { available: false }', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probePiSync: () => ({ available: false }),
+    });
+    expect(profile.availableAgentTypes).to.not.include('pi');
+  });
+
+  it('does NOT crash when probe throws — `pi` is excluded (boot critical path)', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probePiSync: () => { throw new Error('synthetic failure'); },
+    });
+    expect(profile.availableAgentTypes).to.not.include('pi');
+  });
+
+  it('does not double-add `pi` when it is also the configured defaultAgent', function () {
+    const profile = computeHostProfile(
+      { ...baseConfig, defaultAgent: 'pi' as const } as unknown as Config,
+      { probePiSync: () => ({ available: true }) },
+    );
+    const piEntries = (profile.availableAgentTypes ?? []).filter((a) => a === 'pi');
+    expect(piEntries).to.have.length(1);
+  });
+});
+
+describe('computeHostProfile opencode probe (#819)', function () {
+  const baseConfig = {
+    defaultAgent: 'claude' as const,
+    claudeBin: 'claude',
+  } as unknown as Config;
+
+  it('advertises `opencode` when probe returns true', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeOpencodeSync: () => true,
+    });
+    expect(profile.availableAgentTypes).to.include('opencode');
+  });
+
+  it('excludes `opencode` when probe returns false', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeOpencodeSync: () => false,
+    });
+    expect(profile.availableAgentTypes).to.not.include('opencode');
+  });
+
+  it('does NOT crash when probe throws — `opencode` is excluded', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeOpencodeSync: () => { throw new Error('synthetic failure'); },
+    });
+    expect(profile.availableAgentTypes).to.not.include('opencode');
+  });
+
+  it('does not double-add `opencode` when it is also the configured defaultAgent', function () {
+    const profile = computeHostProfile(
+      { ...baseConfig, defaultAgent: 'opencode' as const } as unknown as Config,
+      { probeOpencodeSync: () => true },
+    );
+    const entries = (profile.availableAgentTypes ?? []).filter((a) => a === 'opencode');
+    expect(entries).to.have.length(1);
+  });
+});
+
+describe('computeHostProfile claude-api probe (#819)', function () {
+  const baseConfig = {
+    defaultAgent: 'claude' as const,
+    claudeBin: 'claude',
+  } as unknown as Config;
+
+  it('advertises `claude-api` when probe returns true', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeClaudeApiSync: () => true,
+    });
+    expect(profile.availableAgentTypes).to.include('claude-api');
+  });
+
+  it('excludes `claude-api` when probe returns false (SDK missing or key absent)', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeClaudeApiSync: () => false,
+    });
+    expect(profile.availableAgentTypes).to.not.include('claude-api');
+  });
+
+  it('does NOT crash when probe throws — `claude-api` is excluded', function () {
+    const profile = computeHostProfile(baseConfig, {
+      probeClaudeApiSync: () => { throw new Error('synthetic failure'); },
+    });
+    expect(profile.availableAgentTypes).to.not.include('claude-api');
+  });
+
+  it('does not double-add `claude-api` when it is also the configured defaultAgent', function () {
+    const profile = computeHostProfile(
+      { ...baseConfig, defaultAgent: 'claude-api' as const } as unknown as Config,
+      { probeClaudeApiSync: () => true },
+    );
+    const entries = (profile.availableAgentTypes ?? []).filter((a) => a === 'claude-api');
+    expect(entries).to.have.length(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // advertiseHostProfile — AC5b bounded retry
 // ────────────────────────────────────────────────────────────────────────
 
