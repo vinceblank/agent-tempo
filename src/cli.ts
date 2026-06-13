@@ -460,7 +460,11 @@ async function main() {
     // import — an operator can open the board even when the Temporal SDK is broken.
     const { commandCenterCommand } = await import('./cli/command-center-command');
     await commandCenterCommand({
-      ensemble: args.positional[1],
+      // #820 (Bug 3) — route through the canonical resolver (flag > positional >
+      // env > 'default'), mirroring `up` post-#685. Previously passed the bare
+      // `positional[1]`, which command-center-command then dropped in favor of
+      // `config.ensemble` (env/default) → `command-center <ensemble>` watched 'default'.
+      ensemble: resolveEnsemble(args),
       ...overrides,
     });
     return;

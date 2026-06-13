@@ -18,6 +18,7 @@
 import { CliOverrides, ENV, getConfig, isDevMode } from '../config';
 import { buildPiCommandCenterSpawn, launchInTerminal } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
+import { arePiExtensionsRegistered, installPiExtensions } from '../pi/install';
 import * as out from './output';
 
 export interface CommandCenterArgs extends CliOverrides {
@@ -32,7 +33,12 @@ export interface CommandCenterArgs extends CliOverrides {
  */
 export async function commandCenterCommand(args: CommandCenterArgs): Promise<void> {
   const config = getConfig(args);
-  const ensemble = config.ensemble;
+  // #820 (Bug 3) — honor the positional / `--ensemble` flag. `args.ensemble` is
+  // resolved by the CLI dispatch via the canonical `resolveEnsemble` (flag >
+  // positional > env > 'default'), mirroring `up` post-#685. `config.ensemble`
+  // IGNORES `overrides.ensemble` (config.ts hard-codes it from env/default), so
+  // reading it dropped the positional and the board silently watched 'default'.
+  const ensemble = args.ensemble ?? config.ensemble;
 
   // Preflight — fail BEFORE launching a terminal that would die. checkPiNodeFloor
   // is a best-effort Node-version proxy; buildPiCommandCenterSpawn's default
@@ -41,6 +47,28 @@ export async function commandCenterCommand(args: CommandCenterArgs): Promise<voi
   if (!nodeFloor.ok) {
     out.error(`Cannot start command-center — ${nodeFloor.reason}`);
     process.exit(1);
+  }
+
+  // #820 (Bug 2) — extension-registration guard. command-center relies on the
+  // GLOBAL Pi extension registration (it deliberately passes NO inline `-e`, unlike
+  // `up --agent pi`). On a fresh box that never ran `install-pi`, the extensions are
+  // absent from `~/.pi/agent/settings.json`, so a plain `pi` launches with NO board
+  // and NO error. Auto-install (idempotent — matches `up --agent pi`'s out-of-box
+  // behavior) before spawning; fail loudly with the exact command if the write fails.
+  if (!arePiExtensionsRegistered()) {
+    try {
+      const result = installPiExtensions();
+      out.log(
+        out.dim(`  Registered the Pi extensions in ${result.settingsPath} (first-run install-pi).`),
+      );
+    } catch (err) {
+      out.error(
+        'Cannot start command-center — the Pi extensions are not registered and auto-install failed: ' +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        'Run `agent-tempo install-pi` manually, then retry.',
+      );
+      process.exit(1);
+    }
   }
 
   // Admin (T3) token — mission-control's operator write/gate surface reads it.
@@ -89,5 +117,4 @@ export async function commandCenterCommand(args: CommandCenterArgs): Promise<voi
   const { pid } = launchInTerminal(spawn.cmd, spawn.args, process.cwd(), spawn.env);
   out.success(`Command-center launched for ensemble ${out.cyan(ensemble)} (pid ${pid ?? 'unknown'})`);
   out.log(`  ${out.dim('Observer-only Pi board — the player extension stays dormant in this session.')}`);
-  out.log(`  ${out.dim('Requires `agent-tempo install-pi` to have registered the extensions.')}`);
 }
