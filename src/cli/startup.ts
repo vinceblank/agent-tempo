@@ -421,8 +421,14 @@ async function stepMcpConfig(
       return { status: 'ok', durationMs: 0 };
     }
     // Install into global user scope (matches current `init` behavior).
-    if (!isGlobalMcpRegistered() && addGlobalMcp()) {
-      return { status: 'action-taken', durationMs: 0, detail: 'registered agent-tempo in user MCP scope' };
+    if (!isGlobalMcpRegistered()) {
+      const reg = addGlobalMcp();
+      if (reg.ok) {
+        return { status: 'action-taken', durationMs: 0, detail: 'registered agent-tempo in user MCP scope' };
+      }
+      // #818 — include the captured failure reason so the bootstrap step is diagnosable.
+      const why = reg.error ? ` (${reg.error.split('\n')[0]})` : '';
+      return { status: 'failed', durationMs: 0, detail: `Could not register agent-tempo MCP${why}. Run \`agent-tempo init\` manually.` };
     }
     return { status: 'failed', durationMs: 0, detail: 'Could not register agent-tempo MCP. Run `agent-tempo init` manually.' };
   });

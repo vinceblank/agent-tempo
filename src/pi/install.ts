@@ -104,6 +104,41 @@ export function piSettingsPath(opts: InstallPiOptions = {}): string {
 }
 
 /**
+ * #820 — are BOTH current agent-tempo Pi extension paths already registered in the
+ * (global, unless `project`) Pi `settings.json`?
+ *
+ * `command-center` relies on the GLOBAL registration: it deliberately passes no
+ * inline `-e` (that would double-load the mission-control extension), so a fresh
+ * box that never ran `install-pi` would silently launch a PLAIN Pi session with no
+ * board. The launcher uses this detector to decide whether a first-run auto-install
+ * is needed BEFORE spawning Pi.
+ *
+ * A missing / unparseable settings file, or one missing either current path, → false
+ * (the launcher then auto-installs). Mirrors {@link installPiExtensions}'s tolerant
+ * parse: only a valid object with a string-array `extensions` counts.
+ */
+export function arePiExtensionsRegistered(opts: InstallPiOptions = {}): boolean {
+  const settingsPath = piSettingsPath(opts);
+  if (!existsSync(settingsPath)) return false;
+
+  let extensions: string[] = [];
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const arr = (parsed as Record<string, unknown>).extensions;
+      if (Array.isArray(arr)) {
+        extensions = arr.filter((x): x is string => typeof x === 'string');
+      }
+    }
+  } catch {
+    return false; // corrupt settings → treat as unregistered (auto-install will rewrite)
+  }
+
+  const { player, missionControl } = piExtensionPaths();
+  return extensions.includes(player) && extensions.includes(missionControl);
+}
+
+/**
  * Idempotently merge the two agent-tempo Pi extension absolute paths into Pi's
  * `settings.json` `"extensions"` array. Re-running is a no-op (no duplicates, no
  * write when nothing changed). Never copies any extension file — install by

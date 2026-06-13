@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  arePiExtensionsRegistered,
   installPiExtensions,
   isAgentTempoExtensionPath,
   piExtensionPaths,
@@ -156,6 +157,52 @@ describe('pi install (#700 P1)', () => {
   it('piSettingsPath resolves global vs project scope', () => {
     expect(piSettingsPath({ home: tmpHome })).toBe(path.join(tmpHome, '.pi', 'agent', 'settings.json'));
     expect(piSettingsPath({ project: true, cwd: tmpCwd })).toBe(path.join(tmpCwd, '.pi', 'settings.json'));
+  });
+});
+
+describe('arePiExtensionsRegistered (#820 — command-center launch guard)', () => {
+  let tmpHome: string;
+
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tempo-pi-reg-'));
+  });
+  afterEach(() => {
+    try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
+  const writeSettings = (extensions: unknown) => {
+    const p = path.join(tmpHome, '.pi', 'agent', 'settings.json');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({ theme: 'dark', extensions }, null, 2));
+  };
+
+  it('false on a fresh box — settings.json absent (→ launcher auto-installs)', () => {
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
+  });
+
+  it('true after a real install registers BOTH extension paths', () => {
+    installPiExtensions({ home: tmpHome });
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(true);
+  });
+
+  it('false when only ONE of the two paths is registered (partial registration)', () => {
+    const { player } = piExtensionPaths();
+    writeSettings([player]); // missionControl missing
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
+  });
+
+  it('false on a corrupt / unparseable settings file (→ auto-install rewrites)', () => {
+    const p = path.join(tmpHome, '.pi', 'agent', 'settings.json');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{ not valid json');
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
+  });
+
+  it('false when extensions is missing / not a string array', () => {
+    writeSettings(undefined);
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
+    writeSettings('not-an-array');
+    expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
   });
 });
 

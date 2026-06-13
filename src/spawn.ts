@@ -750,12 +750,25 @@ export interface PiCommandCenterSpawnOpts {
  * auto-loads them and {@link resolvePiRole} (via the env below) picks exactly one.
  * Passing `-e` here would DOUBLE-LOAD mission-control (settings.json + `-e`) → a
  * command re-registration error. The env carries the OPERATOR subset only:
- *   - `AGENT_TEMPO_MISSION_CONTROL=1` → the role opt-in (resolver → `command-center`).
+ *   - `AGENT_TEMPO_PI_ROLE=command-center` → the DETERMINISTIC role force (top of
+ *     {@link resolvePiRole}'s precedence — beats an inherited `PLAYER_NAME`).
+ *   - `AGENT_TEMPO_MISSION_CONTROL=1` → the role opt-in (kept for legacy parity /
+ *     defense-in-depth; `PI_ROLE` already pins the role).
  *   - `AGENT_TEMPO_ENSEMBLE` → which ensemble the board observes.
  *   - `AGENT_TEMPO_HTTP_ADMIN_TOKEN` → the daemon write/gate surface the board POSTs to.
  *
- * ★ It MUST NOT set `PLAYER_NAME` or `CONDUCTOR` — either flips {@link resolvePiRole}
- * to `'player'`, which would keep the board dormant (and self-bootstrap a player).
+ * ★ #820 — ROLE DETERMINISM (the destructive fix). The board MUST NEVER resolve to
+ * `'player'`: when it did (an inherited `AGENT_TEMPO_PLAYER_NAME` from an ensemble
+ * shell — e.g. a conductor terminal sets `PLAYER_NAME=tempo-conductor`), the player
+ * extension activated and CLAIMED that player's attachment, HIJACKING the conductor
+ * slot and then orphaning it on exit. "Not setting" `PLAYER_NAME`/`CONDUCTOR` is NOT
+ * enough — the spawned terminal INHERITS them. So we both (a) force the role via
+ * `PI_ROLE=command-center` (highest precedence) AND (b) explicitly CLEAR
+ * `PLAYER_NAME`/`CONDUCTOR` to empty strings. {@link launchInTerminal} emits empty
+ * values as `set "VAR="` (Windows WT — clears the inherited var), `VAR=''` inline
+ * (POSIX), and via `{...process.env, ...envVars}` (Windows cmd fallback) — all make
+ * {@link resolvePiRole}'s `if (env[PLAYER_NAME])` falsy. Belt-and-suspenders: even
+ * if the clear ever fails to propagate, the `PI_ROLE` force still wins.
  */
 export function buildPiCommandCenterSpawn(opts: PiCommandCenterSpawnOpts): {
   cmd: string;
@@ -767,13 +780,19 @@ export function buildPiCommandCenterSpawn(opts: PiCommandCenterSpawnOpts): {
     ...opts.temporalEnvVars,
     [ENV.TASK_QUEUE]: opts.taskQueue,
     [ENV.ENSEMBLE]: opts.ensemble,
-    [ENV.MISSION_CONTROL]: '1', // #729 A2 role opt-in → resolver picks 'command-center'
+    [ENV.PI_ROLE]: 'command-center', // #820 — deterministic role force (top of resolvePiRole precedence)
+    [ENV.MISSION_CONTROL]: '1', // #729 A2 role opt-in (defense-in-depth alongside PI_ROLE)
+    // #820 — CLEAR (not omit) inherited identity vars. An ensemble shell (e.g. a
+    // conductor terminal) exports these; the spawned terminal would inherit them and
+    // resolvePiRole would flip to 'player', making the board CLAIM/HIJACK that slot.
+    // Empty values emit `set "VAR="` (Windows) / `VAR=''` (POSIX) → falsy in the child.
+    [ENV.PLAYER_NAME]: '',
+    [ENV.CONDUCTOR]: '',
     [ENV.NO_PPID_WATCHDOG]: '1', // launched detached by the transient CLI (mirrors the conductor)
     ...(opts.devMode ? { [ENV.DEV_MODE]: '1' } : {}),
     ...(opts.adminToken ? { [ENV.HTTP_ADMIN_TOKEN]: opts.adminToken } : {}),
     ...(opts.anthropicApiKey ? { ANTHROPIC_API_KEY: opts.anthropicApiKey } : {}),
   };
-  // Deliberately NO ENV.PLAYER_NAME / ENV.CONDUCTOR — they'd flip the role to player.
   return { cmd, args, env };
 }
 

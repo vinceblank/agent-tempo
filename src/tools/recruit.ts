@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { spawnSync } from 'child_process';
 import { Config, ConfigSource, conductorWorkflowId, isDevMode, parsePiProviderModel } from '../config';
 import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
@@ -9,7 +8,7 @@ import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
-import { probeSdkInstall } from '../utils/sdk-probe';
+import { probeSdkInstall, hasOpencodeCliOnPath } from '../utils/sdk-probe';
 import {
   probeClaudeBinary,
   probeClaudeAuth,
@@ -26,27 +25,6 @@ const toolLog = (...args: unknown[]) => console.error('[agent-tempo:recruit]', .
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const esmImport = new Function('s', 'return import(s)') as (s: string) => Promise<Record<string, unknown>>;
 
-/**
- * #449 Phase C — check whether the `opencode` binary is on PATH. Used by
- * the recruit pre-flight to fail fast with an actionable error before the
- * adapter spawn activity runs and hits ENOENT mid-flight.
- *
- * Cross-platform: `where` on Windows, `command -v` on POSIX. Both exit 0
- * when found, non-zero otherwise; stdout/stderr captured silently.
- */
-function hasOpencodeOnPath(): boolean {
-  try {
-    const cmd = process.platform === 'win32' ? 'where' : 'command';
-    const args = process.platform === 'win32' ? ['opencode'] : ['-v', 'opencode'];
-    const result = spawnSync(cmd, args, {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      shell: process.platform !== 'win32',  // POSIX needs the shell built-in
-    });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * #274 M15 — dep-injection surface on the recruit tool registrar.
@@ -248,7 +226,7 @@ export function buildRecruitTool(
             `agent: "opencode" requires the @opencode-ai/sdk optional dependency. Install with \`npm install @opencode-ai/sdk\` and retry, or use \`force: true\` to bypass this check.`,
           );
         }
-        if (!hasOpencodeOnPath()) {
+        if (!hasOpencodeCliOnPath()) {
           return fail(
             `agent: "opencode" requires the \`opencode\` binary on PATH. Install with \`npm install -g opencode-ai\` and retry, or use \`force: true\` to bypass this check.`,
           );
