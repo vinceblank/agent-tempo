@@ -3,7 +3,7 @@
  */
 import { expect } from 'chai';
 import { initBoard, applyTempoEvent, applyInnerFrame, selectPlayer, setConnection, pushCommandLog } from '../src/pi/mission-control/board';
-import { renderBoard } from '../src/pi/mission-control/render';
+import { renderBoard, MAX_WIDGET_LINES } from '../src/pi/mission-control/render';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
 import type { InnerFrame } from '../src/pi/inner-loop-publisher';
 
@@ -84,10 +84,11 @@ describe('mission-control renderBoard', () => {
     expect(lines[0]).to.contain('[PAUSED]');
     expect(lines[1]).to.contain('ENSEMBLE PAUSED');
     expect(lines[1]).to.contain('cues queue');
-    // #821 — the hint now names the one-obvious-resume verb `/resume` (clears
-    // both PAUSE + HELD) and keeps `/play release` for the two-axis primitive.
-    // The old `release: true` text was wrong board syntax.
-    expect(lines[1]).to.contain('/resume');
+    // #821/#833 — the hint now names the one-obvious-resume verb `/unpause`
+    // (clears both PAUSE + HELD) and keeps `/play release` for the two-axis
+    // primitive. `/unpause`, not `/resume` (the latter collides with a Pi built-in).
+    expect(lines[1]).to.contain('/unpause');
+    expect(lines[1]).to.not.contain('/resume');
     expect(lines[1]).to.contain('/play release');
     expect(lines[1]).to.not.contain('release: true');
   });
@@ -187,5 +188,39 @@ describe('mission-control renderBoard', () => {
     const m = initBoard('demo');
     applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
     expect(renderBoard(m).join('\n')).to.not.contain('── recent ──');
+  });
+
+  // #836 — Pi caps a widget at MAX_WIDGET_LINES and otherwise appends its own
+  // dev-speak "... (widget truncated)" while clipping the BOTTOM (the acks). We
+  // clamp ourselves: fit the budget, keep header + command-log footer, and trim
+  // only the expendable middle under a friendly hidden-count marker.
+  it('clamps an oversized board to MAX_WIDGET_LINES with an operator-friendly marker', () => {
+    const m = initBoard('demo');
+    // 8 players + a selected tail + a command-log ack → well over 10 lines.
+    for (let i = 0; i < 8; i++) applyTempoEvent(m, ev('player.added', summary({ playerId: `p${i}` })));
+    selectPlayer(m, 'p0');
+    for (let i = 0; i < 12; i++) {
+      applyInnerFrame(m, { type: 'inner.tool_call', tool: `t${i}`, argsSummary: '{}', ts: i } as InnerFrame);
+    }
+    pushCommandLog(m, '✓ cue → p1', 'ok');
+    const lines = renderBoard(m);
+    expect(lines.length).to.be.at.most(MAX_WIDGET_LINES);
+    const joined = lines.join('\n');
+    // Operator-friendly marker, NOT Pi's dev-speak.
+    expect(joined).to.contain('⋯');
+    expect(joined).to.contain('hidden');
+    expect(joined).to.not.contain('widget truncated');
+    // Header (top) survives.
+    expect(lines[0]).to.contain('MISSION CONTROL');
+    // Command-log ack (bottom) survives the clamp — Pi's top-N slice would drop it.
+    expect(joined).to.contain('✓ cue → p1');
+  });
+
+  it('does not clamp or add a marker when the board fits the budget', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.not.contain('⋯');
+    expect(joined).to.not.contain('hidden');
   });
 });
