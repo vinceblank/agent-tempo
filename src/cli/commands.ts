@@ -872,12 +872,19 @@ export async function status(opts: StatusOpts) {
 interface InitOpts {
   dir: string;
   project?: boolean;
+  /**
+   * #818 — suppress the manual-setup "Next steps" block (start Temporal / start
+   * conductor). Set by the automated `up` flow, which has ALREADY started Temporal
+   * and launched the conductor — printing those steps there is stale and misleading.
+   * The manual `agent-tempo init` verb leaves it unset so the guidance still shows.
+   */
+  suppressNextSteps?: boolean;
 }
 
 export async function init(opts: InitOpts) {
   if (opts.project) {
     // Per-project .mcp.json mode
-    return initProject(opts.dir);
+    return initProject(opts.dir, opts.suppressNextSteps);
   }
 
   // Default: global install via `claude mcp add`
@@ -890,24 +897,36 @@ export async function init(opts: InitOpts) {
   const claudePath = resolveClaudePath();
   if (claudePath === 'claude') {
     out.warn('claude binary not found — falling back to project-level .mcp.json');
-    return initProject(opts.dir);
+    return initProject(opts.dir, opts.suppressNextSteps);
   }
 
-  if (addGlobalMcp()) {
+  const reg = addGlobalMcp();
+  if (reg.ok) {
     out.success('Registered agent-tempo globally (user scope)');
     out.log(`  ${out.dim('Available in all Claude Code sessions')}`);
   } else {
     out.warn('Failed to register globally — falling back to project-level .mcp.json');
-    return initProject(opts.dir);
+    // #818 — surface WHY (the captured `claude mcp add` stderr) so a fresh-install
+    // failure is diagnosable instead of silent. Show the first line; `DEBUG=1` logs full.
+    if (reg.error) out.log(`  ${out.dim(reg.error.split('\n')[0])}`);
+    return initProject(opts.dir, opts.suppressNextSteps);
   }
 
-  out.log(`\nNext steps:`);
-  out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
-  out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
+  if (!opts.suppressNextSteps) {
+    out.log(`\nNext steps:`);
+    out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
+    out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
+  }
 }
 
-/** Per-project .mcp.json install (legacy, used with --project flag). */
-function initProject(dir: string) {
+/**
+ * Per-project .mcp.json install (legacy, used with --project flag).
+ *
+ * Exported for #818 regression coverage (the `suppressNextSteps` gate) — it only
+ * touches the filesystem + stdout, so it is unit-testable without shelling out to
+ * `claude`. Not part of the public CLI surface.
+ */
+export function initProject(dir: string, suppressNextSteps?: boolean) {
   const mcpPath = join(dir, '.mcp.json');
 
   const entry = {
@@ -944,9 +963,13 @@ function initProject(dir: string) {
   }
 
   out.log(`  ${out.dim(mcpPath)}`);
-  out.log(`\nNext steps:`);
-  out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
-  out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
+  // #818 — `up` suppresses this stale manual-setup block (it already started
+  // Temporal + the conductor); the manual `agent-tempo init` verb still shows it.
+  if (!suppressNextSteps) {
+    out.log(`\nNext steps:`);
+    out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
+    out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
+  }
 }
 
 // --- Temporal server management ---
@@ -1140,7 +1163,10 @@ export async function up(opts: UpOpts) {
   if (isMcpConfigured(process.cwd())) {
     out.check('MCP configured', true);
   } else {
-    await init({ dir: process.cwd() });
+    // #818 — suppress init's manual "Next steps" block: `up` has already started
+    // Temporal + the conductor above, so printing "1. Start Temporal / 2. Start
+    // conductor" here is stale and misleading.
+    await init({ dir: process.cwd(), suppressNextSteps: true });
     out.check('MCP configured', true);
   }
 
