@@ -40,6 +40,9 @@ export default defineConfig({
       'tests/conformance/**/*.test.ts',
       // #748 — pure workflow helpers (cadence resolver; no Temporal sandbox).
       'tests/workflows/**/*.test.ts',
+      // #785 — upgrade-to-2 snapshot schema + persistence (Temporal-free
+      // schema module; pure fs round-trip + validation guards).
+      'tests/upgrade/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,
