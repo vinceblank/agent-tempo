@@ -40,6 +40,24 @@
 > `taskkill /T /F /PID <pid>` or `Stop-Process -Id <pid> -Force` (what #758's
 > force path does internally).
 
+> **Pid-file-less liveness (#811):** since #811, a missing `daemon.pid` no
+> longer strands a live daemon. `isDaemonRunning()` — the gate the MCP server
+> (`agent-tempo-server`) and `up`/bootstrap check before spawning — falls back
+> to a **port-ownership probe**: a daemon serving its bound port (from
+> `daemon.port`) is detected even with no pid file, so a stranded-pid-file
+> daemon no longer triggers a duplicate-spawn-into-`EADDRINUSE` wedge (the
+> 2026-06-12 incident). The daemon also re-asserts `daemon.pid` the moment it
+> binds the port, self-healing a racing unlink during a restart cycle.
+>
+> **Restart drill — verify after `daemon start`:** (1) `daemon.pid` exists and
+> matches the spawned PID; (2) `daemon.port` matches the bound port; (3)
+> `GET /v1/health` returns `{"ok":true}` with the matching version. If
+> `daemon.pid` is absent after a successful start, that is a bug — the daemon
+> should write it on bind; capture the daemon log and file an issue. (You no
+> longer need to hand-write the pid file to unblock recruits — the port
+> fallback covers detection — but a persistently-absent pid file still points
+> at a write failure worth diagnosing.)
+
 ### Inspect
 
 ```bash

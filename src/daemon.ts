@@ -1321,6 +1321,22 @@ async function main() {
         });
         httpServerHandle = handle;
         log(`HTTP listening on http://${handle.bindAddr}:${handle.port}`);
+        // #811 — (re)assert OWNERSHIP of the pid file at the authoritative
+        // moment: this process now owns the port, so it owns daemon.pid. The
+        // boot-time write (above) can be clobbered by a racing unlink during a
+        // stop→start cycle — exactly the 2026-06-12 incident, where a new
+        // daemon bound the port but daemon.pid went missing, stranding
+        // `isDaemonRunning()` at false and wedging every MCP spawn for ~2h.
+        // Rewriting here closes that race AND covers the #768 bind-RETRY
+        // recovery (a daemon that bound on a later attempt re-asserts too).
+        // Best-effort: a write failure must never crash a daemon that is
+        // otherwise serving — the port-ownership fallback (#811 Fix 2) is the
+        // backstop if the file is still somehow absent.
+        try {
+          await writePidFileAtomic(DAEMON_PID_PATH, process.pid);
+        } catch (err) {
+          log('pid file (re)write after bind failed (non-fatal):', err instanceof Error ? err.message : String(err));
+        }
         // A successful LATE bind can race the shutdown handler (which saw a
         // null handle) — close the recovered listener immediately so it
         // doesn't outlive the drain.
