@@ -7,8 +7,46 @@
 | `workflow execution not found` errors | Restart the daemon: `agent-tempo daemon stop && agent-tempo daemon start` |
 | Sessions not responding to messages | Run `agent-tempo daemon status` — ensure the daemon is running |
 | `.mcp.json` keeps being recreated with `npx` | Delete `.mcp.json` and use user-level registration: `agent-tempo init` |
+| `up` warns `Failed to register globally — falling back to project-level .mcp.json` | Global (`claude mcp add -s user`) registration failed; `up` falls back to a project `.mcp.json` (the ensemble still works, but only in that project dir). See **Global MCP registration fails (Windows)** below. |
 | `agent-tempo daemon status` reports orphan processes | See **Orphaned daemon processes** below |
 | Multiple `node` processes pinning `@temporalio/core-bridge/index.node` (npm uninstall blocked) | See **Orphaned daemon processes** below |
+
+## Global MCP registration fails (Windows)
+
+On some setups — observed on **Windows with a fresh `npm i -g agent-tempo`** (the
+published package) — `agent-tempo up` / `agent-tempo init` cannot register the MCP
+server in the global (user) scope and prints:
+
+```
+warn Failed to register globally — falling back to project-level .mcp.json
+```
+
+The fallback is graceful: a project-level `.mcp.json` is written and the ensemble
+comes up normally. The catch is scope — a project `.mcp.json` only applies inside
+that project directory, so invoking `agent-tempo` (or Claude Code) from a *different*
+directory may then lack the MCP config.
+
+**Diagnose** — the underlying `claude mcp add -s user` stderr is now captured and
+surfaced. The first line prints inline under the warning; re-run with `DEBUG=1` for
+the full detail (grep `[agent-tempo:mcp]`):
+
+```bash
+DEBUG=1 agent-tempo init
+```
+
+**Likely causes** (the captured stderr disambiguates which):
+
+- The `claude` shim on `PATH` resolves to a `.cmd` / `.ps1` wrapper that
+  `execFileSync` cannot invoke directly (Windows wrapper-resolution).
+- The user-scope MCP config under `%APPDATA%` / `%USERPROFILE%` is not writable in
+  that shell.
+
+**Workaround** — register the user-scope MCP server manually, then re-run:
+
+```bash
+claude mcp add agent-tempo -s user -- agent-tempo-server
+claude mcp list -s user   # confirm it landed
+```
 
 ## Orphaned daemon processes
 
