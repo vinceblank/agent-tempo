@@ -23,7 +23,8 @@ import {
   __getPiRuntimeForTests,
 } from '../src/pi/extension';
 import { createMissionControlExtension } from '../src/pi/mission-control/extension';
-import { ENV, getConfig, sessionWorkflowId } from '../src/config';
+import { ENV, getConfig, resolvePiRole, sessionWorkflowId } from '../src/config';
+import { buildPiCommandCenterSpawn } from '../src/spawn';
 
 // ── Player-extension fake (records the registration surface) ──
 interface PlayerFake {
@@ -117,6 +118,47 @@ describe('#729 player extension — role gate', () => {
     createPiExtension({ mode: 'headless' })(f.pi);
     expect(f.toolCount(), 'tools registered (forced player)').to.be.greaterThan(0);
     expect(factoryCalled, 'client factory invoked (forced player)').to.equal(true);
+  });
+
+  it("★ #820 anti-hijack: command-center spawn env under inherited PLAYER_NAME → player ext DORMANT (claims NO attachment)", () => {
+    // The destructive bug: launched from a conductor terminal (PLAYER_NAME inherited),
+    // the player extension activated, CLAIMED the conductor's attachment, and orphaned
+    // it on exit. Reproduce the exact env the board is spawned with — buildPiCommandCenterSpawn
+    // layered over an inherited conductor identity — and assert the player extension
+    // stays DORMANT: NO tools, and (the integrity lock) the client factory is NEVER
+    // called, so it can never connect/claim/hijack a player slot.
+    const { env } = buildPiCommandCenterSpawn({
+      ensemble: 'tempo-impl',
+      temporalEnvVars: {},
+      taskQueue: 'agent-tempo',
+      devMode: false,
+      resolveBinary: () => ({ cmd: 'pi', args: [] }),
+    });
+    // Snapshot + restore every key we touch so the spawn env (ENSEMBLE / TASK_QUEUE /
+    // …) can't leak into sibling tests via process.env.
+    const touched = [ENV.PLAYER_NAME, ENV.CONDUCTOR, ...Object.keys(env)];
+    const saved = new Map(touched.map((k) => [k, process.env[k]]));
+    try {
+      process.env[ENV.PLAYER_NAME] = 'tempo-conductor'; // inherited from the ensemble shell
+      process.env[ENV.CONDUCTOR] = 'true';
+      // Apply the spawn env onto the process env exactly as launchInTerminal renders it
+      // into the child (clears PLAYER_NAME/CONDUCTOR to '', forces PI_ROLE=command-center).
+      for (const [k, v] of Object.entries(env)) process.env[k] = v;
+
+      // The role is deterministically the board, never the player.
+      expect(resolvePiRole(), 'role pinned to command-center').to.equal('command-center');
+
+      const f = makePlayerFake();
+      createPiExtension({ mode: 'interactive' })(f.pi);
+      expect(f.toolCount(), 'player ext registers NO tools (dormant)').to.equal(0);
+      expect(f.onEvents(), 'no session_start handler (dormant)').to.have.length(0);
+      expect(factoryCalled, 'client factory NEVER invoked → no connect, no attachment claim, no hijack').to.equal(false);
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });
 

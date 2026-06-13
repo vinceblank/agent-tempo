@@ -41,4 +41,13 @@ describe('resolveEnsemble (#685)', () => {
     expect(resolveEnsemble(args({ positional: ['up', 'b'] }), 'c')).toBe('b');
     expect(resolveEnsemble(args({ positional: ['up'] }), 'c')).toBe('c');
   });
+
+  it('#820 — `command-center <ensemble>` honors the positional (was watching empty default)', () => {
+    // The cli.ts dispatch now routes command-center through this resolver, exactly
+    // like `up`: positional[0] is the verb, positional[1] is the ensemble. Before
+    // #820 the handler read `config.ensemble` (env/'default') and dropped the arg.
+    expect(resolveEnsemble(args({ positional: ['command-center', 'tempo-impl'] }), '')).toBe('tempo-impl');
+    // The `--ensemble` flag still wins over the positional for the board too.
+    expect(resolveEnsemble(args({ ensemble: 'flagwin', positional: ['command-center', 'tempo-impl'] }), '')).toBe('flagwin');
+  });
 });
