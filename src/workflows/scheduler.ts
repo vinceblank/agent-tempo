@@ -6,6 +6,7 @@ import {
   allHandlersFinished,
   proxyActivities,
   patched,
+  log as workflowLog,
 } from '@temporalio/workflow';
 
 import {
@@ -53,6 +54,12 @@ export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<voi
 
   // ── Signal Handlers ──
 
+  // REGISTRATION-ORDER FENCE (#797 / #782 C1): addScheduleSignal MUST
+  // register BEFORE removeScheduleSignal — buffered signals drain in
+  // registration order on a fresh/CAN'd run's first workflow task; inverted,
+  // the remove would no-op and the late add would resurrect the schedule
+  // (which then FIRES). Pinned by
+  // tests/conformance/registration-order-fence.test.ts.
   setHandler(addScheduleSignal, (entry) => {
     // Replace existing entry with same name, or add new
     const idx = entries.findIndex((e) => e.name === entry.name);
@@ -64,6 +71,8 @@ export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<voi
     dirty = true;
   });
 
+  // REGISTRATION-ORDER FENCE (#797 / #782 C1): consumer half — must stay
+  // registered AFTER addScheduleSignal.
   setHandler(removeScheduleSignal, (name) => {
     entries = entries.filter((e) => e.name !== name);
     dirty = true;
@@ -136,8 +145,17 @@ export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<voi
             createdBy: entry.createdBy,
           });
         } catch (err) {
-          // Activity retries exhausted — log but don't crash the workflow
-          // The entry will be rescheduled or removed below
+          // Activity retries exhausted — the cue for THIS fire is lost
+          // (interval/cron entries repeat the loss each fire until the
+          // cause clears; `once` entries lose outright). #797 (#782 C2 —
+          // B4c spirit): the loss must be LOUD, not silent. The known
+          // arrival-order cause is rename-racing-schedule-creation leaving
+          // a stale `target` (architect-accepted as likelihood-bounded; no
+          // rename-log reconciliation). Workflow stays alive either way.
+          workflowLog.warn(
+            `schedule "${entry.name}" fire FAILED after activity retries — cue to ` +
+            `"${entry.target}" lost this fire: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       } else {
         skippedWhilePaused += 1;

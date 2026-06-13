@@ -488,6 +488,11 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     // identity check (conductor identity is stable across the ensemble's
     // lifetime). A non-owner / non-conductor evict throws structurally so
     // the caller's MCP tool surfaces it as a permission error.
+    // First-tick window (#797 / #782 M3): on a fresh or just-CAN'd maestro,
+    // `players` is EMPTY until the first refresh completes (≤5s local;
+    // longer on the stretched cloud cadence) — a conductor evict in that
+    // window is denied and self-heals on retry. Accepted; do not "fix" by
+    // reading stale visibility here (decision paths stay on direct state).
     const isOwner = entry.putBy === evictedBy;
     const isConductor = players.some((p) => p.isConductor && p.playerId === evictedBy);
     if (!isOwner && !isConductor) {
