@@ -346,16 +346,19 @@ export interface ComputeHostProfileDeps {
    * `ANTHROPIC_API_KEY` in the daemon's process env. Returns `true` when
    * both pass. Tests inject a stub.
    *
-   * Note: the daemon inherits its env from the spawning process
-   * (`...process.env` in src/cli/daemon.ts). A user adding
-   * `ANTHROPIC_API_KEY` after the daemon is already running must restart
-   * the daemon for it to be advertised. This matches the adapter's runtime
-   * behaviour — `src/adapters/claude-api/adapter.ts` reads
-   * `process.env.ANTHROPIC_API_KEY` at activity execution time in the
-   * daemon process. Advertising without the key would be a false positive:
-   * cross-host recruit pre-flight passes but the adapter spawn fails
-   * immediately. SDK-only advertising (like copilot) was considered and
-   * rejected on this basis.
+   * Why the key is required (not SDK-only like copilot):
+   * The claude-api adapter is spawned BY the daemon and inherits the
+   * DAEMON's env (`spawn.ts` passes no explicit env; the adapter process
+   * reads its own `process.env.ANTHROPIC_API_KEY` at execution time —
+   * `src/adapters/claude-api/adapter.ts:270`). Recruit does NOT plumb the
+   * key from the recruiting session. Therefore: the daemon having the key
+   * IS the deliverability predicate — advertising when the daemon env has
+   * the key makes this probe agree exactly with what recruit can deliver.
+   * This is not a conservative heuristic; it is the precise gate.
+   *
+   * The daemon inherits its env at spawn time (`...process.env` in
+   * `src/cli/daemon.ts`). A user adding the key after the daemon is
+   * already running must restart the daemon for it to be advertised.
    */
   probeClaudeApiSync?: () => boolean;
 }
@@ -452,8 +455,10 @@ export function computeHostProfile(
   }
   // #819 — claude-api probe. Delegates to `probeClaudeApiSyncFn` (injected
   // for tests; production default checks SDK install + ANTHROPIC_API_KEY in
-  // daemon env — see ComputeHostProfileDeps.probeClaudeApiSync for the policy
-  // rationale on why the env key is required here).
+  // daemon env). The key check is not a conservative heuristic — the daemon
+  // env IS the deliverability predicate (adapter inherits daemon env; recruit
+  // does not plumb a key from the caller). See ComputeHostProfileDeps for the
+  // full rationale.
   try {
     if (probeClaudeApiSyncFn() && !availableAgentTypes.includes('claude-api')) {
       availableAgentTypes.push('claude-api');
