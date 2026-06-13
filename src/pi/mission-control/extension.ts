@@ -18,16 +18,19 @@ import * as crypto from 'crypto';
 import { z } from 'zod';
 import { getConfig, resolvePiRole, type PiRole } from '../../config';
 import { readPortFile } from '../../http/port-file';
-import { createSubscribe } from '../../client/subscribe';
+import { createSubscribe, SubscribeHttpError } from '../../client/subscribe';
 import {
   initBoard,
   applyTempoEvent,
   applyInnerFrame,
   rebindBoard,
   selectPlayer,
+  setConnection,
+  pushCommandLog,
   sortedPlayerIds,
   tailability,
   type BoardModel,
+  type CommandLevel,
 } from './board';
 import { renderBoard } from './render';
 import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './actions';
@@ -146,6 +149,72 @@ export function parseRecruitArgs(args: string): { name?: string; type?: string; 
 }
 
 /**
+ * #821 — parse the `/play` release argument. Accepts the bare word `release`
+ * AND the `release:true` / `release: true` / `release=true` key:val forms (the
+ * banner showed `release: true`, so operators may type it that way). Anything
+ * else (incl. empty) → `false` (sources-only). Exported for unit testing.
+ */
+export function parseReleaseArg(args: string): boolean {
+  const t = args.trim().toLowerCase();
+  if (t === '') return false;
+  if (t === 'release') return true;
+  const m = t.match(/^release\s*[:=]\s*(true|false)$/);
+  return m ? m[1] === 'true' : false;
+}
+
+/**
+ * #821/#822 — render a write-command {@link ActionResult} into a glyph-prefixed
+ * line + its {@link CommandLevel}. Three states:
+ * - failure → `✗ <label> failed: <error>`
+ * - queued (#822 undeliverable target) → `⚠ <label> queued (<phase> — delivers on re-attach)`
+ * - success → `✓ <label>`
+ *
+ * `extra` appends a trailing note (e.g. the residual-HELD hint after a
+ * sources-only `/play`). Pure + exported for unit testing.
+ */
+export function formatOutcome(
+  label: string,
+  r: ActionResult,
+  extra?: string,
+): { text: string; level: CommandLevel } {
+  const suffix = extra ? ` — ${extra}` : '';
+  if (!r.ok) {
+    return { text: `✗ ${label} failed: ${r.error}${suffix}`, level: 'fail' };
+  }
+  if (r.delivery === 'queued') {
+    const detail = r.phase ? `${r.phase} — delivers on re-attach` : 'delivers on re-attach';
+    return { text: `⚠ ${label} queued (${detail})${suffix}`, level: 'warn' };
+  }
+  return { text: `✓ ${label}${suffix}`, level: 'ok' };
+}
+
+/**
+ * #823 — classify how the coarse SSE stream ended into the board connection
+ * transition the extension should apply. Pure + exported for unit testing (the
+ * surrounding stream loop is thin glue around this decision).
+ *
+ * The discriminator is `createSubscribe`'s failure contract: it HARD-errors
+ * (throws {@link SubscribeHttpError}) only on a permanent status (401/404) with
+ * no retry; transient drops are retried INSIDE the iterator (never surfaced).
+ *
+ * - aborted (intentional teardown / rebind) → `null` (no change)
+ * - 404 on a per-ensemble stream (the maestro is gone) → `gone` (clears the roster)
+ * - 401 (auth) → `reconnecting` + an actionable hint (NOT gone — re-auth, don't wipe)
+ * - any other error OR a normal stream-end → `reconnecting` (keep last-known; may self-heal)
+ */
+export function classifyCoarseStreamEnd(
+  err: unknown,
+  aborted: boolean,
+): { connection: 'gone' | 'reconnecting'; detail?: string } | null {
+  if (aborted) return null;
+  if (err instanceof SubscribeHttpError) {
+    if (err.status === 404) return { connection: 'gone' };
+    if (err.status === 401) return { connection: 'reconnecting', detail: `auth rejected — set ${ADMIN_TOKEN_ENV}` };
+  }
+  return { connection: 'reconnecting' };
+}
+
+/**
  * The operator-command + board controller. Holds the model + the action client;
  * command methods are independently unit-testable with a fake actions + ctx.
  * The lifecycle (SSE/render/teardown) lives in {@link createMissionControlExtension}.
@@ -186,8 +255,17 @@ export class Controller {
     if (ctx.hasUI) ctx.ui.notify(msg);
   }
 
-  private report(ctx: McExtensionContext, label: string, r: ActionResult): void {
-    this.notify(ctx, r.ok ? `${label} ✓` : `${label} failed: ${r.error}`);
+  /**
+   * #821 — the single chokepoint every write command reports through. Renders a
+   * three-state outcome (`✓` / `⚠` / `✗`), folds it into the PERSISTENT board
+   * command log (so the ack survives instead of vanishing like the old ephemeral
+   * toast), AND fires the immediate `ui.notify` toast. `extra` appends a note
+   * (e.g. the residual-HELD hint after a sources-only `/play`).
+   */
+  private report(ctx: McExtensionContext, label: string, r: ActionResult, extra?: string): void {
+    const { text, level } = formatOutcome(label, r, extra);
+    pushCommandLog(this.model, text, level);
+    this.notify(ctx, text);
   }
 
   /** First whitespace-delimited token + the remainder. */
@@ -335,8 +413,30 @@ export class Controller {
   }
 
   async cmdPlay(args: string, ctx: McExtensionContext): Promise<void> {
-    const release = args.trim() === 'release';
-    this.report(ctx, 'play', await this.actions.play(release));
+    // #821 — `/play` clears the PAUSE axis (work sources). Accept both the bare
+    // `release` word and the `release:true` / `release: true` key:val form the
+    // banner/operators might type, so `/play release` ALSO frees held players.
+    const release = parseReleaseArg(args);
+    const r = await this.actions.play(release);
+    // #821 — the two-axis wart: a sources-only `/play` that leaves players HELD
+    // reads as "nothing happened" (the real #821). Name the residual axis so the
+    // operator knows to clear it — `/resume` does both in one shot.
+    const extra =
+      r.ok && !release && this.model.held
+        ? 'ensemble resumed, but players are still HELD — use /resume (or /play release) to free them'
+        : undefined;
+    this.report(ctx, 'play', r, extra);
+  }
+
+  /**
+   * #821 — the one obvious "resume everything": clears BOTH the PAUSE axis (work
+   * sources) and the per-player HELD axis (`play { release: true }`). Added so an
+   * operator who just wants to un-suspend the ensemble has a single action,
+   * without overloading `/play`'s sources-only meaning (the two axes stay
+   * distinct at the primitive/daemon level).
+   */
+  async cmdResume(_args: string, ctx: McExtensionContext): Promise<void> {
+    this.report(ctx, 'resume', await this.actions.play(true));
   }
 
   async cmdRestart(args: string, ctx: McExtensionContext): Promise<void> {
@@ -414,6 +514,14 @@ export class Controller {
     if (!(await this.ensureInfraReady(ctx))) return;
     const r = await this.actions.shutdownEnsemble(destroy);
     this.report(ctx, `ensemble-down${destroy ? ' --destroy' : ''}`, r);
+    // #823 — on a successful DESTROY, optimistically converge the view to "gone"
+    // now. The coarse stream will 404 shortly (→ the same state via startCoarse),
+    // but this optimistic clear covers the brief pre-404 poll window AND the
+    // native-EventSource transport that doesn't surface a 404 as a throw (#826).
+    // A graceful (non-destroy) shutdown leaves
+    // players `detached` + PAUSED — reconciled by the normal coarse stream, not
+    // cleared here.
+    if (destroy && r.ok) setConnection(this.model, 'gone');
   }
 
   // ── Planner Q&A + handoff commands (#700 P2) ──
@@ -424,6 +532,10 @@ export class Controller {
     const questionId = mintQuestionId();
     const r = await this.actions.ask({ target, question, questionId });
     if (!r.ok) { this.report(ctx, `ask ${target}`, r); return; }
+    // #822 — a `detached`/`gone` target has no live adapter: the `[Q]` cue queued
+    // but can't be answered until re-attach. Surface the ⚠ (persistent) and skip
+    // the bounded poll (it would just burn the full window and report "no answer").
+    if (r.delivery === 'queued') { this.report(ctx, `ask ${target}`, r); return; }
     // Human path: poll (the operator is watching). The LLM `ask` TOOL yields
     // instead and is woken by the SSE `answer` event.
     this.notify(ctx, `Asked ${target} (q=${questionId}); waiting up to ${ASK_POLL_TIMEOUT_MS / 1000}s…`);
@@ -505,6 +617,14 @@ export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void
       const questionId = mintQuestionId();
       const r = await ctrl.actions.ask({ target, question, questionId });
       if (!r.ok) throw new Error(`ask failed: ${r.error}`);
+      // #822 — a detached/gone target can't answer; tell the planner not to wait
+      // on this one (the SSE `answer` wake will never fire until it re-attaches).
+      if (r.delivery === 'queued') {
+        return ok(
+          `Dispatched to ${target}, but it is ${r.phase ?? 'detached'} — the question QUEUED and won't be answered until it re-attaches. ` +
+          `Do NOT wait on this one; ask a live player (use observe_board) instead.`,
+        );
+      }
       return ok(`Dispatched to ${target} (questionId=${questionId}). End your turn — you'll be woken when the answer lands; do not poll.`);
     },
   });
@@ -523,7 +643,13 @@ export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void
       // small plans inline. Shared with the `/handoff` slash command.
       const r = await ctrl.handoffPlan(target, plan);
       if (!r.ok) throw new Error(`handoff failed: ${r.error}`);
-      return ok(`Plan handed off to ${target}.`);
+      // #822 — warn if the conductor target has no live adapter (the handoff cue
+      // queued but won't be picked up until it re-attaches).
+      return ok(
+        r.delivery === 'queued'
+          ? `Plan handed off to ${target}, but it is ${r.phase ?? 'detached'} — QUEUED, will be picked up when it re-attaches.`
+          : `Plan handed off to ${target}.`,
+      );
     },
   });
 
@@ -535,7 +661,13 @@ export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void
       const { to, message } = params as { to: string; message: string };
       const r = await ctrl.actions.cue(to, message);
       if (!r.ok) throw new Error(`cue failed: ${r.error}`);
-      return ok(`Cued ${to}.`);
+      // #822 — tell the planner when the target has no live adapter (the cue
+      // durably queued but won't be delivered until re-attach).
+      return ok(
+        r.delivery === 'queued'
+          ? `Cued ${to}, but it is ${r.phase ?? 'detached'} — the message QUEUED and won't be delivered until it re-attaches.`
+          : `Cued ${to}.`,
+      );
     },
   });
 
@@ -692,9 +824,18 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
         ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
         ...(adminToken ? { token: adminToken } : {}),
       });
+      // #823 — flip the board's connection state + render the banner immediately
+      // (don't wait for the throttle tick when the stream's liveness changes).
+      const markConnection = (state: 'live' | 'reconnecting' | 'gone', detail?: string): void => {
+        setConnection(ctrl.model, state, detail);
+        renderNow();
+      };
       void (async () => {
         try {
           for await (const ev of subscribe(ctrl.model.ensemble, { signal: ac.signal })) {
+            // #823 — the first event on this connection proves the stream is
+            // live (clears a prior reconnecting/connecting banner).
+            if (ctrl.model.connection !== 'live') markConnection('live');
             // #700 P2 — an `answer` event isn't a board event; it WAKES the
             // planner (its only inbound channel is this SSE stream). Inject via
             // pi.sendMessage(triggerTurn) — feature-detected (a fake/older Pi
@@ -708,8 +849,21 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
             }
             applyTempoEvent(ctrl.model, ev);
           }
+          // #823 — the stream ENDED without throwing. In production `createSubscribe`
+          // only ends normally on abort (it auto-retries transient drops), so a
+          // non-aborted normal end is a defensive transient path → reconnecting.
+          const end = classifyCoarseStreamEnd(undefined, ac.signal.aborted);
+          if (end) markConnection(end.connection, end.detail);
         } catch (err) {
-          if (!ac.signal.aborted) log('coarse SSE ended:', err instanceof Error ? err.message : err);
+          // #823 — map the (permanent) stream error to a board connection state.
+          // Aborted teardown/rebind → null (no change, no spurious log).
+          const end = classifyCoarseStreamEnd(err, ac.signal.aborted);
+          if (!end) return;
+          log(
+            end.connection === 'gone' ? 'coarse SSE — ensemble gone:' : 'coarse SSE ended:',
+            err instanceof Error ? err.message : err,
+          );
+          markConnection(end.connection, end.detail);
         }
       })();
     };
@@ -775,7 +929,9 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('tail', { description: 'Tail a player\'s inner loop (/tail <player> | off)', handler: (a, ctx) => ctrl.cmdTail(a, ctx) });
     pi.registerCommand('cue', { description: 'Send a message to a player (/cue <player> <msg>)', handler: (a, ctx) => ctrl.cmdCue(a, ctx) });
     pi.registerCommand('pause', { description: 'Pause the ensemble', handler: (a, ctx) => ctrl.cmdPause(a, ctx) });
-    pi.registerCommand('play', { description: 'Resume the ensemble (/play [release])', handler: (a, ctx) => ctrl.cmdPlay(a, ctx) });
+    pi.registerCommand('play', { description: 'Clear the PAUSE axis (/play [release] also frees held players)', handler: (a, ctx) => ctrl.cmdPlay(a, ctx) });
+    // #821 — the one obvious "resume everything" (clears PAUSE + HELD).
+    pi.registerCommand('resume', { description: 'Resume everything — clears PAUSE + frees HELD players', handler: (a, ctx) => ctrl.cmdResume(a, ctx) });
     pi.registerCommand('restart', { description: 'Restart a player (/restart <player> [reason])', handler: (a, ctx) => ctrl.cmdRestart(a, ctx) });
     pi.registerCommand('destroy', { description: 'Destroy a player (/destroy <player> [reason])', handler: (a, ctx) => ctrl.cmdDestroy(a, ctx) });
     pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player> [reason])', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });

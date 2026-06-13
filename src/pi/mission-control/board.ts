@@ -34,6 +34,54 @@ export interface PlayerRow {
 /** Default cap on the retained fine-tail frames for the selected player. */
 export const DEFAULT_TAIL_LIMIT = 200;
 
+/**
+ * #823 — coarse-SSE connection state, the PRIMARY signal that the board's view
+ * is trustworthy. Owned entirely by the extension's stream loop (`startCoarse`)
+ * via {@link setConnection} — the reducer's event cases never touch it. Four
+ * states (design note Part 2.2, Ruling B), discriminated by how `createSubscribe`
+ * surfaces a failure (it HARD-errors on 401/404 with no retry, but silently
+ * auto-retries transient drops):
+ *
+ * - `'connecting'` — initial / post-rebind, before the first coarse event lands.
+ * - `'live'` — at least one coarse event has arrived on the current connection.
+ * - `'reconnecting'` — the coarse stream ENDED (a non-404 error, a 401, or a
+ *   defensive normal-end) and the loop has exited. Rows are KEPT (rendered stale,
+ *   not cleared). NOTE (#827 review): this is terminal-until-rebind today — the
+ *   stream does NOT auto-resubscribe (genuine transient blips are swallowed
+ *   INSIDE `createSubscribe`, so the board stays `'live'` through them). The
+ *   renderer therefore labels it "STREAM ENDED … reopens on re-bind", not
+ *   "reconnecting". Auto-re-arm with backoff is tracked in #828; restore the
+ *   reconnecting wording if/when the loop re-subscribes on this transition.
+ * - `'gone'` — a hard 404 on the per-ensemble stream: the ensemble's maestro is
+ *   gone. {@link setConnection} CLEARS the player list on this transition and the
+ *   extension STOPS the stream; the renderer shows "ENSEMBLE DESTROYED".
+ *
+ * Per the design note: `ensemble.destroyed` is a CLUSTER event, NOT carried on
+ * the per-ensemble `/v1/events/:ensemble` stream the board consumes, so
+ * destruction surfaces here as a `gone` connection drop — never as a reducer
+ * case. A board-initiated `/ensemble-down --destroy` ALSO clears the model
+ * optimistically on its 2xx (see the extension), covering the brief pre-404
+ * window of the 750 ms poll-driven stream.
+ */
+export type BoardConnection = 'connecting' | 'live' | 'reconnecting' | 'gone';
+
+/** A short operator-facing reason for the current {@link BoardConnection}, shown
+ *  in the connection banner (e.g. the 401 "set AGENT_TEMPO_HTTP_ADMIN_TOKEN" hint). */
+export type ConnectionDetail = string;
+
+/** Outcome level of a write command's result line (#821 — drives the glyph). */
+export type CommandLevel = 'ok' | 'warn' | 'fail';
+
+/** One persisted command-result line (#821 — folded into the widget so an ack
+ *  doesn't vanish like the prior ephemeral `ui.notify` toast). */
+export interface CommandLogEntry {
+  text: string;
+  level: CommandLevel;
+}
+
+/** How many recent command results the board retains + renders (bounded footer). */
+export const COMMAND_LOG_LIMIT = 4;
+
 export interface BoardModel {
   ensemble: string;
   /** playerId → row, insertion-ordered by the Map. */
@@ -56,6 +104,24 @@ export interface BoardModel {
   paused: boolean;
   /** #752 — any session in the ensemble is held (warm hold, outbox locked). */
   held: boolean;
+  /**
+   * #823 — coarse-SSE liveness, the primary trust signal for the view. Owned by
+   * the extension's stream loop via {@link setConnection}; the reducer never
+   * mutates it. See {@link BoardConnection}.
+   */
+  connection: BoardConnection;
+  /**
+   * #823 — optional operator-facing reason for a non-`live` connection (e.g. the
+   * 401 auth hint), rendered in the connection banner. Cleared on reconnect.
+   */
+  connectionDetail?: ConnectionDetail;
+  /**
+   * #821 — bounded ring of recent write-command results (oldest→newest), folded
+   * into the widget by {@link pushCommandLog} so an ack/⚠/failure PERSISTS on
+   * the board instead of scrolling away as an ephemeral toast (gap A). Capped at
+   * {@link COMMAND_LOG_LIMIT}.
+   */
+  commandLog: CommandLogEntry[];
 }
 
 export function initBoard(ensemble: string, tailLimit = DEFAULT_TAIL_LIMIT): BoardModel {
@@ -68,7 +134,23 @@ export function initBoard(ensemble: string, tailLimit = DEFAULT_TAIL_LIMIT): Boa
     revision: 0,
     paused: false,
     held: false,
+    connection: 'connecting',
+    commandLog: [],
   };
+}
+
+/**
+ * #821 — append a write-command result to the persistent board log (bounded
+ * drop-oldest), bumping revision so the throttled render shows it. This is the
+ * single chokepoint that makes EVERY operator command's ack/⚠/failure persist
+ * in the widget rather than flashing past in an ephemeral `ui.notify` toast.
+ */
+export function pushCommandLog(model: BoardModel, text: string, level: CommandLevel): void {
+  model.commandLog.push({ text, level });
+  if (model.commandLog.length > COMMAND_LOG_LIMIT) {
+    model.commandLog.splice(0, model.commandLog.length - COMMAND_LOG_LIMIT);
+  }
+  model.revision++;
 }
 
 /**
@@ -87,6 +169,13 @@ export function rebindBoard(model: BoardModel, ensemble: string): void {
   model.innerTail = [];
   model.paused = false;
   model.held = false;
+  // #823 — a re-bind is a fresh observation target: back to `connecting` until
+  // the re-opened coarse SSE delivers the new ensemble's first event (which
+  // flips it to `live`), or hard-errors (→ reconnecting / gone).
+  model.connection = 'connecting';
+  model.connectionDetail = undefined;
+  // #821 — the old ensemble's command acks are irrelevant on the new binding.
+  model.commandLog = [];
   model.revision++;
 }
 
@@ -127,6 +216,12 @@ export function applyTempoEvent(model: BoardModel, ev: TempoEvent): void {
       // defensively — a pre-flags payload must not wedge the reducer.
       model.paused = (ev.payload.flags?.paused ?? false) || ev.payload.state === 'paused';
       model.held = ev.payload.flags?.held ?? false;
+      // NOTE (#823): connection liveness is owned by the extension's stream loop
+      // (it calls `setConnection('live')` on the first event), NOT seeded here —
+      // a snapshot replayed into the model in a test must not silently assert the
+      // stream is live. `ensemble.destroyed`/`ensemble.created` are CLUSTER events
+      // and never arrive on this per-ensemble stream, so they're intentionally
+      // absent from this switch (design note Part 2.2).
       break;
     }
     case 'player.added': {
@@ -175,6 +270,39 @@ export function applyInnerFrame(model: BoardModel, frame: InnerFrame): void {
   model.innerTail.push(frame);
   if (model.innerTail.length > model.tailLimit) {
     model.innerTail.splice(0, model.innerTail.length - model.tailLimit);
+  }
+  model.revision++;
+}
+
+/**
+ * #823 — set the coarse-SSE connection state (owned by the extension's stream
+ * loop; see {@link BoardConnection}). The reducer's event cases never call this.
+ *
+ * Transitioning to `'gone'` (a hard per-ensemble 404 — the maestro is gone)
+ * CLEARS the player list + selection + tail + suspension flags, so the board
+ * converges to "no ensemble" instead of freezing on the pre-destroy roster (the
+ * #823 symptom). Other transitions keep the last-known rows (rendered stale
+ * under the connection banner). `detail` is an optional operator hint (e.g. the
+ * 401 auth message) shown in the banner.
+ *
+ * Skips the revision bump only when nothing actually changed, so a steady stream
+ * re-asserting `'live'` doesn't thrash the render tick.
+ */
+export function setConnection(
+  model: BoardModel,
+  connection: BoardConnection,
+  detail?: ConnectionDetail,
+): void {
+  const unchanged = model.connection === connection && model.connectionDetail === detail;
+  if (unchanged) return;
+  model.connection = connection;
+  model.connectionDetail = detail;
+  if (connection === 'gone') {
+    model.players = new Map();
+    model.selected = null;
+    model.innerTail = [];
+    model.paused = false;
+    model.held = false;
   }
   model.revision++;
 }

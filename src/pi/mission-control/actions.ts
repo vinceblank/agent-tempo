@@ -19,7 +19,22 @@ export type ActionFetch = (
   init: { method: string; headers: Record<string, string>; body?: string },
 ) => Promise<{ status: number; text(): Promise<string> }>;
 
-export type ActionResult = { ok: true; status: number } | { ok: false; error: string };
+/**
+ * #822 — optional deliverability hint folded into a successful result by the
+ * maestro-outbox write endpoints (cue / ask / reset / handoff-via-cue). `delivery
+ * === 'queued'` means the target has no live adapter (phase `detached`/`gone`) so
+ * the message durably queued but isn't delivered now — the board renders `⚠`
+ * instead of `✓`. Absent on endpoints that don't enqueue to a player.
+ */
+export interface DeliverabilityHint {
+  delivery?: 'queued' | 'live';
+  phase?: string;
+  warning?: string;
+}
+
+export type ActionResult =
+  | ({ ok: true; status: number } & DeliverabilityHint)
+  | { ok: false; error: string };
 
 export interface MissionControlActionsOptions {
   ensemble: string;
@@ -114,6 +129,34 @@ export class MissionControlActions {
     }
   }
 
+  /**
+   * #822 — POST and, on 2xx, fold the maestro-outbox endpoint's deliverability
+   * hint (`{ delivery, phase, warning }` / legacy `queued`) into the result so
+   * the board can render `⚠ queued` vs `✓`. Identical to {@link post} on the
+   * error path. Tolerant: an empty / non-JSON / hint-less 2xx body yields a plain
+   * `{ ok, status }` (older daemons, or endpoints that didn't run the preflight).
+   */
+  private async postWithDeliverability(pathSuffix: string, body: unknown): Promise<ActionResult> {
+    if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
+    const base = this.baseUrl();
+    if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
+    try {
+      const res = await this.fetchFn(`${base}${pathSuffix}`, {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body ?? {}),
+      });
+      if (res.status >= 200 && res.status < 300) {
+        const text = await res.text().catch(() => '');
+        return { ok: true, status: res.status, ...parseDeliveryHint(text) };
+      }
+      const detail = (await res.text().catch(() => '')).slice(0, 200);
+      return { ok: false, error: this.httpError(res.status, detail) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /** POST and parse a JSON response body. Used when the caller needs the response
    *  payload, not just success — e.g. the coat-check ticket. Bearer iff token set (#54). */
   private async postJson<T>(pathSuffix: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
@@ -180,7 +223,9 @@ export class MissionControlActions {
 
   // ── Ensemble write surface (T2) ──
   cue(to: string, message: string): Promise<ActionResult> {
-    return this.post(`/v1/ensembles/${this.ens()}/cue`, { to, message });
+    // #822 — parse the deliverability hint so the board warns on a detached/gone
+    // target instead of a bare ✓.
+    return this.postWithDeliverability(`/v1/ensembles/${this.ens()}/cue`, { to, message });
   }
   pause(): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/pause`, {});
@@ -195,7 +240,8 @@ export class MissionControlActions {
     return this.post(`/v1/ensembles/${this.ens()}/destroy`, { playerId, ...(reason ? { reason } : {}) });
   }
   reset(playerId: string, reason?: string): Promise<ActionResult> {
-    return this.post(`/v1/ensembles/${this.ens()}/reset`, { playerId, ...(reason ? { reason } : {}) });
+    // #822 — reset funnels through the maestro outbox too; carry the hint.
+    return this.postWithDeliverability(`/v1/ensembles/${this.ens()}/reset`, { playerId, ...(reason ? { reason } : {}) });
   }
 
   // ── Bootstrap surface (#700 P1) ──
@@ -244,7 +290,9 @@ export class MissionControlActions {
    * maestro mailbox and is read back via {@link readAnswer} (or the SSE wake).
    */
   ask(opts: { target: string; question: string; questionId: string }): Promise<ActionResult> {
-    return this.post(`/v1/ensembles/${this.ens()}/ask`, opts);
+    // #822 — `ask` cues the target through the maestro outbox; carry the hint so
+    // the planner/operator learns up front that a detached target won't answer.
+    return this.postWithDeliverability(`/v1/ensembles/${this.ens()}/ask`, opts);
   }
 
   /**
@@ -276,4 +324,29 @@ export class MissionControlActions {
     const res = await this.postJson<{ ticket: string }>(`/v1/ensembles/${this.ens()}/coat-check`, opts);
     return res.ok ? { ok: true, ticket: res.data.ticket } : res;
   }
+}
+
+/**
+ * #822 — extract the deliverability hint from a maestro-outbox endpoint's 2xx
+ * body. Reads the daemon's `{ delivery, phase, warning }` fields (with a legacy
+ * `queued: true` fallback → `delivery: 'queued'`). Tolerant: empty / non-JSON /
+ * hint-less bodies yield `{}`, so an older daemon (or a non-enqueue endpoint)
+ * degrades to a plain success with no warning.
+ */
+export function parseDeliveryHint(text: string): DeliverabilityHint {
+  if (!text) return {};
+  let j: unknown;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    return {};
+  }
+  if (typeof j !== 'object' || j === null) return {};
+  const o = j as { delivery?: unknown; phase?: unknown; warning?: unknown; queued?: unknown };
+  const out: DeliverabilityHint = {};
+  if (o.delivery === 'queued' || o.delivery === 'live') out.delivery = o.delivery;
+  else if (o.queued === true) out.delivery = 'queued';
+  if (typeof o.phase === 'string') out.phase = o.phase;
+  if (typeof o.warning === 'string') out.warning = o.warning;
+  return out;
 }

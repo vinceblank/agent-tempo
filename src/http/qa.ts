@@ -33,6 +33,7 @@ import {
   validateEnsembleName,
   validatePlayerName,
 } from '../utils/validation';
+import { checkDeliverability, deliverabilityResponseFields } from './deliverability';
 
 /** A `questionId` is non-empty, ≤ cap, and URL/path-safe (rides a cue marker + a GET segment). */
 export function isValidQuestionId(q: string | undefined): q is string {
@@ -83,12 +84,18 @@ export async function handleAsk(
   }
 
   try {
+    // #822 — `ask` cues the target through the same maestro outbox, so a
+    // question to a `detached`/`gone` player parks the `[Q]` cue undelivered and
+    // the planner would wait the full poll window for an answer that can't come.
+    // Preflight + report deliverability so the board/planner warns up front.
+    // Warn-but-queue (Ruling A): keep the enqueue + ask-tracking regardless.
+    const deliverability = await checkDeliverability(client, ensemble, target);
     // Cue the target through the maestro outbox (operator-sourced, like the
     // dashboard `/cue` route) so the chat row is attributed to the operator.
     await client.ensureMaestroSession(ensemble);
     await client.sendAsMaestro(ensemble, target, buildAskCue(questionId, question));
     runner?.trackAsk(ensemble, questionId);
-    jsonResponse(res, 202, { ok: true, ensemble, target, questionId });
+    jsonResponse(res, 202, { ok: true, ensemble, target, questionId, ...deliverabilityResponseFields(deliverability) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/no session found|no maestro|workflow not found/i.test(message)) {

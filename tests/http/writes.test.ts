@@ -49,6 +49,10 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
   const base = {
     ensureMaestroSession: handler('ensureMaestroSession', 'maestro-wf-id'),
     sendAsMaestro: handler('sendAsMaestro', undefined),
+    // #822 — the deliverability preflight queries the target's phase. Default to
+    // a live phase ('attached' → deliverable); override via `returns` to drive
+    // the detached/gone warn-but-queue path.
+    attachmentInfo: handler('attachmentInfo', { phase: 'attached' }),
     pause: handler('pause', undefined),
     play: handler('play', undefined),
     release: handler('release', { released: ['p1'], errors: [] }),
@@ -149,6 +153,71 @@ describe('POST /v1/ensembles/:ensemble/cue', () => {
     expect(b.calls.find((c) => c.method === 'sendAsMaestro')?.args).toEqual([
       'demo', 'tempo-eng', 'time to ship',
     ]);
+  });
+
+  // #822 — deliverability preflight: warn-but-queue.
+  it('live target → response carries delivery:live, queued:false, no warning', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'processing' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-eng', message: 'hi' });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.delivery).toBe('live');
+    expect(body.queued).toBe(false);
+    expect(body.warning).toBeUndefined();
+    // The cue STILL enqueued (warn-but-queue is for undeliverable; live is plain).
+    expect(b.calls.find((c) => c.method === 'sendAsMaestro')).toBeDefined();
+  });
+
+  it('detached target → 202 + queued:true + warning, and the cue STILL enqueues (warn-but-queue)', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'detached' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-conductor', message: 'hello' });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.queued).toBe(true);
+    expect(body.delivery).toBe('queued');
+    expect(body.phase).toBe('detached');
+    expect(body.warning).toContain('detached');
+    expect(body.warning).toContain('undeliverable');
+    // Ruling A — NOT a hard-fail: the message durably enqueues regardless.
+    expect(b.calls.find((c) => c.method === 'sendAsMaestro')?.args).toEqual([
+      'demo', 'tempo-conductor', 'hello',
+    ]);
+  });
+
+  it('gone target → queued:true with phase gone', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'gone' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-eng', message: 'x' });
+    const body = await res.json();
+    expect(body.queued).toBe(true);
+    expect(body.phase).toBe('gone');
+  });
+
+  it('draining target is NOT flagged undeliverable (brief teardown)', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'draining' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-eng', message: 'x' });
+    const body = await res.json();
+    expect(body.delivery).toBe('live');
+    expect(body.queued).toBe(false);
+  });
+
+  it('preflight that THROWS (wedged/no-session) soft-fails to live — never blocks the enqueue', async () => {
+    const b = await boot({ mock: { throws: { attachmentInfo: new Error('boom') } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-eng', message: 'x' });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.delivery).toBe('live');
+    expect(b.calls.find((c) => c.method === 'sendAsMaestro')).toBeDefined();
+  });
+
+  it('reset of a detached target → queued:true warning (cue-class sibling)', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'detached' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, { playerId: 'tempo-eng' });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.queued).toBe(true);
+    expect(body.phase).toBe('detached');
+    // Reset still enqueued.
+    expect(b.calls.find((c) => c.method === 'reset')).toBeDefined();
   });
 
   it('400 missing-field on absent `to`', async () => {
@@ -439,7 +508,9 @@ describe('POST /v1/ensembles/:ensemble/reset', () => {
     // when the maestro isn't up yet).
     expect(b.calls.find((c) => c.method === 'ensureMaestroSession')?.args).toEqual(['demo']);
     expect(b.calls.find((c) => c.method === 'reset')?.args).toEqual(['demo', 'tempo-eng', 'stuck']);
-    expect(await res.json()).toEqual({ playerId: 'tempo-eng', entryId: 'reset-1' });
+    // #822 — the reset response now additively carries the target's
+    // deliverability (live here — default mock phase 'attached').
+    expect(await res.json()).toEqual({ playerId: 'tempo-eng', entryId: 'reset-1', delivery: 'live', queued: false, phase: 'attached' });
   });
 
   it('reason is optional (undefined passed through)', async () => {

@@ -9,6 +9,19 @@ import type { InnerFrame } from '../inner-loop-publisher';
 /** How many recent fine-tail frames to show under the selected player. */
 const TAIL_RENDER_LINES = 12;
 
+/**
+ * #821 — render the persistent command-log footer (recent acks/⚠/failures). Folds
+ * write-command results into the widget so feedback doesn't vanish like the old
+ * ephemeral toast. Each entry's `text` already carries its outcome glyph
+ * (`✓`/`⚠`/`✗`, set at report-time). Empty log → no footer lines.
+ */
+function renderCommandLog(model: BoardModel): string[] {
+  if (model.commandLog.length === 0) return [];
+  const out = ['── recent ──'];
+  for (const e of model.commandLog) out.push(`  ${e.text}`);
+  return out;
+}
+
 /** Compact phase glyph — ASCII-safe for the TUI. */
 function phaseGlyph(phase: AttachmentPhase | undefined): string {
   switch (phase) {
@@ -77,11 +90,48 @@ function oneLine(s: string, max: number): string {
 export function renderBoard(model: BoardModel, localHost?: string): string[] {
   const ids = sortedPlayerIds(model);
   const lines: string[] = [];
-  // #752 — suspension marker rides the header AND gets its own loud line so
-  // a paused ensemble can't sit unnoticed (the 5h silent-wedge incident).
+
+  // #823 — a GONE ensemble (hard 404 — the maestro is torn down) is the most
+  // urgent signal and makes the player list + suspension flags meaningless:
+  // render the loud teardown banner and stop, so a destructive
+  // `/ensemble-down --destroy` (or an external destroy) can't leave the operator
+  // staring at the stale pre-destroy roster (the reported symptom). Players are
+  // already cleared by `setConnection('gone')`.
+  if (model.connection === 'gone') {
+    lines.push(`MISSION CONTROL · ${model.ensemble} · ENSEMBLE GONE`);
+    lines.push(
+      '!! ENSEMBLE DESTROYED — no active players. ' +
+      '/ensemble <name> to observe another, or /ensemble-up to re-create.',
+    );
+    // #821 — keep the command log visible so the `ensemble-down --destroy ✓`
+    // ack that produced this state is still on screen (the #823 scenario).
+    lines.push(...renderCommandLog(model));
+    return lines;
+  }
+
+  // #752/#823 — the header marker rides one loud line so a paused/held/
+  // stream-ended ensemble can't sit unnoticed (the 5h silent-wedge incident).
+  // A dropped stream outranks PAUSED/HELD: the suspension flags below are then
+  // last-known-only and the operator needs to know the view itself may be stale.
+  //
+  // HONEST LABEL (#827 review): the `'reconnecting'` connection state does NOT
+  // auto-reconnect today — `createSubscribe` swallows genuine transient blips
+  // internally (the board stays `live` through them), so this state is only
+  // reached when the coarse stream has actually ended and the loop has exited.
+  // It reopens on an `/ensemble` re-bind, not on its own. We therefore label it
+  // "STREAM ENDED … reopens on re-bind" rather than the misleading "RECONNECTING"
+  // (shipping a reconnecting badge that doesn't reconnect is the exact
+  // misleading-feedback class this PR fixes). Auto-re-arm is tracked in #828;
+  // if/when the loop re-subscribes with backoff, restore the reconnecting wording.
   let marker = '';
   let what = '';
-  if (model.paused) {
+  if (model.connection === 'reconnecting') {
+    marker = ' · [STREAM ENDED]';
+    const tail = 'last-known state, reopens on /ensemble re-bind';
+    what = model.connectionDetail
+      ? `STREAM ENDED — ${model.connectionDetail}; ${tail}`
+      : `STREAM ENDED — coarse stream dropped; ${tail}`;
+  } else if (model.paused) {
     marker = ' · [PAUSED]';
     what = model.held ? 'ENSEMBLE PAUSED + HELD players' : 'ENSEMBLE PAUSED';
   } else if (model.held) {
@@ -90,7 +140,14 @@ export function renderBoard(model: BoardModel, localHost?: string): string[] {
   }
   lines.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}${marker}`);
   if (what) {
-    lines.push(`!! ${what} — cues queue silently; resume: play (release: true frees held players)`);
+    if (model.connection === 'reconnecting') {
+      // Informational — no resume hint (the issue is the stream, not a suspend).
+      lines.push(`!! ${what}`);
+    } else {
+      // #821 — the one obvious resume is `/resume` (clears PAUSE + HELD); `/play`
+      // (sources only) and `/play release` remain for the two-axis primitive.
+      lines.push(`!! ${what} — cues queue silently; resume: /resume (or /play release)`);
+    }
   }
 
   if (ids.length === 0) {
@@ -111,6 +168,9 @@ export function renderBoard(model: BoardModel, localHost?: string): string[] {
       for (const f of recent) lines.push(renderInnerFrame(f));
     }
   }
+
+  // #821 — persistent command-result footer (recent acks/⚠/failures).
+  lines.push(...renderCommandLog(model));
 
   return lines;
 }

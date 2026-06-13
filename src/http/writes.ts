@@ -44,6 +44,7 @@ import {
   isAllowedAgent,
   requirePlayerId,
 } from './body';
+import { checkDeliverability, deliverabilityResponseFields } from './deliverability';
 
 // Re-exported so existing importers (`server.ts` reads this for the
 // 413 response cap) keep their import path stable.
@@ -146,13 +147,20 @@ async function handleCue(
   if (message.length > MESSAGE_MAX) {
     return errorResponse(res, 413, { error: 'message-too-long', limit: MESSAGE_MAX });
   }
+  // #822 — phase preflight BEFORE the enqueue: a cue to a `detached`/`gone`
+  // target durably queues but isn't delivered now, and the board must show
+  // `⚠ queued` not a confident `✓`. Warn-but-queue (design note Ruling A): we
+  // keep the enqueue regardless and just report deliverability. Soft-failing +
+  // bounded, so a slow/wedged target never blocks the operator's cue.
+  const deliverability = await checkDeliverability(client, ensemble, to);
+
   // `sendAsMaestro` writes through the maestro session's outbox so the
   // chat row shows `role: 'maestro-out'` — matches the dashboard's
   // "you, the operator" semantic. `sendMessage` is conductor-sourced
   // and would mis-label the row.
   await client.ensureMaestroSession(ensemble);
   await client.sendAsMaestro(ensemble, to, message);
-  jsonResponse(res, 202, { ok: true, ensemble, to });
+  jsonResponse(res, 202, { ok: true, ensemble, to, ...deliverabilityResponseFields(deliverability) });
 }
 
 async function handlePause(
@@ -270,12 +278,16 @@ async function handleReset(
   const playerId = requirePlayerId(res, body);
   if (!playerId) return;
   const reason = stringField(body, 'reason');
+  // #822 — reset also funnels through the maestro outbox, so a reset of a
+  // `detached`/`gone` player queues undelivered just like a cue. Preflight +
+  // report deliverability so the board warns instead of a bare `✓`.
+  const deliverability = await checkDeliverability(client, ensemble, playerId);
   // Reset (D14 clean-wipe) enqueues on the maestro outbox — ensure the maestro
   // exists first (like `cue`) so a reset before it's up doesn't 500. Idempotent
   // (USE_EXISTING). 202 + the queued entry id, mirroring `restart`.
   await client.ensureMaestroSession(ensemble);
   const result = await client.reset(ensemble, playerId, reason);
-  jsonResponse(res, 202, result);
+  jsonResponse(res, 202, { ...result, ...deliverabilityResponseFields(deliverability) });
 }
 
 async function handleDestroy(
