@@ -576,10 +576,18 @@ async function main() {
       break;
 
     case 'destroy': {
-      const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
-      if (!target) {
-        out.error('Usage: agent-tempo destroy <ensemble> [-y]');
-        process.exit(1);
+      // #835 — use the SHARED resolver (flag > positional > env > default) so
+      // `destroy` matches every other verb. It previously hand-rolled INVERTED
+      // precedence (`positional || ensemble || env`), so `destroy foo --ensemble
+      // bar` destroyed `foo` — the lone outlier. `destroy` is gated by a typed
+      // confirmation (or `--yes`), so the resolver's `default` fallback is safe.
+      const target = resolveEnsemble(args);
+      // #835 — surface a flag-over-positional override as a non-fatal note so the
+      // flag silently winning over a DIFFERENT positional isn't a silent mask
+      // (flag wins by design — this only warns, never errors).
+      const positional = args.positional[1];
+      if (args.ensemble && positional && args.ensemble !== positional) {
+        out.warn(`note: --ensemble "${args.ensemble}" overrides positional "${positional}"`);
       }
       await destroy({
         ensemble: target,

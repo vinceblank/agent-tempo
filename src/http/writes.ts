@@ -397,6 +397,17 @@ function mapWriteError(
   if (/no session found|no maestro|workflow not found/i.test(message)) {
     return errorResponse(res, 404, { error: 'session-not-found', action, ensemble, detail: message });
   }
+  // #834 — a cue/ask to a player whose workflow is ABSENT (destroyed / never
+  // existed) throws `Player "<to>" not found in ensemble "<ens>"` from
+  // `sendAsMaestro` (core.ts). That's a 404, not a 500 — the operator typo'd a
+  // name or the player was destroyed. NOTE: a detached/gone-but-Running player
+  // never reaches here — its workflow still matches the `ExecutionStatus =
+  // "Running"` query, so `sendAsMaestro` signals it and the soft-fail 202/queued
+  // path (checkDeliverability) handles it (no throw). So this 404 cannot
+  // regress the #822/#827 warn-but-queue contract.
+  if (/player ".*" not found in ensemble/i.test(message)) {
+    return errorResponse(res, 404, { error: 'player-not-found', action, ensemble, detail: message });
+  }
   if (/Unknown agent type/i.test(message)) {
     return errorResponse(res, 400, { error: 'unknown-agent-type', action, ensemble, detail: message });
   }

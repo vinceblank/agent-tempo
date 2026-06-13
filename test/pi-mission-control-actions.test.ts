@@ -87,6 +87,28 @@ describe('MissionControlActions — write surface', () => {
     if (!r.ok) expect(r.error).to.contain('403');
   });
 
+  // #834 — the daemon's structured `player-not-found` 404 must surface as a clean
+  // operator string (`no such player "<to>"`), NOT the raw JSON blob the user saw.
+  it('cleans the player-not-found 404 JSON into a clean "no such player" string', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 404;
+    fake.nextText = JSON.stringify({
+      error: 'player-not-found',
+      action: 'cue',
+      ensemble: 'ens',
+      detail: 'Player "ghost" not found in ensemble "ens"',
+    });
+    const r = await actions(fake).cue('ghost', 'hi');
+    expect(r.ok).to.equal(false);
+    if (!r.ok) {
+      expect(r.error).to.equal('no such player "ghost"');
+      // No JSON / status noise leaks through.
+      expect(r.error).to.not.contain('{');
+      expect(r.error).to.not.contain('player-not-found');
+      expect(r.error).to.not.contain('HTTP 404');
+    }
+  });
+
   // #54 — tokenless is NO LONGER a hard pre-block. A loopback daemon grants full
   // trust tokenless, so the client ATTEMPTS the request (no Authorization header)
   // and lets the daemon decide; the token is only required by a remote/0.0.0.0

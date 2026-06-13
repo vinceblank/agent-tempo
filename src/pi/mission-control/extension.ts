@@ -420,10 +420,10 @@ export class Controller {
     const r = await this.actions.play(release);
     // #821 — the two-axis wart: a sources-only `/play` that leaves players HELD
     // reads as "nothing happened" (the real #821). Name the residual axis so the
-    // operator knows to clear it — `/resume` does both in one shot.
+    // operator knows to clear it — `/unpause` does both in one shot.
     const extra =
       r.ok && !release && this.model.held
-        ? 'ensemble resumed, but players are still HELD — use /resume (or /play release) to free them'
+        ? 'ensemble resumed, but players are still HELD — use /unpause (or /play release) to free them'
         : undefined;
     this.report(ctx, 'play', r, extra);
   }
@@ -434,9 +434,12 @@ export class Controller {
    * operator who just wants to un-suspend the ensemble has a single action,
    * without overloading `/play`'s sources-only meaning (the two axes stay
    * distinct at the primitive/daemon level).
+   *
+   * #833 — exposed as `/unpause` (NOT `/resume` — that collides with a Pi
+   * built-in interactive command and gets skipped from autocomplete).
    */
-  async cmdResume(_args: string, ctx: McExtensionContext): Promise<void> {
-    this.report(ctx, 'resume', await this.actions.play(true));
+  async cmdUnpause(_args: string, ctx: McExtensionContext): Promise<void> {
+    this.report(ctx, 'unpause', await this.actions.play(true));
   }
 
   async cmdRestart(args: string, ctx: McExtensionContext): Promise<void> {
@@ -931,7 +934,8 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('pause', { description: 'Pause the ensemble', handler: (a, ctx) => ctrl.cmdPause(a, ctx) });
     pi.registerCommand('play', { description: 'Clear the PAUSE axis (/play [release] also frees held players)', handler: (a, ctx) => ctrl.cmdPlay(a, ctx) });
     // #821 — the one obvious "resume everything" (clears PAUSE + HELD).
-    pi.registerCommand('resume', { description: 'Resume everything — clears PAUSE + frees HELD players', handler: (a, ctx) => ctrl.cmdResume(a, ctx) });
+    // #833 — registered as `/unpause`, NOT `/resume` (collides with a Pi built-in).
+    pi.registerCommand('unpause', { description: 'Resume everything — clears PAUSE + frees HELD players', handler: (a, ctx) => ctrl.cmdUnpause(a, ctx) });
     pi.registerCommand('restart', { description: 'Restart a player (/restart <player> [reason])', handler: (a, ctx) => ctrl.cmdRestart(a, ctx) });
     pi.registerCommand('destroy', { description: 'Destroy a player (/destroy <player> [reason])', handler: (a, ctx) => ctrl.cmdDestroy(a, ctx) });
     pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player> [reason])', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });

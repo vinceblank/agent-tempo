@@ -100,6 +100,25 @@ export class MissionControlActions {
    * the daemon's own body detail (it already returns good 403/503 hints).
    */
   private httpError(status: number, detail: string): string {
+    // #834 — the daemon returns a structured `player-not-found` 404 (a cue/ask to
+    // a destroyed / never-existed player). Surface a clean operator string rather
+    // than leaking the raw JSON blob the user saw. The `⚠ cue <name> — ` prefix
+    // is the extension footer formatter's job; actions.ts just stops leaking JSON.
+    let parsedError: string | undefined;
+    let parsedDetail: string | undefined;
+    try {
+      const j = JSON.parse(detail) as { error?: unknown; detail?: unknown };
+      if (typeof j.error === 'string') parsedError = j.error;
+      if (typeof j.detail === 'string') parsedDetail = j.detail;
+    } catch {
+      /* not JSON (or truncated past the 200-char slice) — fall back to raw match */
+    }
+    if (parsedError === 'player-not-found' || /"player-not-found"/.test(detail)) {
+      // Handles both the unescaped parsed detail (`Player "bob" ...`) and the raw
+      // JSON body where the quotes are escaped (`Player \"bob\" ...`).
+      const who = /Player \\?"([^"\\]+)\\?"/.exec(parsedDetail ?? detail)?.[1];
+      return who ? `no such player "${who}"` : 'no such player';
+    }
     if (!this.adminToken && (status === 401 || status === 403 || status === 503)) {
       return (
         `HTTP ${status}: operator actions need ${ADMIN_TOKEN_ENV} for a remote / 0.0.0.0 daemon ` +

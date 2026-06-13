@@ -10,6 +10,39 @@ import type { InnerFrame } from '../inner-loop-publisher';
 const TAIL_RENDER_LINES = 12;
 
 /**
+ * #836 — Pi's `InteractiveMode` hard-caps a widget at this many lines and, beyond
+ * it, naively slices the top N and appends its own dev-speak `... (widget
+ * truncated)` (mirrors `InteractiveMode.MAX_WIDGET_LINES`, verified 0.78.0). That
+ * is doubly bad for us: (1) operators see internal "widget truncated" copy, and
+ * (2) the slice keeps the TOP and drops the BOTTOM — which is exactly the
+ * command-log acks (#821) the operator most needs to see. So we clamp to this
+ * budget OURSELVES with {@link assembleWidget}, keeping the header/banner (top)
+ * AND the command-log footer (bottom) and trimming the expendable middle
+ * (roster/tail) under an operator-friendly `⋯ N … hidden` marker. If Pi ever
+ * raises its cap this only clamps a touch early — it can never over-run it.
+ */
+export const MAX_WIDGET_LINES = 10;
+
+/**
+ * #836 — assemble `[head, body, foot]` into a widget that fits {@link
+ * MAX_WIDGET_LINES}. `head` (header + suspension/connection banner) and `foot`
+ * (the #821 command-log acks) are always kept; only the middle `body` (roster +
+ * inner tail) is trimmed, with one line spent on a friendly hidden-count marker
+ * that replaces Pi's `... (widget truncated)` dev-speak. Pure + total — never
+ * returns more than `MAX_WIDGET_LINES` lines (head+foot is ≤ 7 by construction).
+ */
+function assembleWidget(head: string[], body: string[], foot: string[]): string[] {
+  const budget = MAX_WIDGET_LINES - head.length - foot.length;
+  if (body.length <= budget) return [...head, ...body, ...foot];
+  // Spend one line on the marker; keep as much of the body top as fits.
+  const keep = Math.max(budget - 1, 0);
+  const hidden = body.length - keep;
+  const marker =
+    hidden > 0 ? `  ⋯ ${hidden} more line${hidden === 1 ? '' : 's'} hidden` : '  ⋯ (older entries hidden)';
+  return [...head, ...body.slice(0, keep), marker, ...foot];
+}
+
+/**
  * #821 — render the persistent command-log footer (recent acks/⚠/failures). Folds
  * write-command results into the widget so feedback doesn't vanish like the old
  * ephemeral toast. Each entry's `text` already carries its outcome glyph
@@ -89,7 +122,11 @@ function oneLine(s: string, max: number): string {
  */
 export function renderBoard(model: BoardModel, localHost?: string): string[] {
   const ids = sortedPlayerIds(model);
-  const lines: string[] = [];
+  // #836 — three bands so the widget clamp keeps the high-value top (header +
+  // banner) and bottom (command-log acks) and only trims the expendable middle.
+  const head: string[] = [];
+  const body: string[] = [];
+  const foot = renderCommandLog(model);
 
   // #823 — a GONE ensemble (hard 404 — the maestro is torn down) is the most
   // urgent signal and makes the player list + suspension flags meaningless:
@@ -98,15 +135,14 @@ export function renderBoard(model: BoardModel, localHost?: string): string[] {
   // staring at the stale pre-destroy roster (the reported symptom). Players are
   // already cleared by `setConnection('gone')`.
   if (model.connection === 'gone') {
-    lines.push(`MISSION CONTROL · ${model.ensemble} · ENSEMBLE GONE`);
-    lines.push(
+    head.push(`MISSION CONTROL · ${model.ensemble} · ENSEMBLE GONE`);
+    head.push(
       '!! ENSEMBLE DESTROYED — no active players. ' +
       '/ensemble <name> to observe another, or /ensemble-up to re-create.',
     );
     // #821 — keep the command log visible so the `ensemble-down --destroy ✓`
     // ack that produced this state is still on screen (the #823 scenario).
-    lines.push(...renderCommandLog(model));
-    return lines;
+    return assembleWidget(head, body, foot);
   }
 
   // #752/#823 — the header marker rides one loud line so a paused/held/
@@ -138,39 +174,39 @@ export function renderBoard(model: BoardModel, localHost?: string): string[] {
     marker = ' · [HELD]';
     what = 'HELD players';
   }
-  lines.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}${marker}`);
+  head.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}${marker}`);
   if (what) {
     if (model.connection === 'reconnecting') {
       // Informational — no resume hint (the issue is the stream, not a suspend).
-      lines.push(`!! ${what}`);
+      head.push(`!! ${what}`);
     } else {
-      // #821 — the one obvious resume is `/resume` (clears PAUSE + HELD); `/play`
+      // #821 — the one obvious resume is `/unpause` (clears PAUSE + HELD); `/play`
       // (sources only) and `/play release` remain for the two-axis primitive.
-      lines.push(`!! ${what} — cues queue silently; resume: /resume (or /play release)`);
+      // #833 — `/unpause`, NOT `/resume` (the latter collides with a Pi built-in).
+      head.push(`!! ${what} — cues queue silently; resume: /unpause (or /play release)`);
     }
   }
 
   if (ids.length === 0) {
-    lines.push('  (no players — waiting for the ensemble…)');
+    body.push('  (no players — waiting for the ensemble…)');
   } else {
     for (const id of ids) {
       const row = model.players.get(id)!;
-      lines.push(renderRow(row, id === model.selected, localHost));
+      body.push(renderRow(row, id === model.selected, localHost));
     }
   }
 
   if (model.selected) {
-    lines.push(`── tail: ${model.selected} ──`);
+    body.push(`── tail: ${model.selected} ──`);
     const recent = model.innerTail.slice(-TAIL_RENDER_LINES);
     if (recent.length === 0) {
-      lines.push('  (no inner-loop activity yet)');
+      body.push('  (no inner-loop activity yet)');
     } else {
-      for (const f of recent) lines.push(renderInnerFrame(f));
+      for (const f of recent) body.push(renderInnerFrame(f));
     }
   }
 
-  // #821 — persistent command-result footer (recent acks/⚠/failures).
-  lines.push(...renderCommandLog(model));
-
-  return lines;
+  // #821 — persistent command-result footer (recent acks/⚠/failures) lives in
+  // `foot` (already computed) so the #836 clamp keeps it visible.
+  return assembleWidget(head, body, foot);
 }

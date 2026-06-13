@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.0-beta.11] - 2026-06-13
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Fixed
+
+- **`up`/`conduct` "ready" line names the resolved ensemble, not the lineup (closes #832)** — the closing output (`ok Ensemble "X" is ready`) now prints the ensemble name (per `--ensemble` flag > positional > env > `default` resolver) rather than the lineup/template name. A new `formatEnsembleReadyLines()` helper is shared by both `up` and `conduct`. The connect command shown in the output (e.g. `agent-tempo command-center default`) is now correct on the first read instead of directing operators at a non-existent ensemble name.
+
+- **Command-center `/resume` renamed to `/unpause` (closes #833)** — `/resume` conflicted with a Pi built-in interactive command and was silently dropped from autocomplete, making the advertised affordance unreachable. Renamed to `/unpause`. The PAUSED-state banner hint is updated accordingly. `/play release` (the underlying two-axis primitive) is unchanged.
+
+- **Cueing a nonexistent player returns `404 player-not-found`, not `HTTP 500` (closes #834)** — the daemon write surface (`/cue`, `/ask`, `/handoff`) now returns a clean `404` with `{"error":"player-not-found","name":"<name>"}` when the target player has no workflow. The board actions client maps this to a human-readable `⚠ cue <name> — no such player` footer line (no raw JSON blob). The deliverability soft-fail for detached/gone players (warn-but-queue) introduced in beta.10 is unchanged — only the fully-destroyed case is affected.
+
+- **`destroy` uses the shared ensemble resolver (closes #835)** — `destroy` now resolves the target ensemble via the canonical `resolve-ensemble.ts` order (`--ensemble` flag > positional > env > `default`), matching every other verb. When `--ensemble` and a positional differ, the flag wins and a warning is printed. **Behavior change:** `destroy` with no arguments now targets the `default` ensemble (the typed-confirm/`-y` gate still applies) instead of printing a usage error.
+
+- **Command-center board no longer clips command-log acknowledgements (closes #836)** — the board widget now lays out as a head/body/foot band: the header row and command-log footer always survive; only the roster/tail section trims under a `⋯ N more lines hidden` marker when height is tight. Fixes acknowledgements (`✓`/`⚠`/`✗`) vanishing under Pi's 10-line widget cap. The old `... (widget truncated)` dev string is replaced by the operator-facing count marker.
+
 ## [1.7.0-beta.10] - 2026-06-13
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
