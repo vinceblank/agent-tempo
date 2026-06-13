@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Daemon liveness survives a missing pid file (reliability, closes #811)** — if `~/.agent-tempo/daemon.pid` goes missing while a daemon is alive (a stop→start race could unlink it after a new daemon already bound the port), `isDaemonRunning()` now falls back to a **port-ownership probe**: a live daemon serving its bound port (from `daemon.port`) is detected even with no pid file. Previously this stranded every `agent-tempo-server` MCP launch into trying to start a *second* daemon, hitting `EADDRINUSE`, waiting 15s, and timing out the handshake — wedging all recruits on the host until the pid file was restored by hand (a ~2h outage on 2026-06-12). The daemon also now **re-asserts its pid file the moment it binds the port** (and on any #768 bind-retry recovery), so a racing unlink during a restart cycle self-heals. The detection fallback is read-only and gated on a file/operator-pinned port (a random process squatting the `8473` default is never mistaken for the daemon); part of the #758/#771 port-truth-over-stale-state ghost-hygiene arc.
+
 ### Changed
 - **SDK-adapter idle poll backoff (T0.2 of #747, closes #749)** — the five SDK-class adapters (copilot, claude-api, opencode, claude-code-headless, mock) now stretch their `pendingMessages` poll from 2s toward a 30s cap while idle and snap back to 2s on any delivered message (~15× fewer idle Temporal queries per player: 43,200 → 2,880/day). Behavior note: the **first** cue after a long idle stretch can take up to 30s to surface; conversations in progress keep the legacy 2s responsiveness. Escape hatch: set `AGENT_TEMPO_SDK_POLL_MAX_MS=2000` (= `AGENT_TEMPO_SDK_POLL_BASE_MS`) to pin the old fixed cadence. Heartbeat/lease cadences are unchanged (#249 invariants).
 

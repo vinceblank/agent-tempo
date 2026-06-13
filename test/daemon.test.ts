@@ -148,16 +148,23 @@ describe('daemon management', function () {
   });
 
   describe('isDaemonRunning', function () {
-    it('returns false when no PID file exists', function () {
+    // #811: isDaemonRunning() now also consults the port-ownership fallback.
+    // These cases exercise the PID-FILE branch in isolation — the injected
+    // `() => null` neutralizes the real port probe so a live daemon on the
+    // test box can't flip a "pid removed → not running" assertion via its
+    // real daemon.port. The fallback is covered by daemon-pid-fallback.test.ts.
+    const noPortFallback = () => null;
+
+    it('returns false when no PID file exists (and the port fallback finds nothing)', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-      expect(isDaemonRunning()).to.be.false;
+      expect(isDaemonRunning(noPortFallback)).to.be.false;
     });
 
     it('returns true when PID file contains a living process', function () {
       seedPidFile(DAEMON_PID_PATH, process.pid);
 
       try {
-        expect(isDaemonRunning()).to.be.true;
+        expect(isDaemonRunning(noPortFallback)).to.be.true;
       } finally {
         try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       }

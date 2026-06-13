@@ -63,6 +63,15 @@ export interface DaemonStatus {
    * See {@link HEARTBEAT_STALE_MULTIPLIER} for the staleness threshold.
    */
   heartbeatAge?: number | null;
+  /**
+   * #811 — `true` when `running` was established by the PORT-OWNERSHIP
+   * fallback rather than the pid file: the pid file was absent/dead but the
+   * daemon's bound port (from `daemon.port`) is still owned, so a live
+   * daemon is serving and the pid file merely went missing (the 2026-06-12
+   * stop→start race). `pid` then carries the port owner's pid. Absent on
+   * the normal pid-file path.
+   */
+  portFallback?: boolean;
 }
 
 /**
@@ -82,15 +91,88 @@ function isPidAlive(pid: number): boolean {
 }
 
 /**
- * Check if the daemon is running by reading the PID file and probing the process.
- * Cleans up stale PID files automatically.
+ * Is a daemon SERVING? — the liveness gate used before deciding to spawn
+ * one (`src/server.ts`, `src/cli/startup.ts`, `src/cli/ensure-infra.ts`).
+ *
+ * #811: pid-file truth (`getDaemonStatus`) OR the port-ownership fallback.
+ * The 2026-06-12 incident: a stop→start race unlinked `daemon.pid` after a
+ * new daemon bound the port, so this gate returned false and every MCP
+ * spawn tried to start ANOTHER daemon → `EADDRINUSE` → 15s wait → handshake
+ * timeout (~2h outage) while a healthy daemon answered the whole time. The
+ * fallback closes that: a live daemon whose pid file went missing is still
+ * detected via its bound port ({@link portOwnershipLiveness}).
+ *
+ * This is deliberately a richer signal than `getDaemonStatus().running`
+ * (pid-file only): the gate must not false-NEGATIVE into a duplicate-spawn,
+ * whereas `getDaemonStatus` stays the tracked-pid view for `daemon status`
+ * display + stop targeting — both of which already cross-check the port via
+ * the #758 `classifyPortDivergence` / ghost sweep. `portFallback` is an
+ * injectable seam (tests pass `() => null` to neutralize the real probe on
+ * a box that has a live daemon).
  */
-export function isDaemonRunning(): boolean {
-  return getDaemonStatus().running;
+export function isDaemonRunning(
+  portFallback: () => DaemonStatus | null = portOwnershipLiveness,
+): boolean {
+  return getDaemonStatus().running || portFallback() !== null;
+}
+
+/**
+ * #811 — PORT-OWNERSHIP liveness fallback for {@link isDaemonRunning}.
+ *
+ * When the pid file is absent (or its pid is dead/unparseable) but the
+ * daemon's bound port — read from `daemon.port` — is still owned, a live
+ * daemon is serving and the pid file merely went missing. That is exactly
+ * the 2026-06-12 incident: a stop→start race unlinked `daemon.pid` after a
+ * new daemon bound the port, so `isDaemonRunning()` reported false and every
+ * subsequent MCP spawn tried to start ANOTHER daemon, hit `EADDRINUSE`,
+ * waited 15s, and timed out the handshake — wedging recruits for ~2h while
+ * a healthy daemon answered `/v1/health` the whole time.
+ *
+ * Gated on a FILE- or ENV-sourced port (same trust tiering as the
+ * #758/#775 ghost sweep): the daemon writes `daemon.port` on bind, and an
+ * operator may pin the port — both are "this is our daemon". A
+ * DEFAULT-sourced port (no port file, no env) is NOT treated as liveness: a
+ * random process squatting `8473` is not our daemon.
+ *
+ * Returns a running {@link DaemonStatus} carrying the port owner's pid, or
+ * `null` when the port isn't ours / isn't owned. READ-ONLY by design — the
+ * detection path never writes the pid file; the daemon's own post-bind
+ * rewrite (#811 Fix 1, `src/daemon.ts`) is the healing mechanism. (A future
+ * stronger signal: probe `GET /v1/health` to confirm it's OUR daemon and
+ * not a foreign binder — deferred because `getDaemonStatus` is synchronous
+ * and on hot CLI paths; the port-source gate already excludes the common
+ * foreign cases.)
+ *
+ * Exported with injectable seams for unit testing without a real listener.
+ */
+export function portOwnershipLiveness(
+  deps: {
+    resolvePortInfo?: () => { port: number; source: DaemonPortSource };
+    findPortOwner?: (port: number) => number | null;
+    heartbeatAge?: () => number | null;
+  } = {},
+): DaemonStatus | null {
+  const { port, source } = (deps.resolvePortInfo ?? resolveDaemonPortInfo)();
+  if (source === 'default') return null; // no port file / operator pin → not verifiably ours
+  const owner = (deps.findPortOwner ?? findPortOwnerPid)(port);
+  if (owner === null) return null;
+  return {
+    running: true,
+    pid: owner,
+    portFallback: true,
+    heartbeatAge: (deps.heartbeatAge ?? readHeartbeatAge)(),
+  };
 }
 
 /**
  * Get daemon status: running state and PID (if available).
+ *
+ * The TRACKED-pid view: pid-file truth only (no port fallback). For "is a
+ * daemon serving at all" use {@link isDaemonRunning} (#811), which folds in
+ * the port-ownership fallback for the spawn-gate path. `daemon status`
+ * separately surfaces a pid-file/port divergence via the #758
+ * `classifyPortDivergence` check, so the operator still sees a pid-file-less
+ * live daemon.
  */
 export function getDaemonStatus(): DaemonStatus {
   if (!fs.existsSync(DAEMON_PID_PATH)) {
