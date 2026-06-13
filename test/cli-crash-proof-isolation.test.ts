@@ -102,6 +102,8 @@ const CRASH_PROOF_MODULES: readonly CrashProofModule[] = [
   { name: 'help-text', ts: 'src/cli/help-text.ts', dist: 'dist/cli/help-text.js' },
   // PR C — `agent-tempo upgrade` (Temporal accessed via dynamic import only)
   { name: 'upgrade-command', ts: 'src/cli/upgrade-command.ts', dist: 'dist/cli/upgrade-command.js' },
+  // #785 — `agent-tempo upgrade-to-2` (engine + Temporal via dynamic import only)
+  { name: 'upgrade-to-2-command', ts: 'src/cli/upgrade-to-2-command.ts', dist: 'dist/cli/upgrade-to-2-command.js' },
   // PR C — `agent-tempo config` (connection test uses dynamic import)
   { name: 'config-command', ts: 'src/cli/config-command.ts', dist: 'dist/cli/config-command.js' },
   // #288 — removed-verb friendly errors: fire BEFORE `./cli/commands` loads

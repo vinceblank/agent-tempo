@@ -54,6 +54,7 @@ ${out.bold('Commands:')}
   ${out.cyan('dashboard')}                Open the web dashboard (--no-open / --pair / --json)
   ${out.cyan('command-center')} [ensemble] Launch the interactive Pi mission-control board (operator seat; alias: cc/board)
   ${out.cyan('upgrade')}  [version]       Upgrade agent-tempo to latest (or specific version)
+  ${out.cyan('upgrade-to-2')}             Cut over 1.x → 2.0: pause, drain, snapshot, then destroy all workflows (--dry-run / --yes / --force-drain)
   ${out.cyan('config')}                   Configure Temporal connection settings
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('install-pi')}               Install the Pi extensions into Pi settings (or --project for .pi/settings.json)
@@ -84,7 +85,8 @@ ${out.bold('Other options:')}
   --keep-daemon                Don't stop the worker daemon (down only)
   --destroy                    Also terminate every workflow (down only)
   --kill-shared-temporal       Tear down the Temporal dev server even if the other profile is active (down only, #423)
-  -y, --yes                    Skip confirmation prompt (down --destroy, destroy)
+  -y, --yes                    Skip confirmation prompt (down --destroy, destroy, upgrade-to-2)
+  --force-drain                Proceed past a non-empty outbox drain, recording stragglers in the snapshot (upgrade-to-2, #785)
   --lineup <name|file>         Load ensemble lineup by name or file path (up)
   --scenario <name|path>       Force every mock player in the lineup into mockMode:scripted with this scenario (dev-mode-only, up + --lineup)
   --no-hold                    Skip startup hold (requires --lineup on up)
