@@ -57,7 +57,7 @@ const summary = (over: Partial<PlayerSummaryV1>): PlayerSummaryV1 =>
 const addPlayer = (c: Controller, id: string) =>
   applyTempoEvent(c.model, { v: 1, eventId: `0:${++seq}`, type: 'player.added', payload: summary({ playerId: id }) } as unknown as TempoEvent);
 
-// ── #821 — /play release parsing + /resume + residual-HELD note ──
+// ── #821/#833 — /play release parsing + /unpause + residual-HELD note ──
 
 describe('#821 parseReleaseArg', () => {
   it('treats the bare word `release` and the key:val forms as true', () => {
@@ -154,16 +154,16 @@ describe('#822 Controller.cmdCue — ⚠ on a detached target (daemon-reported)'
   });
 });
 
-describe('#821 Controller — /resume + /play residual-HELD', () => {
-  it('cmdResume POSTs play{release:true} (clears both axes)', async () => {
+describe('#821/#833 Controller — /unpause + /play residual-HELD', () => {
+  it('cmdUnpause POSTs play{release:true} (clears both axes)', async () => {
     const fake = new FakeFetch();
     const c = new Controller('ens', actions(fake));
     const ctx = fakeCtx();
-    await c.cmdResume('', ctx);
+    await c.cmdUnpause('', ctx);
     expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/play');
     expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ release: true });
     expect(ctx.notes[0]).to.contain('✓');
-    expect(ctx.notes[0]).to.contain('resume');
+    expect(ctx.notes[0]).to.contain('unpause');
   });
 
   it('cmdPlay release (key:val form) POSTs play{release:true}', async () => {
@@ -181,7 +181,7 @@ describe('#821 Controller — /resume + /play residual-HELD', () => {
     await c.cmdPlay('', ctx);
     expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({}); // release omitted
     expect(ctx.notes[0]).to.contain('HELD');
-    expect(ctx.notes[0]).to.contain('/resume');
+    expect(ctx.notes[0]).to.contain('/unpause');
   });
 
   it('cmdPlay (sources-only) with NO held players reports a plain ✓', async () => {
