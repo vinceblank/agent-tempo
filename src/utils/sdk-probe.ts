@@ -18,9 +18,11 @@
  *   - `src/adapters/opencode/adapter.ts` — module-load optional-dep gate
  *   - `src/tools/recruit.ts` — recruit pre-flight check
  *   - `src/pi/probe.ts` — Pi / Copilot-via-Pi pre-flight (presence + version floor)
+ *   - `src/daemon.ts` — host-profile available-agent advertisement
  */
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { spawnSync } from 'child_process';
 
 /**
  * Locate an installed package's `package.json` by walking `node_modules`
@@ -74,5 +76,30 @@ export function readSdkPackageVersion(pkgName: string, fromDir: string = __dirna
     return typeof parsed.version === 'string' ? parsed.version : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Check whether the `opencode` binary is on PATH. Used by the recruit
+ * pre-flight and daemon host-profile advertisement.
+ *
+ * Extracted from `src/tools/recruit.ts` so `src/daemon.ts` can import it
+ * without creating a circular dependency (daemon → tools would be circular;
+ * daemon → utils is fine).
+ *
+ * Cross-platform: `where` on Windows, `command -v` on POSIX. Both exit 0
+ * when found, non-zero otherwise; stdout/stderr captured silently.
+ */
+export function hasOpencodeCliOnPath(): boolean {
+  try {
+    const cmd = process.platform === 'win32' ? 'where' : 'command';
+    const args = process.platform === 'win32' ? ['opencode'] : ['-v', 'opencode'];
+    const result = spawnSync(cmd, args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      shell: process.platform !== 'win32', // POSIX needs the shell built-in
+    });
+    return result.status === 0;
+  } catch {
+    return false;
   }
 }

@@ -48,6 +48,8 @@ import {
   probeAdapterVersions,
   resolveCopilotSdkVersionSync,
 } from './daemon-adapter-versions';
+import { probeSdkInstall, hasOpencodeCliOnPath } from './utils/sdk-probe';
+import { checkPiNodeFloor, PI_PACKAGE } from './pi/probe';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
 const log = (...args: unknown[]) => console.error(`[agent-tempo:daemon ${new Date().toISOString()}]`, ...args);
@@ -304,14 +306,13 @@ function daemonVersion(): string {
  * Test-only dependency-injection seam for {@link computeHostProfile}.
  *
  * Production callers omit `deps` entirely; the defaults resolve to the
- * real probes in `daemon-adapter-versions.ts`. Tests inject stubs to
- * exercise installed-vs-not-installed scenarios deterministically
- * without touching the host filesystem. Mirrors the
- * `ProbeAdapterVersionsDeps` shape from `daemon-adapter-versions.ts`,
- * but only includes synchronous probes — `computeHostProfile` is sync
- * by contract.
+ * real probes. Tests inject stubs to exercise installed-vs-not-installed
+ * scenarios deterministically without touching the host filesystem or
+ * spawning subprocesses. All probes are synchronous — `computeHostProfile`
+ * is sync by contract.
  *
- * Added in #532 PR-2 for the copilot host-profile probe.
+ * Added in #532 PR-2 for the copilot probe; extended in #819 for pi,
+ * opencode, and claude-api probes.
  */
 export interface ComputeHostProfileDeps {
   /**
@@ -321,6 +322,42 @@ export interface ComputeHostProfileDeps {
    * `undefined` when missing or unresolvable.
    */
   resolveCopilotSdkVersionSync?: () => string | undefined;
+
+  /**
+   * #819 — Synchronous Pi availability probe. Default: checks Node ≥ 22.19
+   * floor via {@link checkPiNodeFloor} AND `@earendil-works/pi-coding-agent`
+   * install via {@link probeSdkInstall}. Returns `{ available: true }` when
+   * both pass, `{ available: false }` otherwise. Tests inject a stub to
+   * avoid filesystem walks and Node-version coupling.
+   */
+  probePiSync?: () => { available: boolean };
+
+  /**
+   * #819 — Synchronous opencode availability probe. Default: checks
+   * `@opencode-ai/sdk` install via {@link probeSdkInstall} AND
+   * `opencode` binary on PATH via {@link hasOpencodeCliOnPath}. Returns
+   * `true` when both pass. Tests inject a stub.
+   */
+  probeOpencodeSync?: () => boolean;
+
+  /**
+   * #819 — Synchronous claude-api availability probe. Default: checks
+   * `@anthropic-ai/sdk` install via {@link probeSdkInstall} AND
+   * `ANTHROPIC_API_KEY` in the daemon's process env. Returns `true` when
+   * both pass. Tests inject a stub.
+   *
+   * Note: the daemon inherits its env from the spawning process
+   * (`...process.env` in src/cli/daemon.ts). A user adding
+   * `ANTHROPIC_API_KEY` after the daemon is already running must restart
+   * the daemon for it to be advertised. This matches the adapter's runtime
+   * behaviour — `src/adapters/claude-api/adapter.ts` reads
+   * `process.env.ANTHROPIC_API_KEY` at activity execution time in the
+   * daemon process. Advertising without the key would be a false positive:
+   * cross-host recruit pre-flight passes but the adapter spawn fails
+   * immediately. SDK-only advertising (like copilot) was considered and
+   * rejected on this basis.
+   */
+  probeClaudeApiSync?: () => boolean;
 }
 
 /**
@@ -337,6 +374,16 @@ export function computeHostProfile(
 ): HostProfile {
   const resolveCopilotSync =
     deps.resolveCopilotSdkVersionSync ?? resolveCopilotSdkVersionSync;
+  // #819 — production defaults for new optional-adapter probes. Each default
+  // is a one-liner wrapping the real probe; tests inject stubs.
+  const probePiSyncFn = deps.probePiSync ??
+    (() => checkPiNodeFloor().ok && probeSdkInstall(PI_PACKAGE)
+      ? { available: true }
+      : { available: false });
+  const probeOpencodeSyncFn = deps.probeOpencodeSync ??
+    (() => probeSdkInstall('@opencode-ai/sdk') && hasOpencodeCliOnPath());
+  const probeClaudeApiSyncFn = deps.probeClaudeApiSync ??
+    (() => probeSdkInstall('@anthropic-ai/sdk') && !!process.env.ANTHROPIC_API_KEY);
   const agentTypes = (() => {
     try {
       return listAgentTypes().map((a) => a.name);
@@ -384,19 +431,48 @@ export function computeHostProfile(
     // require failures, but the boot path must not crash on any
     // surprise here.
   }
+  // #819 — pi probe. Delegates to `probePiSyncFn` (injected for tests;
+  // production default checks Node ≥ 22.19 floor + SDK install). Mirrors
+  // the recruit pre-flight: both conditions must pass before advertising.
+  try {
+    if (probePiSyncFn().available && !availableAgentTypes.includes('pi')) {
+      availableAgentTypes.push('pi');
+    }
+  } catch {
+    // Boot path must not crash on any probe failure.
+  }
+  // #819 — opencode probe. Delegates to `probeOpencodeSyncFn` (injected for
+  // tests; production default checks SDK install + `opencode` binary on PATH).
+  try {
+    if (probeOpencodeSyncFn() && !availableAgentTypes.includes('opencode')) {
+      availableAgentTypes.push('opencode');
+    }
+  } catch {
+    // Boot path must not crash on any probe failure.
+  }
+  // #819 — claude-api probe. Delegates to `probeClaudeApiSyncFn` (injected
+  // for tests; production default checks SDK install + ANTHROPIC_API_KEY in
+  // daemon env — see ComputeHostProfileDeps.probeClaudeApiSync for the policy
+  // rationale on why the env key is required here).
+  try {
+    if (probeClaudeApiSyncFn() && !availableAgentTypes.includes('claude-api')) {
+      availableAgentTypes.push('claude-api');
+    }
+  } catch {
+    // Boot path must not crash on any probe failure.
+  }
 
   return {
     hostname: os.hostname(),
     version: daemonVersion(),
     defaultAgent: config.defaultAgent,
-    // #520 + #532 PR-2 — was: `[config.defaultAgent]`. Now grows when
-    // the optional probes pass: `claude-code-headless` (when `claude`
-    // is on PATH AND logged in), `copilot` (when `@github/copilot-sdk`
-    // is installed). Future PRs can extend the same pattern for
-    // `claude-api` (probe `@anthropic-ai/sdk` install +
-    // ANTHROPIC_API_KEY env) and `opencode` (probe `@opencode-ai/sdk`
-    // install + `opencode` binary on PATH). Recording as an array
-    // keeps the wire shape forward-compatible.
+    // #520 + #532 PR-2 + #819 — was: `[config.defaultAgent]`. Now grows when
+    // the optional probes pass: `claude-code-headless` (when `claude` is on
+    // PATH AND logged in), `copilot` (when `@github/copilot-sdk` is installed),
+    // `pi` (when `@earendil-works/pi-coding-agent` installed + Node ≥ 22.19),
+    // `opencode` (when `@opencode-ai/sdk` installed + `opencode` on PATH),
+    // `claude-api` (when `@anthropic-ai/sdk` installed + ANTHROPIC_API_KEY in
+    // daemon env). Recording as an array keeps the wire shape forward-compatible.
     availableAgentTypes,
     availablePlayerTypes: agentTypes,
     claudeBin: config.claudeBin,
