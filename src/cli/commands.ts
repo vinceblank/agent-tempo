@@ -29,7 +29,7 @@ import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfi
 // #700 P1 — infra bootstrap moved to a shared helper (CLI `up` + `/ensemble-up`).
 import { ensureInfra, isTemporalReachable, registerSearchAttributes, DEFAULT_DB_PATH } from './ensure-infra';
 import { createTempoClient } from '../client';
-import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyBanner, ensembleReadyDirective } from '../constants';
+import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyDirective } from '../constants';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
 import * as out from './output';
 
@@ -702,7 +702,10 @@ async function start(opts: StartOpts) {
   out.log(`\nCheck status: ${out.dim('agent-tempo status ' + opts.ensemble)}`);
   if (startLineup && startInitialStartup) {
     console.log();
-    out.log(`  ${ensembleReadyBanner(startLineup.name, startLineup.players.length)}`);
+    // #832 — name the RESOLVED ensemble (opts.ensemble), not the lineup's `name:`.
+    const [readyLine, connectLine] = formatEnsembleReadyLines(opts.ensemble, startLineup.name, startLineup.players.length);
+    out.success(readyLine);
+    out.log(`  ${out.dim(connectLine)}`);
   }
 }
 
@@ -1109,6 +1112,30 @@ interface UpOpts extends CliOverrides {
   scenario?: string;
 }
 
+/**
+ * #832 — the operator-facing "ensemble ready" lines for `up` / `conduct`.
+ *
+ * Keyed on the RESOLVED ensemble name (what `command-center` / `status` take —
+ * `--ensemble` flag > positional > env > `default`), NOT the lineup's `name:`
+ * field. The two diverge whenever any of those overrides the lineup name, so the
+ * old `Ensemble <lineup-name> is ready` line named a thing the operator can't
+ * actually `connect` to. Surfaces the connect command so the next step is one
+ * copy-paste away. Pure + exported for unit testing (the surrounding `up` does
+ * I/O and isn't unit-testable). The shared markdown {@link ensembleReadyBanner}
+ * stays lineup-keyed for the conductor's seeded directive (a different surface).
+ */
+export function formatEnsembleReadyLines(
+  ensemble: string,
+  lineupName: string,
+  playerCount: number,
+): [readyLine: string, connectLine: string] {
+  const plural = playerCount === 1 ? '' : 's';
+  return [
+    `Ensemble "${ensemble}" is ready (from lineup ${lineupName}). ${playerCount} player${plural} on standby.`,
+    `Connect: agent-tempo command-center ${ensemble}`,
+  ];
+}
+
 export async function up(opts: UpOpts) {
   const config = getConfig(opts);
 
@@ -1460,7 +1487,10 @@ export async function up(opts: UpOpts) {
   // nothing is deferred — we only surface the banner on initial-startup paths.
   if (lineup && initialStartup) {
     console.log();
-    out.log(`  ${ensembleReadyBanner(lineup.name, lineup.players.length)}`);
+    // #832 — name the RESOLVED ensemble (opts.ensemble), not the lineup's `name:`.
+    const [readyLine, connectLine] = formatEnsembleReadyLines(opts.ensemble, lineup.name, lineup.players.length);
+    out.success(readyLine);
+    out.log(`  ${out.dim(connectLine)}`);
   }
   console.log();
 }
