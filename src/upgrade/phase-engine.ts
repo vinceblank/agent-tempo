@@ -229,8 +229,19 @@ export async function runUpgradeToV2(
     return { status: 'done', phase: 'done', snapshot: existing };
   }
   if (existing && phaseRank(existing.phase) >= phaseRank('snapshot')) {
+    // Resume: skip re-capture, continue destroy. The skip is deliberate and
+    // uniform across phase=snapshot AND phase=destroy resumes:
+    //   - On a phase=destroy resume the cluster is already partially torn down,
+    //     so RE-capturing would risk snapshotting a half-destroyed cluster —
+    //     exactly why skipping is the correct (safe) behavior.
+    //   - On a phase=snapshot resume the cluster is still intact, so we *could*
+    //     re-capture fresher state slots — but we skip uniformly for
+    //     simplicity/safety rather than branch on the phase.
+    // DISPATCH state cannot have moved (pause is durable + re-asserted below);
+    // `stateSlots` stays best-effort point-in-time from the ORIGINAL capture —
+    // a live player's `save_state` (pause-exempt) is not re-read on resume.
     log(`[upgrade] resuming from a durable snapshot (phase=${existing.phase}).`);
-    log('[upgrade] skipping capture (pause is still in effect; state cannot have moved) — continuing DESTROY.');
+    log('[upgrade] skipping re-capture (dispatch frozen; stateSlots best-effort from original capture) — continuing DESTROY.');
     await reassertPause(deps, existing.ensembles.map((e) => e.name));
     return await destroyAndFinish(deps, existing, { queryTimeoutMs });
   }
