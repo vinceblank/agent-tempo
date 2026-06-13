@@ -148,7 +148,7 @@ agent-tempo                    # launch TUI (auto-provisions on first run)
 agent-tempo up [ensemble]      # provision infrastructure and launch conductor
 agent-tempo down [--destroy]   # tear down infrastructure (--destroy also terminates workflows)
 agent-tempo status [ensemble]  # list active sessions
-agent-tempo destroy <ensemble> # terminate all sessions in an ensemble
+agent-tempo destroy [ensemble] # terminate all sessions in an ensemble (defaults to "default")
 agent-tempo restore <ensemble> # restore orphaned sessions on this host
 agent-tempo hosts              # list daemons polling this Temporal namespace (--all/--json)
 agent-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)

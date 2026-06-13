@@ -17,7 +17,7 @@ agent-tempo <command> [options]
 | `init` | Register agent-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
-| `destroy <ensemble> [-y]` | Terminate every workflow in an ensemble — ordered shutdown via outbox drain. Prompts for typed confirmation; `-y` skips. |
+| `destroy [ensemble] [-y]` | Terminate every workflow in an ensemble — ordered shutdown via outbox drain. Resolves the ensemble via the shared resolver (`--ensemble` flag > positional > env > `default`); with no arguments, targets `default`. Prompts for typed confirmation; `-y` skips. |
 | `attachment-info <name>` (alias: `attachment`) | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
 | `recall <name>` | Read a player's message history (#128). Flags: `--limit N` (default 20, max 100), `--offset N` (paging, default 0), `--preview N` (truncate bodies to N chars; omit for full text), `--from X` (sender filter for received), `--since ISO` (time filter), `--include-sent` (include outbound too), `--json` (emit raw `{received, sent, total, shown, hasMore, text}`). |
 | `hosts` | **#274.** List daemons polling this Temporal namespace with their advertised capabilities. Flags: `--all` includes stale hosts; `--json` emits raw `HostInfo[]`. Output matches MCP `hosts` tool and TUI `/hosts` (shared formatter). |
@@ -165,11 +165,15 @@ loudly rather than silently skipping termination.
 
 ### `agent-tempo destroy`
 
-Terminates every workflow in an ensemble via ordered shutdown (outbox drain). Prompts for typed confirmation; use `-y` to skip:
+Terminates every workflow in an ensemble via ordered shutdown (outbox drain). Prompts for typed confirmation; use `-y` to skip.
+
+The ensemble is resolved via the shared resolver (`--ensemble` flag > positional > env > `default`). When `--ensemble` and a positional differ, the flag wins and a warning is printed. With no arguments, `destroy` targets `default`.
 
 ```bash
-agent-tempo destroy myband        # terminate all sessions in "myband"
-agent-tempo destroy myband -y     # skip confirmation
+agent-tempo destroy myband              # terminate all sessions in "myband"
+agent-tempo destroy myband -y           # skip confirmation
+agent-tempo destroy                     # targets "default" (prompts for confirmation)
+agent-tempo destroy --ensemble myband   # explicit flag form
 ```
 
 ### `agent-tempo restore`
