@@ -88,7 +88,13 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
     await withWorkerAndRecruitActivities(async () => {
       const conductor = await startSession({ metadata: conductorMetadata({ ensemble }) });
       const soloist = await startSession({
-        metadata: playerMetadata({ ensemble, playerId: 'soloist', playerType: 'tempo-soloist', sessionId: 'sess-xyz' }),
+        metadata: playerMetadata({
+          ensemble,
+          playerId: 'soloist',
+          playerType: 'tempo-soloist',
+          sessionId: 'sess-xyz',
+          model: 'anthropic/claude-opus-4-7', // non-default recruit model (#785 freeze-fix)
+        }),
       });
 
       // #334 saveable-state slot — the continuity story.
@@ -141,6 +147,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       expect(soloistSnap!.stateSlots.handoff).to.equal('resume at phase 4');
       expect(soloistSnap!.sessionId).to.equal('sess-xyz');
       expect(soloistSnap!.playerType).to.equal('tempo-soloist');
+      expect(soloistSnap!.model).to.equal('anthropic/claude-opus-4-7');
       expect(soloistSnap!.isConductor).to.equal(false);
 
       const conductorSnap = ens!.players.find((p) => p.isConductor);

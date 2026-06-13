@@ -59,6 +59,7 @@ function sampleSnapshot(overrides: Partial<UpgradeSnapshot> = {}): UpgradeSnapsh
             hostname: 'box-1',
             gitRoot: '/repo',
             sessionId: 'sess-abc',
+            model: 'anthropic/claude-opus-4-7',
             isConductor: false,
             stateSlots: { handoff: 'pick up at phase 4' },
             undeliveredMessages: [

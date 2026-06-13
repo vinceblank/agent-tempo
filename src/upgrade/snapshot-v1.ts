@@ -167,6 +167,16 @@ export interface SnapshotPlayer {
   gitRoot?: string;
   /** Per-adapter conversation-resume pointer — survives the hop (issue #785). */
   sessionId?: string;
+  /**
+   * Non-default model the player was recruited with (the `model` arg of
+   * claude-api / opencode / pi recruits — #131 / #449 / #734). Captured so an
+   * ad-hoc-recruited player is recreated on the SAME model on the 2.0 side;
+   * absent for default-model players. Lineup players carry their model via the
+   * lineup instead, so this only closes the ad-hoc-recruit continuity gap.
+   * Additive optional field — added post-v1 without a version bump, per the
+   * compatibility law (the structural validator tolerates it).
+   */
+  model?: string;
   isConductor: boolean;
   /**
    * #334 saveable-state slots, `key → content`. This is the continuity story

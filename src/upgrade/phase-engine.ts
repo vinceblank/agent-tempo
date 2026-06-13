@@ -568,6 +568,10 @@ export async function captureSnapshot(
         hostname: metadata?.hostname ?? s.hostname,
         ...(opt(metadata?.gitRoot ?? s.gitRoot) && { gitRoot: metadata?.gitRoot ?? s.gitRoot }),
         ...(opt(metadata?.sessionId) && { sessionId: metadata?.sessionId }),
+        // Non-default recruit model (#785 freeze-fix) — read from the same
+        // metadata that carries sessionId/playerType; absent for default-model
+        // players. Closes the ad-hoc-recruit model-continuity gap.
+        ...(opt(metadata?.model) && { model: metadata?.model }),
         isConductor: s.isConductor,
         stateSlots,
         undeliveredMessages,
