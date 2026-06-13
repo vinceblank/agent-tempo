@@ -14,17 +14,17 @@ function ensemblesDir(): string {
 }
 
 /**
- * Save the current live ensemble state to a YAML lineup file.
- * Queries all running sessions and active schedules from Temporal.
+ * Reconstruct an {@link EnsembleLineup} from the live cluster — queries every
+ * running session's metadata + the ensemble's active schedules and folds them
+ * into the declarative recipe. Shared by {@link saveLineup} (which serializes
+ * it to YAML) and the `upgrade-to-2` snapshot capture (#785), which embeds the
+ * object inline. Single source of truth so the cutover's lineup fidelity tracks
+ * `save_lineup` exactly.
  */
-export async function saveLineup(
+export async function buildLineupFromCluster(
   client: Client,
   ensemble: string,
-  filePath?: string,
-  name?: string,
-): Promise<string> {
-  const outputPath = filePath || join(ensemblesDir(), `${name || ensemble}.yaml`);
-
+): Promise<EnsembleLineup> {
   // Query all running session workflows
   const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
   const players: EnsembleLineup['players'] = [];
@@ -33,7 +33,7 @@ export async function saveLineup(
   for await (const wf of client.workflow.list({ query })) {
     try {
       const handle = client.workflow.getHandle(wf.workflowId);
-      const [metadata, part] = await Promise.all([
+      const [metadata] = await Promise.all([
         handle.query('getMetadata').catch(() => ({})),
         handle.query('getPart').catch(() => ''),
       ]);
@@ -98,12 +98,27 @@ export async function saveLineup(
 
   // An empty `{}` satisfies the schema when no conductor session is live;
   // downstream consumers apply the field-level defaults.
-  const lineup: EnsembleLineup = {
+  return {
     name: ensemble,
     conductor: conductor ?? {},
     players,
     ...(schedules.length > 0 ? { schedules } : {}),
   };
+}
+
+/**
+ * Save the current live ensemble state to a YAML lineup file.
+ * Queries all running sessions and active schedules from Temporal.
+ */
+export async function saveLineup(
+  client: Client,
+  ensemble: string,
+  filePath?: string,
+  name?: string,
+): Promise<string> {
+  const outputPath = filePath || join(ensemblesDir(), `${name || ensemble}.yaml`);
+
+  const lineup = await buildLineupFromCluster(client, ensemble);
 
   // Ensure parent directory exists
   const parentDir = outputPath.substring(0, outputPath.lastIndexOf('/') >= 0 ? outputPath.lastIndexOf('/') : outputPath.lastIndexOf('\\'));

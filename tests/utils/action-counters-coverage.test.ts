@@ -22,6 +22,9 @@ const EXCLUDED = new Set([
   'cli/ensure-infra.ts',
   'cli/startup.ts',
   'cli/upgrade-command.ts',
+  // #785 — `upgrade-to-2` is an operator-invoked one-shot cutover verb; its
+  // Client volume is operator-bounded noise, same rationale as upgrade-command.
+  'cli/upgrade-to-2-command.ts',
   'tui/index.ts',
 ]);
 

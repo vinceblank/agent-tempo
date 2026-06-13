@@ -79,8 +79,13 @@ interface ParsedArgs {
    *  Also consumed by `migrate-from-claude-tempo --force` to bypass the
    *  conflict + volatile-state guards. */
   force: boolean;
-  /** `migrate-from-claude-tempo --dry-run` — print the migration plan without writing. */
+  /** `migrate-from-claude-tempo --dry-run` — print the migration plan without writing.
+   *  Also consumed by `upgrade-to-2 --dry-run` (#785) — print the would-be
+   *  snapshot + destroy list and exit before pausing. */
   dryRun?: boolean;
+  /** `upgrade-to-2 --force-drain` (#785) — proceed past a non-empty outbox
+   *  drain, recording the stragglers in the snapshot instead of stopping. */
+  forceDrain?: boolean;
   // #128 recall flags (generic enough to share with future commands).
   limit?: number;
   offset?: number;
@@ -193,7 +198,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.force = true;
     } else if (arg === '--dry-run') {
       // `migrate-from-claude-tempo --dry-run` — print the plan, write nothing.
+      // `upgrade-to-2 --dry-run` — print snapshot + destroy list, change nothing.
       result.dryRun = true;
+    } else if (arg === '--force-drain') {
+      // `upgrade-to-2 --force-drain` — proceed past a non-empty drain (#785).
+      result.forceDrain = true;
     } else if (arg === '--no-open') {
       // `dashboard --no-open` — print the URL without spawning a browser.
       result.noOpen = true;
@@ -402,6 +411,22 @@ async function main() {
       version: args.positional[1], // "0.20.0" | "latest" | undefined
       ...overrides,
     });
+    return;
+  }
+
+  if (args.command === 'upgrade-to-2') {
+    // #785 — the 1.x→2.0 cutover verb. Like `upgrade`, its command module
+    // dynamic-imports the Temporal-touching engine INSIDE a try/catch, so a
+    // broken SDK surfaces an actionable error instead of crashing cli.ts at
+    // import. Stays out of the `./cli/commands` graph above.
+    const { upgradeToV2Command } = await import('./cli/upgrade-to-2-command');
+    const code = await upgradeToV2Command({
+      yes: args.yes,
+      dryRun: args.dryRun,
+      forceDrain: args.forceDrain,
+      ...overrides,
+    });
+    process.exitCode = code;
     return;
   }
 
