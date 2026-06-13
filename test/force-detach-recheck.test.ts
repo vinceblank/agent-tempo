@@ -52,14 +52,19 @@ function makeGate() {
 async function withGatedHardTerminate<T>(
   gate: ReturnType<typeof makeGate>,
   hostname: string,
-  fn: () => Promise<T>,
+  fn: (hardTerminateCalls: () => number) => Promise<T>,
 ): Promise<T> {
   const connection = getNativeConnection();
   const bundle = getWorkflowBundle(); // cached by setupTestEnv (T0.6 accessor)
   const hostTaskQueue = `agent-tempo-${hostname}`;
   const taskQueue = mintTaskQueue();
 
+  // Invocation counter — the actual-harm pin (#810 QA): the kill must fire
+  // EXACTLY once, for the OLD claim; a second invocation would mean the
+  // update re-ran the kill against the fresh adapter's process.
+  let hardTerminateCallCount = 0;
   const gatedStub = async () => {
+    hardTerminateCallCount++;
     gate.markEntered();
     await gate.released;
     return { killedPids: [], strategy: 'none' as const, notes: ['gated stub'] };
@@ -80,7 +85,7 @@ async function withGatedHardTerminate<T>(
   return mainWorker.runUntil(async () => {
     const hostPromise = hostWorker.run();
     try {
-      return await fn();
+      return await fn(() => hardTerminateCallCount);
     } finally {
       hostWorker.shutdown();
       await hostPromise.catch(() => { /* cleanup */ });
@@ -101,7 +106,7 @@ describe('forceDetach post-await re-check (#798)', function () {
     const hostname = 'test-host';
     const ensemble = `fd-recheck-${Date.now()}`;
 
-    await withGatedHardTerminate(gate, hostname, async () => {
+    await withGatedHardTerminate(gate, hostname, async (hardTerminateCalls) => {
       const handle = await startSession({
         metadata: playerMetadata({
           playerId: 'recheck-alpha',
@@ -136,6 +141,10 @@ describe('forceDetach post-await re-check (#798)', function () {
       gate.release();
       const result = await updatePromise;
       expect(result.reaped, 'the re-check must refuse to clobber the fresh claim').to.equal(false);
+      // Actual-harm pin (#810 QA): the kill fired exactly ONCE — for the OLD
+      // claim. The reaped:false skip must not re-run hardTerminate against
+      // the fresh adapter's process.
+      expect(hardTerminateCalls()).to.equal(1);
 
       // The fresh claim survived.
       const info = await handle.query(attachmentInfoQuery);
@@ -154,7 +163,7 @@ describe('forceDetach post-await re-check (#798)', function () {
     const hostname = 'test-host';
     const ensemble = `fd-control-${Date.now()}`;
 
-    await withGatedHardTerminate(gate, hostname, async () => {
+    await withGatedHardTerminate(gate, hostname, async (hardTerminateCalls) => {
       const handle = await startSession({
         metadata: playerMetadata({
           playerId: 'recheck-control',
@@ -172,6 +181,7 @@ describe('forceDetach post-await re-check (#798)', function () {
         args: [{ reason: 'restart' as const, expectedAttachmentId: token.attachmentId, gracePeriodMs: 0 }],
       });
       expect(result.reaped).to.equal(true);
+      expect(hardTerminateCalls()).to.equal(1);
 
       const info = await handle.query(attachmentInfoQuery);
       expect(info.phase).to.equal('detached');
