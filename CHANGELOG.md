@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.7.0-beta.9] - 2026-06-13
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
 
 ### Fixed
 - **Daemon liveness survives a missing pid file (reliability, closes #811)** — if `~/.agent-tempo/daemon.pid` goes missing while a daemon is alive (a stop→start race could unlink it after a new daemon already bound the port), `isDaemonRunning()` now falls back to a **port-ownership probe**: a live daemon serving its bound port (from `daemon.port`) is detected even with no pid file. Previously this stranded every `agent-tempo-server` MCP launch into trying to start a *second* daemon, hitting `EADDRINUSE`, waiting 15s, and timing out the handshake — wedging all recruits on the host until the pid file was restored by hand (a ~2h outage on 2026-06-12). The daemon also now **re-asserts its pid file the moment it binds the port** (and on any #768 bind-retry recovery), so a racing unlink during a restart cycle self-heals. The detection fallback is read-only and gated on a file/operator-pinned port (a random process squatting the `8473` default is never mistaken for the daemon); part of the #758/#771 port-truth-over-stale-state ghost-hygiene arc.
