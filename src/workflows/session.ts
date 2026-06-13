@@ -1047,6 +1047,35 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       );
     }
 
+    // #798 — post-await re-check (V2 of the #782 audit): this update is
+    // async and non-atomic across the kill-await. If the OLD attachment was
+    // reaped while we awaited hardTerminate (lease expiry → main loop) and a
+    // FRESH claim landed, the unconditional null-out below would clobber the
+    // new attachment — and the kill we just ran may have hit the new
+    // adapter's process too (same host + player match; that half self-heals
+    // via the phase watcher → re-claim). Returning { reaped: false } keeps
+    // workflow state consistent with the surviving claim. The pre-await
+    // TOCTOU guard above cannot cover this window.
+    //
+    // The null case is covered too: currentAttachment === null here means
+    // the main-loop reaper already detached (and recorded its own
+    // lastAdapterMeta / lastDetachReason / detachedSince) while we awaited
+    // — skipping the block below intentionally preserves the reaper's
+    // metadata rather than re-running the detach idempotently.
+    //
+    // Marker (#798, architect-ruled on #782): the skipped branch contains
+    // upsertSearchAttributes COMMANDS, so an ungated skip would replay-
+    // mismatch any history that recorded the race — conservative tiebreak.
+    // Evaluated lazily (the v0.26-can-lease-from-attachment single-use
+    // precedent): only histories that hit forceDetach record the marker.
+    if (patched('v0.27-force-detach-recheck') && currentAttachment?.attachmentId !== reaped.attachmentId) {
+      workflowLog.info(
+        `forceDetach: attachment changed during hard-terminate await ` +
+        `(expected ${reaped.attachmentId}, now ${currentAttachment?.attachmentId ?? 'none'}) — ` +
+        `not clobbering the fresh claim`,
+      );
+      return { reaped: false };
+    }
     lastAdapterMeta = { hostname: reaped.hostname, adapterId: reaped.adapterId };
     lastDetachReason = reason;
     currentAttachment = null;
@@ -1425,6 +1454,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       return 'open';
     }
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S3 — the highest-value fence):
+    // setQualityGateSignal MUST register BEFORE evaluateGateCriteriaSignal.
+    // Buffered signals drain in registration order on a fresh/CAN'd run's
+    // first workflow task; consumer-first would silently drop evaluations
+    // against an empty `qualityGates` ('if (!gate) return') — a #777 repeat.
+    // Pinned by tests/conformance/registration-order-fence.test.ts.
     setHandler(setQualityGateSignal, ({ task, criteria, createdBy }) => {
       const existing = qualityGates.findIndex((g) => g.task === task);
       const gate: QualityGate = {
@@ -1441,6 +1476,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       }
     });
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S3): consumer half — must stay
+    // registered AFTER setQualityGateSignal (see the producer's fence above).
     setHandler(evaluateGateCriteriaSignal, ({ task, evaluations, evaluatedBy }) => {
       const gate = qualityGates.find((g) => g.task === task);
       if (!gate) return;
@@ -1460,6 +1497,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
 
     // ── Worktree Handlers ──
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S4): setWorktreeSignal MUST
+    // register BEFORE removeWorktreeSignal — inverted buffered drain would
+    // no-op the removal and resurrect the entry. Pinned by
+    // tests/conformance/registration-order-fence.test.ts.
     setHandler(setWorktreeSignal, (entry: WorktreeEntry) => {
       const existing = worktrees.findIndex((w) => w.player === entry.player);
       if (existing >= 0) {
@@ -1469,6 +1510,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       }
     });
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S4): consumer half — must stay
+    // registered AFTER setWorktreeSignal.
     setHandler(removeWorktreeSignal, (playerName: string) => {
       const idx = worktrees.findIndex((w) => w.player === playerName);
       if (idx >= 0) {
@@ -1486,6 +1529,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // completing/failing a fresh stage. Input override is a TEST KNOB only.
     const STAGE_RECONCILE_WINDOW_MS = input.stageReconcileWindowMs ?? 5 * 60_000;
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S2): setStageSignal MUST register
+    // BEFORE cancelStageSignal — inverted buffered drain would no-op the
+    // cancel and land the stage `active` (lost cancellation). (The
+    // playerReportSignal consumer above is the KNOWN exception: it registers
+    // first and is protected by the #777 reconciliation instead.) Pinned by
+    // tests/conformance/registration-order-fence.test.ts.
     setHandler(setStageSignal, ({ name, players, failurePolicy, createdBy }) => {
       const entry: StageEntry = {
         name,
@@ -1601,6 +1650,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       }
     });
 
+    // REGISTRATION-ORDER FENCE (#797 / #782 S2): consumer half — must stay
+    // registered AFTER setStageSignal.
     setHandler(cancelStageSignal, (name: string) => {
       const stage = stages.find((s) => s.name === name);
       if (stage && stage.status === 'active') {
