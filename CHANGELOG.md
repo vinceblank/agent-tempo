@@ -5,17 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.7.0-beta.9] - 2026-06-13
+## [1.7.0-beta.10] - 2026-06-13
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
 
 ### Added
-- **Command-center board observability — uniform write-command feedback + view reconciliation (closes #821, #822, #823)** — every mission-control board write command now delivers three guarantees: a **visible result line**, a **warn-on-undeliverable/no-op**, and a **persistent view that converges to actual state**. Concretely:
+
+- **Command-center board observability — uniform write-command feedback + view reconciliation (closes #821, #822, #823, PR #827)** — every mission-control board write command now delivers three guarantees: a **visible result line**, a **warn-on-undeliverable/no-op**, and a **persistent view that converges to actual state**. Concretely:
   - **#821 — one obvious resume.** New **`/resume`** command clears BOTH suspension axes (PAUSE + per-player HELD) in one shot — no more `play` then `play release:true` two-step. `/play` stays sources-only (the two-axis primitive is unchanged at the CLI/daemon/MCP level — a deliberate board-UX-only choice) but now (a) accepts `release` / `release:true` / `release: true` forms, and (b) when a sources-only `/play` leaves players HELD, the ack names the residual axis ("…but players are still HELD — use /resume"). The board banner hint is corrected from the wrong `release: true` syntax to `resume: /resume (or /play release)`.
   - **#822 — no more false `✓` on a cue to a detached player.** The daemon's maestro-outbox write endpoints (`/cue`, `/ask`, `/reset`, and `/handoff` which routes through `/cue`) now run a bounded (1s), soft-failing **phase preflight** and return the target's deliverability (`delivery: 'live' | 'queued'`, plus `phase` + `warning` when queued). **Warn-but-queue**: the message ALWAYS enqueues durably (auto-redelivers on re-attach) — the board just renders `⚠ queued (detached — delivers on re-attach)` instead of `✓`. Mirrors the MCP `cue` tool's `UNDELIVERABLE_PHASES = {detached, gone}`, but warns rather than hard-fails (operator surface vs autonomous LLM — a deliberate, documented divergence). This also closes the latent siblings the original report didn't test: `/ask`, `/handoff`, and `/reset` shared the same gap.
   - **#823 — the board converges after destroy / stream loss.** The board model gained a 4-state `connection` axis (`connecting | live | reconnecting | gone`) driven by the coarse-SSE loop: a hard 404 (the per-ensemble maestro is gone) → **`gone`** clears the roster and shows "ENSEMBLE DESTROYED"; a transient drop / 401 → **`reconnecting`** keeps last-known rows under a loud banner (with the 401 auth hint) and self-heals on reconnect. A successful board-initiated `/ensemble-down --destroy` ALSO clears the view optimistically. No more frozen "9 players still alive" after a teardown.
   - **Persistent feedback.** All write-command acks (`✓`/`⚠`/`✗`) now fold into a bounded command-log footer on the board widget instead of vanishing as ephemeral toasts.
   - **Known limitation (tracked in #826):** hard-404 `gone` detection relies on the fetch SSE transport; a tokenless loopback board on Node ≥ 22 may use native `EventSource`, which silently retries a 404 instead of surfacing it. Board-initiated destroy is covered by the optimistic clear regardless; an *external* destroy on that specific config degrades to `reconnecting` rather than `gone`.
+
+### Fixed
+
+- **`command-center` role now deterministic — no longer hijacks the conductor (closes #820, PR #824)** — `buildPiCommandCenterSpawn` previously omitted `PLAYER_NAME`/`CONDUCTOR` from the child env but never *cleared* an inherited value; launching `command-center` from an ensemble shell leaked `PLAYER_NAME` into the child, causing `resolvePiRole` to resolve `player`, silently activating the player extension instead of the board — and self-attaching as the conductor. Fix: spawn now sets `AGENT_TEMPO_PI_ROLE=command-center` (highest-precedence discriminator) and explicitly clears `AGENT_TEMPO_PLAYER_NAME`/`AGENT_TEMPO_CONDUCTOR`, making the role deterministic regardless of calling context. Additionally: `command-center` now detects missing Pi extension registration and auto-runs `install-pi` (or fails loudly with the fix command) before launching Pi — no more silent plain-session fallback on a fresh install. The positional `[ensemble]` argument is now correctly forwarded into the spawned session env.
+
+- **Pi, opencode, and claude-api adapters now advertised in `hostProfile` available agents when installed (closes #819, PR #830)** — the daemon's boot-time host-profile advertisement used a detection path that diverged from the recruit-preflight `sdk-probe`; Pi was correctly detected at recruit time but absent from `agent-tempo hosts`, causing the host pre-flight check to reject `recruit --agent pi` unless `force: true` was passed. The daemon now uses the same `sdk-probe` detection as the recruit path for all optional-dep adapters (pi, opencode, claude-api), so installed adapters are consistently surfaced in `hostProfile` and `agent-tempo hosts`.
+
+- **`up` suppresses stale "Next steps" output in automated flow + surfaces global MCP registration errors (closes #818, PR #829)** — when global MCP registration fell back to writing a project-level `.mcp.json`, the CLI printed a manual-setup "Next steps" block (`Start Temporal: …`, `Start conductor: …`) even though `up` had already started both. The block is suppressed when `up` orchestrates startup itself. Additionally, the previously-swallowed global MCP registration error is now surfaced with an actionable message; troubleshooting guidance added to docs.
+
+### Known issues / follow-ups
+
+- **#825** — `up --agent pi` double-load risk: `install-pi` registers the player extension globally; `up --agent pi` also passes it inline via `-e`. Verify there is no double-load interaction.
+- **#826** — Native `EventSource` (Node ≥ 22 loopback boards) silently retries a 404 instead of surfacing it as `gone`; board-initiated destroy is covered by optimistic clear, but external destroy degrades to `reconnecting`.
+- **#828** — Auto-re-arm behavior: follow-up tracked separately.
+
+## [1.7.0-beta.9] - 2026-06-13
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
 
 ### Fixed
 - **Daemon liveness survives a missing pid file (reliability, closes #811)** — if `~/.agent-tempo/daemon.pid` goes missing while a daemon is alive (a stop→start race could unlink it after a new daemon already bound the port), `isDaemonRunning()` now falls back to a **port-ownership probe**: a live daemon serving its bound port (from `daemon.port`) is detected even with no pid file. Previously this stranded every `agent-tempo-server` MCP launch into trying to start a *second* daemon, hitting `EADDRINUSE`, waiting 15s, and timing out the handshake — wedging all recruits on the host until the pid file was restored by hand (a ~2h outage on 2026-06-12). The daemon also now **re-asserts its pid file the moment it binds the port** (and on any #768 bind-retry recovery), so a racing unlink during a restart cycle self-heals. The detection fallback is read-only and gated on a file/operator-pinned port (a random process squatting the `8473` default is never mistaken for the daemon); part of the #758/#771 port-truth-over-stale-state ghost-hygiene arc.
