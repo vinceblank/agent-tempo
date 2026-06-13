@@ -209,6 +209,37 @@ describe('POST /v1/ensembles/:ensemble/cue', () => {
     expect(b.calls.find((c) => c.method === 'sendAsMaestro')).toBeDefined();
   });
 
+  // #834 — a cue to a DESTROYED / never-existed player has NO workflow, so
+  // `sendAsMaestro` throws `Player "<to>" not found in ensemble "<ens>"`. That's
+  // a 404 (typo'd name / torn-down player), NOT a 500.
+  it('404 player-not-found when sendAsMaestro throws "Player ... not found in ensemble ..."', async () => {
+    const b = await boot({
+      mock: { throws: { sendAsMaestro: new Error('Player "ghost" not found in ensemble "demo"') } },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'ghost', message: 'hi' });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('player-not-found');
+    expect(body.detail).toContain('ghost');
+  });
+
+  // #834 regression GUARD — a detached-but-Running player must NOT trip the new
+  // 404: its workflow still matches `sendAsMaestro`'s `ExecutionStatus =
+  // "Running"` query, so `sendAsMaestro` succeeds and the cue queues (202 +
+  // delivery:'queued'). Only an ABSENT workflow throws. This pins the #822/#827
+  // warn-but-queue contract against the #834 change (sendAsMaestro does NOT throw
+  // here — default mock returns undefined).
+  it('detached-but-Running target → still 202/queued (no #834 404 regression)', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'detached' } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/cue`, { to: 'tempo-conductor', message: 'hi' });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.queued).toBe(true);
+    expect(body.delivery).toBe('queued');
+    // The new player-not-found 404 did NOT fire — the cue still enqueued.
+    expect(b.calls.find((c) => c.method === 'sendAsMaestro')).toBeDefined();
+  });
+
   it('reset of a detached target → queued:true warning (cue-class sibling)', async () => {
     const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'detached' } } } });
     const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, { playerId: 'tempo-eng' });
