@@ -10,6 +10,13 @@ import { defineConfig } from 'vitest/config';
  * See issue #105 for the testing strategy breakdown.
  */
 export default defineConfig({
+  // `src/` is TypeScript-only. Resolve `.ts` ahead of `.js` so a stray
+  // compiled artifact (e.g. an editor/`tsc` run that drops `src/**/*.js`)
+  // can never shadow the real source — Vite's default order puts `.js`
+  // first, which silently serves stale exports to the suite (#839).
+  resolve: {
+    extensions: ['.ts', '.mts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
+  },
   test: {
     include: [
       'tests/tui/**/*.test.ts',
