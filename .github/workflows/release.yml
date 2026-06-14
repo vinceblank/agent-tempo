@@ -53,7 +53,7 @@ jobs:
         # leaves stale `.downloading` lock files and trips the 20s timeout (#694 / #642).
         # Mirrors the same step in ci.yml build-and-test — must stay in sync.
         # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/temporal-sdk-typescript-1.15.0  # update on @temporalio/testing bump
           key: temporal-test-server-linux-1.15.0     # update on @temporalio/testing bump

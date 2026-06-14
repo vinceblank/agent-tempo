@@ -128,7 +128,7 @@ jobs:
           cache: npm
 
       - name: Cache dashboard/node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dashboard/node_modules
           key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
@@ -220,7 +220,7 @@ jobs:
           cache: npm
 
       - name: Cache dashboard/node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dashboard/node_modules
           key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
@@ -232,7 +232,7 @@ jobs:
         # run would dwarf the test wall-clock. Keyed on the lockfile
         # so a Playwright bump (which usually pins a chromium SHA)
         # invalidates the cache.
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ hashFiles('dashboard/package-lock.json') }}
@@ -262,7 +262,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: dashboard/playwright-report/
@@ -294,7 +294,7 @@ jobs:
           cache: npm
 
       - name: Cache dashboard/node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dashboard/node_modules
           key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
@@ -302,7 +302,7 @@ jobs:
             dashboard-node-modules-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ hashFiles('dashboard/package-lock.json') }}
@@ -329,7 +329,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-overflow-report
           path: dashboard/playwright-report/
@@ -379,7 +379,7 @@ jobs:
         # leaves stale `.downloading` lock files and trips the 20s timeout (#694 / #642).
         # Cache key includes SDK version so a @temporalio/testing bump auto-invalidates.
         # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/temporal-sdk-typescript-1.15.0  # update on @temporalio/testing bump
           key: temporal-test-server-linux-1.15.0     # update on @temporalio/testing bump
@@ -415,7 +415,7 @@ jobs:
 
       - name: Upload shard wall-clock artifact
         if: success() && steps.mocha.outputs.duration != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: shard-walltime-${{ matrix.shard }}-${{ matrix.node-version }}
           path: shard-walltime/
@@ -447,7 +447,7 @@ jobs:
     name: shard-drift-check
     steps:
       - name: Download all shard wall-clock artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: shard-walltime
           pattern: shard-walltime-*
@@ -598,7 +598,7 @@ jobs:
         # Path uses ${{ env.TEMP }} which maps to os.tmpdir() on Windows runners (not
         # runner.temp which is a different Actions-specific dir).
         # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.TEMP }}\temporal-sdk-typescript-1.15.0.exe  # update on @temporalio/testing bump
           key: temporal-test-server-windows-1.15.0                  # update on @temporalio/testing bump
