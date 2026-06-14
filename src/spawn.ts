@@ -299,7 +299,18 @@ export function writeSecretEnvFile(
   if (opts.syntax === 'fish') {
     content = keys.map((k) => `set -gx ${k} ${fishQuote(secretEnv[k])}`).join('\n') + '\n';
   } else if (opts.syntax === 'cmd') {
-    content = keys.map((k) => `set "${k}=${cmdEscape(secretEnv[k])}"`).join('\r\n') + '\r\n';
+    // #847 — `@`-prefix EVERY line at the GENERATOR level (a structural map, not a
+    // per-line author choice). cmd `call`s this file into the persistent `cmd /k`
+    // session under its default echo-ON, which echoes each line of a called batch
+    // FILE to the terminal — so an un-prefixed `set "ANTHROPIC_API_KEY=…"` printed
+    // the SECRET VALUE to scrollback (the #847 leak; #689 had closed only the
+    // command-line/history vector). The per-line `@` is self-contained: unlike
+    // `@echo off`, it does NOT persist echo state to the caller (`call` shares the
+    // parent echo scope, and neither `call` nor `setlocal` scopes echo), so the
+    // trailing `del`, the bin launch, and the user's prompt still echo normally.
+    // Mapping at the generator means any FUTURE non-`set` line is suppressed too.
+    const lines = keys.map((k) => `set "${k}=${cmdEscape(secretEnv[k])}"`);
+    content = lines.map((line) => `@${line}`).join('\r\n') + '\r\n';
   } else {
     content = keys.map((k) => `export ${k}=${shellQuote(secretEnv[k])}`).join('\n') + '\n';
   }
