@@ -119,9 +119,15 @@ export async function resolveSession(
  * Reads the session workflow by its *derived* id
  * (`agent-session-{ensemble}-{playerName}`) via a single bounded
  * `describe()` — a primary-key lookup that bypasses the eventually-
- * consistent visibility index. Returns the handle only when the execution
- * is `RUNNING` and not already torn down; otherwise `null` (genuinely
- * absent, terminated, gone, renamed-false-negative, or describe timed out).
+ * consistent visibility index. Returns the handle whenever the execution
+ * is `RUNNING`; otherwise `null` (genuinely absent, terminated/completed,
+ * renamed-false-negative, or describe timed out).
+ *
+ * Deliberately RUNNING-only — NO attachment-phase filter (#845 JC2): a
+ * `gone` player has a LIVE workflow with a terminal adapter, which the
+ * #822/#834 deliverability contract handles as warn-but-queue, not
+ * "not found". Filtering it here would regress #834 for the lagged-gone
+ * window and diverge from the main scan loop (which has no phase filter).
  */
 async function resolveByDerivedId(
   client: Client,
@@ -144,17 +150,19 @@ async function resolveByDerivedId(
     const desc = await Promise.race([handle.describe(), timeout]);
 
     // Only a live (RUNNING) execution is a valid resolve target. A
-    // COMPLETED/TERMINATED status at this id means the player is gone (the
-    // id may even have been reused by a later run — describe returns the
-    // latest, and a non-running latest run is not a deliverable target).
+    // COMPLETED/TERMINATED latest run at this id means the player is gone,
+    // or the id was reused by a since-closed run → null. A RUNNING run
+    // under a reused id is legitimately the current player → return it.
+    //
+    // No attachment-phase filter (#845 JC2, architect ruling): the main
+    // scan loop returns the handle for ANY running session — phase=`gone`
+    // included — and #822/#834 treat `gone` as warn-but-QUEUE (the cue
+    // durably queues and auto-redelivers on re-attach), NOT "not found".
+    // Returning null for a lagged-`gone` player would bypass #822, re-
+    // introduce the false-not-found #834 fixed, and make resolution depend
+    // on visibility-index timing. The "don't deliver to a torn-down
+    // adapter" concern lives at the deliverability layer, not here.
     if (desc.status.name !== 'RUNNING') return null;
-
-    // Guard against resurrecting a torn-down player: a session in
-    // attachment phase `gone` has no live adapter to receive a cue/signal,
-    // even if its workflow execution is briefly still RUNNING during
-    // teardown. Treat it as absent.
-    if (getAttachmentPhase(desc) === 'gone') return null;
-
     return handle;
   } catch {
     // NotFound → genuinely absent (or the renamed∩lagged false-negative

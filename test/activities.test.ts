@@ -325,10 +325,13 @@ describe('resolveSession — Mode B index-lag fallback (#845)', function () {
     expect(result).to.be.null;
   });
 
-  it('does not resurrect a gone player: describe-by-id RUNNING but phase=gone → null', async function () {
-    // ID may have been reused; a session whose attachment phase is already
-    // `gone` has no live adapter, so it must not be a deliver target even if
-    // its workflow execution is briefly still RUNNING during teardown.
+  it('lagged-gone player: describe-by-id RUNNING (phase=gone) → returns HANDLE (cue enqueues via #822)', async function () {
+    // A `gone` player has a LIVE (RUNNING) workflow with a terminal adapter.
+    // The #822/#834 deliverability contract is warn-but-QUEUE, NOT
+    // not-found — so the resolver MUST return the handle (the cue then
+    // enqueues + auto-redelivers on re-attach). RUNNING-only, no phase
+    // filter: parity with the main scan loop, and resolution can't depend
+    // on visibility-index timing. (#845 JC2)
     const derivedId = 'agent-session-e1-alice';
     const client = lagClient({
       listed: [],
@@ -340,7 +343,8 @@ describe('resolveSession — Mode B index-lag fallback (#845)', function () {
       },
     });
     const result = await resolveSession(client as any, 'e1', 'alice');
-    expect(result).to.be.null;
+    expect(result).to.not.be.null;
+    expect(result!.workflowId).to.equal(derivedId);
   });
 
   it('a normal list match returns WITHOUT consulting describe-by-id', async function () {

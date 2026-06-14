@@ -82,10 +82,12 @@ export function buildEnsembleTool(
 
       let sessions: EnsembleSessionInfo[];
       let truncated = false;
+      let scanned = 0;
       try {
         const scan = await scanEnsembleSessionsWithStatus(client, config.ensemble);
         sessions = scan.sessions;
         truncated = scan.truncated;
+        scanned = scan.scanned;
       } catch (err) {
         return fail(`Error listing workflows: ${formatError(err)}`);
       }
@@ -93,11 +95,14 @@ export function buildEnsembleTool(
       // #845 Mode A — when the visibility scan hit its wall-clock deadline,
       // `sessions` is a PARTIAL roster. Surface that explicitly so an
       // operator never mistakes a mid-scan snapshot for the full ensemble
-      // (the incident: a 3/8 roster read as "5 players vanished").
+      // (the incident: a 3/8 roster read as "5 players vanished"). Report
+      // `scanned` (workflows enumerated before the deadline) rather than the
+      // shown-row count — the shown count is post scope/dormancy filtering,
+      // so "N shown" would understate how far the scan actually got.
       const partialBanner = truncated
-        ? `⚠ partial roster — ${sessions.length} shown; visibility scan hit its ` +
-          `${Math.round(VISIBILITY_DEADLINES_MS.scanEnsembleSessions / 1000)}s deadline ` +
-          `(likely worker warmup) — re-run to refresh.`
+        ? `⚠ partial roster — ${scanned} workflow(s) enumerated before the ` +
+          `${Math.round(VISIBILITY_DEADLINES_MS.scanEnsembleSessions / 1000)}s visibility deadline ` +
+          `(likely worker warmup); some players may be missing — re-run to refresh.`
         : undefined;
 
       // Apply scope filters
