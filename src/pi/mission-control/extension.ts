@@ -106,6 +106,14 @@ export interface MissionControlDeps {
    * `'player'` and `'none'` both keep it dormant.
    */
   role?: PiRole;
+  /**
+   * #826/#828 — override the coarse-stream subscribe factory (test seam).
+   * Defaults to {@link createSubscribe}. Lets a fake-timer test inject a mock
+   * `subscribe` generator to drive the watchdog + re-arm loop deterministically
+   * and assert the single-loop invariant (subscribe called exactly N times, not
+   * N+1). Production never sets it.
+   */
+  createSubscribeImpl?: typeof createSubscribe;
 }
 
 /**
@@ -956,7 +964,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       // board needs that to flip to `gone` / surface the auth hint. H5: omit baseUrl
       // → createSubscribe re-resolves the daemon port per (re)connect, so a daemon
       // restart on a new port self-heals.
-      const subscribe = createSubscribe({
+      const subscribe = (deps.createSubscribeImpl ?? createSubscribe)({
         forceFetch: true,
         ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
         ...(adminToken ? { token: adminToken } : {}),
