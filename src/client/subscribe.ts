@@ -103,6 +103,16 @@ export interface SubscribeDeps {
    */
   EventSourceImpl?: typeof EventSource;
   /**
+   * #826 — force the fetch transport even when a native `EventSource` is
+   * available and no token is set. The fetch path is the only one that
+   * surfaces a permanent **401/404** as a thrown {@link SubscribeHttpError};
+   * native `EventSource` swallows those into its own silent reconnect cycle.
+   * The mission-control board needs that hard-error visibility (404 → `gone`,
+   * 401 → auth hint), so it sets this. TUI / dashboard leave it unset and keep
+   * the auto-selection (native `EventSource` on a tokenless loopback board).
+   */
+  forceFetch?: boolean;
+  /**
    * Override sleep — used by tests to fast-forward backoff. Accepts an
    * `AbortSignal` so the wrapper can wake early on abort.
    */
@@ -301,6 +311,7 @@ interface InternalRunArgs extends RunArgs {
  * for `Authorization: Bearer …` and is the only option in Node 20.
  */
 function canUseEventSource(deps: SubscribeDeps): boolean {
+  if (deps.forceFetch) return false; // #826 — caller needs throw-on-permanent
   if (deps.token) return false;
   return resolveEventSource(deps) !== undefined;
 }

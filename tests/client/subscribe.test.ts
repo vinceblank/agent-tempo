@@ -697,6 +697,49 @@ describe('createSubscribe — transport selection (ADR 0010)', () => {
     expect(calls[0].headers.Authorization).toBe('Bearer sekret');
   });
 
+  // #826 — `forceFetch` overrides the auto-selection so the board gets the
+  // fetch path's hard-error visibility (throw on 401/404) even on a tokenless
+  // loopback board where native EventSource is available (Node ≥ 22).
+  it('forceFetch uses fetch even with EventSource available and no token', async () => {
+    MockEventSource.reset();
+    const { fetchImpl, calls } = makeScriptedFetch([
+      () => okStream(streamFromChunks([])),
+    ]);
+    const subscribe = createSubscribe({
+      baseUrl: 'http://test:1234',
+      fetchImpl,
+      sleep: instantSleep,
+      forceFetch: true,
+      EventSourceImpl: MockEventSource as unknown as typeof EventSource,
+    });
+    const ctrl = new AbortController();
+    await consumeBriefly(subscribe('demo', { signal: ctrl.signal }), ctrl);
+
+    // Native EventSource was NOT constructed — fetch owns the stream.
+    expect(MockEventSource.instances).toHaveLength(0);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].url).toBe('http://test:1234/v1/events/demo');
+  });
+
+  it('forceFetch surfaces a 404 as a thrown SubscribeHttpError (the #826 gone signal)', async () => {
+    MockEventSource.reset();
+    const fetchImpl: typeof fetch = async () =>
+      new Response('{"error":"ensemble-not-found"}', { status: 404 });
+    const subscribe = createSubscribe({
+      baseUrl: 'http://test:1234',
+      fetchImpl,
+      sleep: instantSleep,
+      forceFetch: true,
+      EventSourceImpl: MockEventSource as unknown as typeof EventSource,
+    });
+    const consume = async () => {
+      for await (const _ of subscribe('gone')) { /* noop */ }
+    };
+    await expect(consume()).rejects.toMatchObject({ name: 'SubscribeHttpError', status: 404 });
+    // Confirms it took the fetch path, not the (swallowing) EventSource path.
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
   it('falls back to fetch when EventSource is unavailable (Node default)', async () => {
     MockEventSource.reset();
     const { fetchImpl, calls } = makeScriptedFetch([
