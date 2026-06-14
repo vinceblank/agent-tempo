@@ -44,14 +44,15 @@ export const DEFAULT_TAIL_LIMIT = 200;
  *
  * - `'connecting'` — initial / post-rebind, before the first coarse event lands.
  * - `'live'` — at least one coarse event has arrived on the current connection.
- * - `'reconnecting'` — the coarse stream ENDED (a non-404 error, a 401, or a
- *   defensive normal-end) and the loop has exited. Rows are KEPT (rendered stale,
- *   not cleared). NOTE (#827 review): this is terminal-until-rebind today — the
- *   stream does NOT auto-resubscribe (genuine transient blips are swallowed
- *   INSIDE `createSubscribe`, so the board stays `'live'` through them). The
- *   renderer therefore labels it "STREAM ENDED … reopens on re-bind", not
- *   "reconnecting". Auto-re-arm with backoff is tracked in #828; restore the
- *   reconnecting wording if/when the loop re-subscribes on this transition.
+ * - `'reconnecting'` — the coarse stream ended OR went silent past the watchdog
+ *   threshold (#826), and the board is RE-ARMING. Rows are KEPT (rendered stale,
+ *   not cleared). #828: the extension now auto-re-subscribes with bounded
+ *   equal-jitter backoff (genuine transient blips are still swallowed INSIDE
+ *   `createSubscribe`, so the board only reaches here on a real stream-death).
+ *   The variant is carried on `connectionDetail` (no new enum value): an arming
+ *   detail → `[RECONNECTING]`, a settled detail (re-arm capped at 30s) →
+ *   `[STREAM DOWN]`, and the 401-auth path (which does NOT auto-re-arm — a
+ *   re-sub would just 401 again) keeps the `[STREAM ENDED]` + set-token hint.
  * - `'gone'` — a hard 404 on the per-ensemble stream: the ensemble's maestro is
  *   gone. {@link setConnection} CLEARS the player list on this transition and the
  *   extension STOPS the stream; the renderer shows "ENSEMBLE DESTROYED".

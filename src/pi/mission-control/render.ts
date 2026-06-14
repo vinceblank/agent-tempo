@@ -10,6 +10,19 @@ import type { InnerFrame } from '../inner-loop-publisher';
 const TAIL_RENDER_LINES = 12;
 
 /**
+ * #828 — `connectionDetail` sentinels that select the `reconnecting` sub-marker
+ * (the variant is carried on the model's `connectionDetail`, so NO new
+ * `BoardConnection` enum value is needed). The extension sets one of these while
+ * the coarse stream auto-re-arms:
+ * - {@link RECONNECT_ARMING_DETAIL} — still ramping (< settle threshold) → `[RECONNECTING]`
+ * - {@link STREAM_DOWN_DETAIL} — settled (re-arm capped at 30s, daemon still dead) → `[STREAM DOWN]`
+ * Any OTHER reconnecting detail (e.g. the 401 auth hint) renders as `[STREAM
+ * ENDED]` — that path does NOT auto-re-arm.
+ */
+export const RECONNECT_ARMING_DETAIL = 'attempting to reconnect…';
+export const STREAM_DOWN_DETAIL = 'retrying every 30s — /ensemble to rebind';
+
+/**
  * #836 — Pi's `InteractiveMode` hard-caps a widget at this many lines and, beyond
  * it, naively slices the top N and appends its own dev-speak `... (widget
  * truncated)` (mirrors `InteractiveMode.MAX_WIDGET_LINES`, verified 0.78.0). That
@@ -150,23 +163,34 @@ export function renderBoard(model: BoardModel, localHost?: string): string[] {
   // A dropped stream outranks PAUSED/HELD: the suspension flags below are then
   // last-known-only and the operator needs to know the view itself may be stale.
   //
-  // HONEST LABEL (#827 review): the `'reconnecting'` connection state does NOT
-  // auto-reconnect today — `createSubscribe` swallows genuine transient blips
-  // internally (the board stays `live` through them), so this state is only
-  // reached when the coarse stream has actually ended and the loop has exited.
-  // It reopens on an `/ensemble` re-bind, not on its own. We therefore label it
-  // "STREAM ENDED … reopens on re-bind" rather than the misleading "RECONNECTING"
-  // (shipping a reconnecting badge that doesn't reconnect is the exact
-  // misleading-feedback class this PR fixes). Auto-re-arm is tracked in #828;
-  // if/when the loop re-subscribes with backoff, restore the reconnecting wording.
+  // #828 — the coarse stream now AUTO-RE-ARMS (bounded-backoff re-subscribe), so
+  // the `reconnecting` state has three honest variants, discriminated by
+  // `connectionDetail` (no new `BoardConnection` enum value):
+  //   - arming  (re-arm in flight, < settle) → `[RECONNECTING]` "attempting to reconnect…"
+  //   - settled (re-arm capped at 30s, still dead) → `[STREAM DOWN]` "retrying every 30s"
+  //   - other detail (the 401 auth path — does NOT auto-re-arm) → `[STREAM ENDED]` + hint
+  // The #827 "STREAM ENDED, reopens on re-bind" honest-label note is now reversed
+  // for the arming/settled variants because re-arm is real (#828); only the 401
+  // path keeps the stream-ended wording (it genuinely needs a manual re-bind /
+  // new token).
   let marker = '';
   let what = '';
   if (model.connection === 'reconnecting') {
-    marker = ' · [STREAM ENDED]';
-    const tail = 'last-known state, reopens on /ensemble re-bind';
-    what = model.connectionDetail
-      ? `STREAM ENDED — ${model.connectionDetail}; ${tail}`
-      : `STREAM ENDED — coarse stream dropped; ${tail}`;
+    if (model.connectionDetail === RECONNECT_ARMING_DETAIL) {
+      marker = ' · [RECONNECTING]';
+      what = `RECONNECTING — ${RECONNECT_ARMING_DETAIL}`;
+    } else if (model.connectionDetail === STREAM_DOWN_DETAIL) {
+      marker = ' · [STREAM DOWN]';
+      what = `STREAM DOWN — ${STREAM_DOWN_DETAIL}`;
+    } else {
+      // 401 auth (or any non-re-arming reconnecting): the stream ended and only a
+      // manual re-bind / new token recovers it — keep the honest stream-ended copy.
+      marker = ' · [STREAM ENDED]';
+      const tail = 'last-known state, reopens on /ensemble re-bind';
+      what = model.connectionDetail
+        ? `STREAM ENDED — ${model.connectionDetail}; ${tail}`
+        : `STREAM ENDED — coarse stream dropped; ${tail}`;
+    }
   } else if (model.paused) {
     marker = ' · [PAUSED]';
     what = model.held ? 'ENSEMBLE PAUSED + HELD players' : 'ENSEMBLE PAUSED';

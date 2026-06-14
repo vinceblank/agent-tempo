@@ -32,7 +32,7 @@ import {
   type BoardModel,
   type CommandLevel,
 } from './board';
-import { renderBoard } from './render';
+import { renderBoard, RECONNECT_ARMING_DETAIL, STREAM_DOWN_DETAIL } from './render';
 import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './actions';
 import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
@@ -106,6 +106,14 @@ export interface MissionControlDeps {
    * `'player'` and `'none'` both keep it dormant.
    */
   role?: PiRole;
+  /**
+   * #826/#828 — override the coarse-stream subscribe factory (test seam).
+   * Defaults to {@link createSubscribe}. Lets a fake-timer test inject a mock
+   * `subscribe` generator to drive the watchdog + re-arm loop deterministically
+   * and assert the single-loop invariant (subscribe called exactly N times, not
+   * N+1). Production never sets it.
+   */
+  createSubscribeImpl?: typeof createSubscribe;
 }
 
 /**
@@ -212,6 +220,80 @@ export function classifyCoarseStreamEnd(
     if (err.status === 401) return { connection: 'reconnecting', detail: `auth rejected — set ${ADMIN_TOKEN_ENV}` };
   }
   return { connection: 'reconnecting' };
+}
+
+// ── #826/#828 — coarse-stream watchdog + auto-re-arm ───────────────────────
+
+/** #826 — watchdog poll cadence (how often we compare now − lastCoarseEventAt). */
+export const WATCHDOG_TICK_MS = 5_000;
+/**
+ * #826 — board-level staleness threshold. The daemon emits a `heartbeat` SSE
+ * event every ≤10s on a live `/v1/events` stream, so >35s of TOTAL silence
+ * (3.5× heartbeat) means the stream is wedged/dead — a half-open socket from a
+ * hard `agent-tempo down` (ECONNREFUSED / dead TCP), which neither a 404 nor
+ * force-fetch's INTERNAL retry surfaces (that loop reconnects forever, never
+ * throws). Sits ABOVE the fetch loop's 30s internal backoff cap, so a healthy
+ * cycling loop still receiving heartbeats never trips it — this gap IS the
+ * no-double-retry boundary (watchdog = safety net ABOVE the transport).
+ */
+export const COARSE_STALE_MS = 35_000;
+/** #828 re-arm backoff: base 1s, ×2, cap 30s. */
+const REARM_BASE_MS = 1_000;
+const REARM_MAX_MS = 30_000;
+/**
+ * #828 — after this many consecutive failed re-arms the board stops claiming
+ * it's actively "reconnecting" and settles to the honest "[STREAM DOWN] —
+ * retrying every 30s" wording. Re-arm itself NEVER stops (a permanently silent
+ * wedge is the #752 silent-wedge class); only the label changes. ~5 steps takes
+ * the backoff ramp to its 30s cap.
+ */
+export const REARM_SETTLE_THRESHOLD = 5;
+
+/**
+ * #828 — equal-jitter backoff for the Nth re-arm attempt: `b/2 + rand(0, b/2)`
+ * where `b = min(1s·2^attempt, 30s)`. `Math.random()` is fine here — this is
+ * client code, not workflow code (the determinism rule does not apply). Jitter
+ * spreads re-arms so a fleet of boards doesn't thundering-herd a recovering
+ * daemon. `randomFn` is injectable for deterministic tests.
+ */
+export function rearmDelayMs(attempt: number, randomFn: () => number = Math.random): number {
+  const b = Math.min(REARM_BASE_MS * 2 ** Math.max(0, attempt), REARM_MAX_MS);
+  return b / 2 + randomFn() * (b / 2);
+}
+
+/**
+ * #828 — the reconnecting sub-variant wording for the Nth re-arm attempt: still
+ * ramping (< {@link REARM_SETTLE_THRESHOLD}) → "attempting to reconnect…";
+ * settled (≥) → "retrying every 30s". Carried on the model's `connectionDetail`
+ * (NO new BoardConnection enum value) and read by the renderer to pick the
+ * marker. Pure + exported for unit testing.
+ */
+export function reconnectDetailForAttempt(attempt: number): string {
+  return attempt >= REARM_SETTLE_THRESHOLD ? STREAM_DOWN_DETAIL : RECONNECT_ARMING_DETAIL;
+}
+
+/**
+ * #828 — should a coarse stream-END auto-re-arm? Gate (architect ruling):
+ * - `null` (aborted teardown/rebind) → no
+ * - `gone` (404 — maestro torn down; a re-sub just 404s) → no (terminal by design)
+ * - `reconnecting` WITH a detail (the 401 auth path — tight-looping a
+ *   guaranteed-fail) → no; keep the set-token hint
+ * - `reconnecting` WITHOUT a detail (generic stream-drop / normal-end) → yes
+ * Pure + exported for unit testing.
+ */
+export function shouldRearmOnStreamEnd(
+  end: { connection: 'gone' | 'reconnecting'; detail?: string } | null,
+): boolean {
+  return end !== null && end.connection === 'reconnecting' && end.detail === undefined;
+}
+
+/**
+ * #826 — is the coarse stream stale (silent past {@link COARSE_STALE_MS})?
+ * `lastEventAt === 0` means "not connected yet" → never stale. Pure.
+ */
+export function isCoarseStale(lastEventAt: number, now: number): boolean {
+  if (lastEventAt === 0) return false;
+  return now - lastEventAt > COARSE_STALE_MS;
 }
 
 /**
@@ -797,6 +879,15 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     let renderTimer: ReturnType<typeof setInterval> | null = null;
     let lastRenderedRevision = -1;
     let activeCtx: McExtensionContext | null = null;
+    // #826/#828 — coarse-stream liveness + auto-re-arm state.
+    // `lastCoarseEventAt` is stamped on EVERY received coarse event (incl. the
+    // daemon's ≤10s `heartbeat`), so the watchdog measures true silence. `0` =
+    // not connected yet. `rearmAttempt` drives the #828 backoff + settle wording;
+    // `rearmTimer` is the single pending re-arm (one at a time — no stacking).
+    let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let rearmTimer: ReturnType<typeof setTimeout> | null = null;
+    let rearmAttempt = 0;
+    let lastCoarseEventAt = 0;
     // #790 — the CURRENT ensemble binding lives on `ctrl.model.ensemble`
     // (re-keyed by Controller.rebind BEFORE onRebind fires), so the SSE
     // closures below read it at (re)open time instead of capturing the
@@ -809,7 +900,54 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       activeCtx.ui.setWidget(WIDGET_KEY, renderBoard(ctrl.model, ctrl.localHost), { placement: 'aboveEditor' });
     };
 
+    // #823 — flip the board's connection state + render the banner immediately
+    // (don't wait for the throttle tick when the stream's liveness changes).
+    const markConnection = (state: 'live' | 'reconnecting' | 'gone', detail?: string): void => {
+      setConnection(ctrl.model, state, detail);
+      renderNow();
+    };
+
+    // #828 — cancel the single pending re-arm timer (idempotent).
+    const cancelRearm = (): void => {
+      if (rearmTimer) { clearTimeout(rearmTimer); rearmTimer = null; }
+    };
+
+    // #828 — schedule the next coarse re-arm with bounded equal-jitter backoff.
+    // At most ONE pending at a time (the `rearmTimer` guard stops the watchdog and
+    // a stream-end both stacking re-arms). Reflects the arming/settled wording on
+    // the banner immediately, then re-opens the stream after the delay. NEVER
+    // gives up — the delay caps at 30s and `rearmAttempt` keeps the cadence there.
+    const scheduleRearm = (): void => {
+      if (rearmTimer) return;
+      markConnection('reconnecting', reconnectDetailForAttempt(rearmAttempt));
+      const delay = rearmDelayMs(rearmAttempt);
+      rearmAttempt++;
+      rearmTimer = setTimeout(() => {
+        rearmTimer = null;
+        startCoarse(); // aborts the old/wedged loop at its top, opens a fresh one
+      }, delay);
+      if (typeof rearmTimer.unref === 'function') rearmTimer.unref();
+    };
+
+    // #828 — apply a classified coarse stream-END to the board. A generic
+    // stream-drop re-arms (backoff); `gone` (404) is terminal (clear roster +
+    // cancel any pending re-arm); a 401 keeps the auth hint WITHOUT auto-re-arm
+    // (tight-looping a guaranteed-fail). `null` = aborted teardown/rebind/re-arm.
+    const handleStreamEnd = (
+      end: { connection: 'gone' | 'reconnecting'; detail?: string } | null,
+    ): void => {
+      if (!end) return;
+      if (shouldRearmOnStreamEnd(end)) { scheduleRearm(); return; }
+      if (end.connection === 'gone') cancelRearm();
+      markConnection(end.connection, end.detail);
+    };
+
     const startCoarse = (): void => {
+      // #828 — guarantee EXACTLY ONE coarse loop alive: abort any prior stream (a
+      // wedged one being re-armed, or one that just ended) before opening a fresh
+      // one. The aborted prior loop exits via classifyCoarseStreamEnd(_, true)→null
+      // (no state change). session_start's first call has none (abort is a no-op).
+      coarseAbort?.abort();
       // #54 — accurate posture: a tokenless board is FULLY functional against a
       // local (loopback) daemon, which grants full trust. Only a REMOTE / 0.0.0.0
       // daemon requires the admin token (it 401s tokenless reads + actions).
@@ -821,24 +959,33 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       // expected teardown abort log a spurious "coarse SSE ended: AbortError".
       const ac = new AbortController();
       coarseAbort = ac;
-      // H5: omit baseUrl → createSubscribe re-resolves the daemon port per
-      // (re)connect, so a daemon restart on a new port self-heals.
-      const subscribe = createSubscribe({
+      // #826 — FORCE the fetch transport: only it throws on a permanent 401/404
+      // (native EventSource swallows those into a silent reconnect cycle), and the
+      // board needs that to flip to `gone` / surface the auth hint. H5: omit baseUrl
+      // → createSubscribe re-resolves the daemon port per (re)connect, so a daemon
+      // restart on a new port self-heals.
+      const subscribe = (deps.createSubscribeImpl ?? createSubscribe)({
+        forceFetch: true,
         ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
         ...(adminToken ? { token: adminToken } : {}),
       });
-      // #823 — flip the board's connection state + render the banner immediately
-      // (don't wait for the throttle tick when the stream's liveness changes).
-      const markConnection = (state: 'live' | 'reconnecting' | 'gone', detail?: string): void => {
-        setConnection(ctrl.model, state, detail);
-        renderNow();
-      };
+      // #826 — fresh connect: reset the staleness clock so the watchdog measures
+      // silence on THIS attempt, not the gap accrued since the last dead stream.
+      lastCoarseEventAt = Date.now();
       void (async () => {
         try {
           for await (const ev of subscribe(ctrl.model.ensemble, { signal: ac.signal })) {
-            // #823 — the first event on this connection proves the stream is
-            // live (clears a prior reconnecting/connecting banner).
-            if (ctrl.model.connection !== 'live') markConnection('live');
+            // #826 — stamp liveness on EVERY received event (incl. the no-op
+            // `heartbeat` the daemon emits ≤10s) so the watchdog sees the pulse.
+            lastCoarseEventAt = Date.now();
+            // #823/#828 — the first event on this connection proves the stream is
+            // live: clear a prior reconnecting banner AND reset the re-arm backoff
+            // (a recovered stream starts the next failure's ramp from scratch).
+            if (ctrl.model.connection !== 'live') {
+              markConnection('live');
+              rearmAttempt = 0;
+              cancelRearm();
+            }
             // #700 P2 — an `answer` event isn't a board event; it WAKES the
             // planner (its only inbound channel is this SSE stream). Inject via
             // pi.sendMessage(triggerTurn) — feature-detected (a fake/older Pi
@@ -852,23 +999,40 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
             }
             applyTempoEvent(ctrl.model, ev);
           }
-          // #823 — the stream ENDED without throwing. In production `createSubscribe`
-          // only ends normally on abort (it auto-retries transient drops), so a
-          // non-aborted normal end is a defensive transient path → reconnecting.
-          const end = classifyCoarseStreamEnd(undefined, ac.signal.aborted);
-          if (end) markConnection(end.connection, end.detail);
+          // Stream ended without throwing — classify + (maybe) re-arm.
+          handleStreamEnd(classifyCoarseStreamEnd(undefined, ac.signal.aborted));
         } catch (err) {
-          // #823 — map the (permanent) stream error to a board connection state.
-          // Aborted teardown/rebind → null (no change, no spurious log).
+          // Map the (permanent) stream error to a board transition.
+          // Aborted teardown/rebind/re-arm → null (no change, no spurious log).
           const end = classifyCoarseStreamEnd(err, ac.signal.aborted);
           if (!end) return;
           log(
             end.connection === 'gone' ? 'coarse SSE — ensemble gone:' : 'coarse SSE ended:',
             err instanceof Error ? err.message : err,
           );
-          markConnection(end.connection, end.detail);
+          handleStreamEnd(end);
         }
       })();
+    };
+
+    // #826 — watchdog: a wedged/dead socket (half-open from a hard `agent-tempo
+    // down`) never throws and never ends the loop, so neither the 404 path nor
+    // force-fetch's internal retry catches it. Detect it by TOTAL silence past
+    // COARSE_STALE_MS (no heartbeat) and re-arm. Skips when already `gone`
+    // (terminal), in the 401 auth-ended state (no auto-re-arm by design — its
+    // connectionDetail is the auth hint, not an arming/settled marker), or when a
+    // re-arm is already pending (no stacking with the stream-end path).
+    const checkStale = (): void => {
+      if (ctrl.model.connection === 'gone') return;
+      if (
+        ctrl.model.connection === 'reconnecting' &&
+        ctrl.model.connectionDetail !== RECONNECT_ARMING_DETAIL &&
+        ctrl.model.connectionDetail !== STREAM_DOWN_DETAIL
+      ) return;
+      if (rearmTimer) return;
+      if (!isCoarseStale(lastCoarseEventAt, Date.now())) return;
+      log(`coarse stream stale — no daemon heartbeat for >${COARSE_STALE_MS / 1000}s; re-arming`);
+      scheduleRearm();
     };
 
     const openTail = (playerId: string | null): void => {
@@ -902,6 +1066,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     ctrl.onRebind = (): void => {
       coarseAbort?.abort(); coarseAbort = null;
       tailAbort?.abort(); tailAbort = null;
+      cancelRearm(); rearmAttempt = 0; // #828 — fresh ensemble: drop any pending re-arm + reset the backoff ramp
       startCoarse(); // reads the already-re-keyed ctrl.model.ensemble
       renderNow(); // show the re-keyed (empty) board immediately, not at the next throttle tick
     };
@@ -909,6 +1074,8 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     const teardown = (): void => {
       coarseAbort?.abort(); coarseAbort = null;
       tailAbort?.abort(); tailAbort = null;
+      cancelRearm(); // #828 — drop any pending re-arm
+      if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; } // #826
       if (renderTimer) { clearInterval(renderTimer); renderTimer = null; }
       if (activeCtx?.hasUI) activeCtx.ui.setWidget(WIDGET_KEY, undefined);
       activeCtx = null;
@@ -917,9 +1084,14 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.on('session_start', (_event, ctx) => {
       activeCtx = ctx;
       lastRenderedRevision = -1;
+      rearmAttempt = 0; // #828 — fresh session
       startCoarse();
       renderTimer = setInterval(renderNow, throttleMs);
       if (typeof renderTimer.unref === 'function') renderTimer.unref();
+      // #826 — coarse-stream staleness watchdog (catches a wedged/dead socket
+      // that never throws). `.unref()` so it can't keep the process alive.
+      watchdogTimer = setInterval(checkStale, WATCHDOG_TICK_MS);
+      if (typeof watchdogTimer.unref === 'function') watchdogTimer.unref();
       renderNow();
     });
     pi.on('session_shutdown', () => teardown());

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.0-beta.12] - 2026-06-14
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Fixed
+
+- **Command-center board: disconnect detection and auto-recovery (closes #826, #828)** — the board now detects daemon disconnects and recovers automatically:
+  - **Force-fetch transport** replaces native `EventSource` so the tokenless-loopback board on Node ≥ 22 correctly surfaces `404` (ensemble destroyed) and `401` (auth error) instead of silently retrying them.
+  - **35s staleness watchdog** catches daemon-death and wedged sockets that the transport can't detect (keyed off the daemon's existing ≤10s heartbeat cadence — no daemon changes).
+  - **Bounded-ramp-then-unbounded auto-re-arm**: the board reconnects automatically, ramping retry interval then settling at 30s.
+  - **Honest connection labels**: `[RECONNECTING]` (actively retrying) → `[STREAM DOWN]` (settled, retrying every 30s) / `ENSEMBLE GONE` (404 — ensemble was destroyed) / `[STREAM ENDED]` (401 — auth error). Fixes the board showing a stale frozen roster after the daemon dies.
+
+### Changed
+
+- **CI: GitHub Actions updated to Node 24–compatible action versions (#838)** — ahead of the GitHub-hosted runner Node 24 default cutover on June 16. No behavior change for local development.
+
+- **Test: vitest hardened against stray `src/**/*.js` build artifacts (#839)** — `vitest` could previously resolve `.js` build artifacts from `dist/` or a prior `tsc` run that shadow the `.ts` source files, causing tests to silently run against stale compiled code. A pre-run artifact check + `lint:no-stray-src-js` guard in `check:all` now catches this before it can mask a regression.
+
 ## [1.7.0-beta.11] - 2026-06-13
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
