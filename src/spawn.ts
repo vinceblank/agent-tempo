@@ -650,29 +650,11 @@ export function resolvePiInteractiveBinary(deps: {
   );
 }
 
-/**
- * Resolve the absolute path to the BUNDLED `dist/pi/extension.js` for `pi -e <abs>`
- * (#666). Pi loads the BUILT CommonJS extension even in dev. Mirrors
- * {@link resolvePiPath}'s dev/prod `__dirname` split: prod `__dirname` = `dist/`
- * (→ `dist/pi/extension.js`); dev `__dirname` = `src/` (→ sibling `dist/pi/…`).
- * Existence-checked + fail-clean ("run npm run build"). Injectable for tests.
- */
-export function resolvePiExtensionPath(deps: {
-  exists?: (p: string) => boolean;
-  isDev?: boolean;
-  baseDir?: string;
-} = {}): string {
-  const exists = deps.exists ?? existsSync;
-  const isDev = deps.isDev ?? __filename.endsWith('.ts');
-  const base = deps.baseDir ?? __dirname;
-  const extPath = isDev
-    ? resolve(base, '..', 'dist', 'pi', 'extension.js') // dev: src/ → repo/dist/pi/extension.js
-    : resolve(base, 'pi', 'extension.js');               // prod: dist/ → dist/pi/extension.js
-  if (!exists(extPath)) {
-    throw new Error(`Pi conductor extension not found at ${extPath}. Run \`npm run build\` first.`);
-  }
-  return extPath;
-}
+// #825 — `resolvePiExtensionPath` removed: `up --agent pi` no longer passes an
+// inline `pi -e <ext>` (it loads the player extension from settings.json, like
+// command-center), so nothing resolves a single extension path anymore. The
+// canonical extension-path resolver is now `piExtensionPaths()` in
+// `src/pi/install.ts` (install-by-reference into settings.json).
 
 /** Inputs for {@link buildPiConductorSpawn} (pure — unit-tested without spawning). */
 export interface PiConductorSpawnOpts {
@@ -687,18 +669,26 @@ export interface PiConductorSpawnOpts {
   conductorTypeName?: string;
   /** Forwarded if set (warn-not-fail upstream when unset). */
   anthropicApiKey?: string;
-  /** Injectable resolvers (default to the real ones, which fail-clean on miss). */
+  /** Injectable binary resolver (defaults to the real one, which fails-clean on miss). */
   resolveBinary?: () => { cmd: string; args: string[] };
-  resolveExtension?: () => string;
 }
 
 /**
  * Build the interactive Pi conductor spawn spec — `{ cmd, args, env }` for
  * {@link launchInTerminal} (#666 C3). PURE + injectable so the env/args mapping is
- * unit-tested. The default resolvers THROW fail-clean (binary missing / extension
- * unbuilt) BEFORE a terminal is launched. `args` = `[...binArgs, '-e', <ext>]`;
- * conductor INSTRUCTIONS arrive via the lineup-baked workflow messages → cue pump
- * (no `--system-prompt` for the MVP).
+ * unit-tested. The default binary resolver THROWS fail-clean (binary missing)
+ * BEFORE a terminal is launched.
+ *
+ * #825 — NO inline `-e <ext>`. `up --agent pi` now relies on the player extension
+ * being registered in Pi's `settings.json` (by `installPiExtensions`, guarded
+ * before launch in the `up` pi branch) + the `resolvePiRole`→`'player'` gate
+ * (`PLAYER_NAME` is set in the env below). This collapses the two Pi-launch paths
+ * onto ONE registration source, so no divergent on-disk copy (e.g. dev `node
+ * dist/cli.js`'s repo `dist/pi/extension.js` vs the global settings.json copy) can
+ * escape Pi's realpath-dedup and double-load the player factory. Mirrors
+ * {@link buildPiCommandCenterSpawn}. `args` = `[...binArgs]`; conductor
+ * INSTRUCTIONS arrive via the lineup-baked workflow messages → cue pump (no
+ * `--system-prompt` for the MVP).
  */
 export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
   cmd: string;
@@ -706,8 +696,8 @@ export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
   env: Record<string, string>;
 } {
   const { cmd, args: binArgs } = (opts.resolveBinary ?? resolvePiInteractiveBinary)();
-  const extPath = (opts.resolveExtension ?? resolvePiExtensionPath)();
-  const args = [...binArgs, '-e', extPath];
+  // #825 — single registration source: no inline `-e` (see the doc-comment above).
+  const args = [...binArgs];
   const env: Record<string, string> = {
     ...opts.temporalEnvVars,
     [ENV.TASK_QUEUE]: opts.taskQueue,
@@ -745,11 +735,19 @@ export interface PiCommandCenterSpawnOpts {
  * Build the interactive Pi COMMAND-CENTER (mission-control) spawn spec —
  * `{ cmd, args, env }` for {@link launchInTerminal} (#729). PURE + injectable.
  *
- * Unlike {@link buildPiConductorSpawn}, this passes NO `-e <ext>`: install-pi
- * registers BOTH Pi extensions in `~/.pi/agent/settings.json`, so a plain `pi`
- * auto-loads them and {@link resolvePiRole} (via the env below) picks exactly one.
- * Passing `-e` here would DOUBLE-LOAD mission-control (settings.json + `-e`) → a
- * command re-registration error. The env carries the OPERATOR subset only:
+ * Like {@link buildPiConductorSpawn} (post-#825), this passes NO `-e <ext>`:
+ * install-pi registers BOTH Pi extensions in `~/.pi/agent/settings.json`, so a
+ * plain `pi` auto-loads them and {@link resolvePiRole} (via the env below) picks
+ * exactly one.
+ *
+ * #825 (comment correction): a SAME-path `-e` would NOT cause a re-registration
+ * error — the #825 spike found Pi realpath-dedupes CLI `-e` paths against
+ * `settings.json` (`mergePaths` → `canonicalizePath`/`realpathSync`), and even an
+ * un-deduped duplicate is first-registration-wins at the tool layer (no throw,
+ * Pi 0.79.x). The real reason both spawn specs OMIT `-e` is a SINGLE registration
+ * source: it prevents a DIVERGENT on-disk copy (a different physical path that
+ * escapes realpath-dedup) from double-loading the extension factory. The env
+ * carries the OPERATOR subset only:
  *   - `AGENT_TEMPO_PI_ROLE=command-center` → the DETERMINISTIC role force (top of
  *     {@link resolvePiRole}'s precedence — beats an inherited `PLAYER_NAME`).
  *   - `AGENT_TEMPO_MISSION_CONTROL=1` → the role opt-in (kept for legacy parity /

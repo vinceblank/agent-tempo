@@ -8,6 +8,7 @@ import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn, sweepStaleSecretEnvFiles } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
+import { arePiExtensionsRegistered, installPiExtensions } from '../pi/install';
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME, bridgeLogPaths, bridgeLogsRoot } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
@@ -1397,10 +1398,34 @@ export async function up(opts: UpOpts) {
     if (!process.env.ANTHROPIC_API_KEY) {
       out.warn('ANTHROPIC_API_KEY is not set — the Pi conductor will fall back to Pi\'s own auth/default model. Set it if Pi needs an Anthropic key.');
     }
+    // #825 — extension-registration guard (mirrors command-center's #820 Bug-2
+    // guard). `up --agent pi` no longer passes an inline `-e` (that risked a
+    // divergent-copy double-load, #825); it now relies on the player extension
+    // being registered in Pi's settings.json. On a box that never ran `install-pi`,
+    // a plain `pi` would launch with NO extension — no claim/heartbeat, a silent
+    // non-conductor (the #820 Bug-2 failure, transplanted to the conductor). So
+    // auto-install idempotently before spawning; fail loud with the manual command
+    // if the write fails. (Checks the GLOBAL settings.json, like command-center; a
+    // user who ran `install-pi --project` still works — `pi` loads the project
+    // path and the same realpath dedupes, so the redundant global install is a
+    // harmless idempotent write, never a second load.)
+    if (!arePiExtensionsRegistered()) {
+      try {
+        const result = installPiExtensions();
+        out.log(out.dim(`  Registered the Pi extensions in ${result.settingsPath} (first-run install-pi).`));
+      } catch (err) {
+        out.error(
+          'Cannot start Pi conductor — the Pi extensions are not registered and auto-install failed: ' +
+          `${err instanceof Error ? err.message : String(err)}. Run \`agent-tempo install-pi\` manually, then retry.`,
+        );
+        process.exit(1);
+      }
+    }
     let piSpawn: { cmd: string; args: string[]; env: Record<string, string> };
     try {
-      // resolvePiInteractiveBinary / resolvePiExtensionPath throw fail-clean
-      // (Pi CLI missing / extension unbuilt) — caught here, no terminal launched.
+      // resolvePiInteractiveBinary throws fail-clean (Pi CLI missing) — caught
+      // here, no terminal launched. #825: no more `-e`/extension resolution — the
+      // player extension loads from settings.json, registered + guarded just above.
       piSpawn = buildPiConductorSpawn({
         ensemble: opts.ensemble,
         sessionName,
