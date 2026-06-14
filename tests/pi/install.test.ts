@@ -204,6 +204,27 @@ describe('arePiExtensionsRegistered (#820 — command-center launch guard)', () 
     writeSettings('not-an-array');
     expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
   });
+
+  // #825 — the `up --agent pi` guard checks the GLOBAL settings.json (mirroring
+  // command-center). A user who ran `install-pi --project` registers in the
+  // PROJECT `.pi/settings.json` only — the global check then returns false, so the
+  // guard installs to global too. That is SAFE, not a bug: both entries are the
+  // SAME absolute realpath, so Pi merge-dedups them and the player extension loads
+  // exactly ONCE. This test pins the location semantics the #825 fix relies on.
+  it('#825: project-only registration is NOT seen by the global check (→ safe redundant global install)', () => {
+    const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tempo-pi-reg-proj-'));
+    try {
+      installPiExtensions({ project: true, cwd: tmpCwd });
+      // The project install is detected at PROJECT scope...
+      expect(arePiExtensionsRegistered({ project: true, cwd: tmpCwd })).toBe(true);
+      // ...but NOT at GLOBAL scope (what the `up`/command-center guard checks),
+      // so the guard auto-installs globally. Both point at the same realpath →
+      // Pi loads the extension once (no double-load).
+      expect(arePiExtensionsRegistered({ home: tmpHome })).toBe(false);
+    } finally {
+      fs.rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('isAgentTempoExtensionPath (#738)', () => {
