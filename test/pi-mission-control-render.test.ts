@@ -3,7 +3,12 @@
  */
 import { expect } from 'chai';
 import { initBoard, applyTempoEvent, applyInnerFrame, selectPlayer, setConnection, pushCommandLog } from '../src/pi/mission-control/board';
-import { renderBoard, MAX_WIDGET_LINES } from '../src/pi/mission-control/render';
+import {
+  renderBoard,
+  MAX_WIDGET_LINES,
+  RECONNECT_ARMING_DETAIL,
+  STREAM_DOWN_DETAIL,
+} from '../src/pi/mission-control/render';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
 import type { InnerFrame } from '../src/pi/inner-loop-publisher';
 
@@ -150,6 +155,33 @@ describe('mission-control renderBoard', () => {
     const joined = renderBoard(m).join('\n');
     expect(joined).to.contain('STREAM ENDED');
     expect(joined).to.contain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+  });
+
+  // #828 — auto-re-arm is real now, so the reconnecting state has honest variants
+  // selected by connectionDetail (no new BoardConnection enum value).
+  it('reconnecting + arming detail → [RECONNECTING] (honest now that re-arm is real)', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'eng', part: 'building X' })));
+    setConnection(m, 'reconnecting', RECONNECT_ARMING_DETAIL);
+    const lines = renderBoard(m);
+    const joined = lines.join('\n');
+    expect(lines[0]).to.contain('[RECONNECTING]');
+    expect(joined).to.contain(RECONNECT_ARMING_DETAIL);
+    expect(joined).to.not.contain('[STREAM ENDED]');
+    expect(joined).to.not.contain('[STREAM DOWN]');
+    // Rows are retained (stale) under the banner during re-arm.
+    expect(joined).to.contain('eng');
+  });
+
+  it('reconnecting + settled detail → [STREAM DOWN] (re-arm capped, daemon still dead)', () => {
+    const m = initBoard('demo');
+    setConnection(m, 'reconnecting', STREAM_DOWN_DETAIL);
+    const lines = renderBoard(m);
+    const joined = lines.join('\n');
+    expect(lines[0]).to.contain('[STREAM DOWN]');
+    expect(joined).to.contain('retrying every 30s');
+    expect(joined).to.not.contain('[RECONNECTING]');
+    expect(joined).to.not.contain('[STREAM ENDED]');
   });
 
   it('shows no connection banner while connecting (normal startup) or live', () => {

@@ -13,7 +13,14 @@ import {
   parseReleaseArg,
   formatOutcome,
   classifyCoarseStreamEnd,
+  rearmDelayMs,
+  reconnectDetailForAttempt,
+  shouldRearmOnStreamEnd,
+  isCoarseStale,
+  REARM_SETTLE_THRESHOLD,
+  COARSE_STALE_MS,
 } from '../src/pi/mission-control/extension';
+import { RECONNECT_ARMING_DETAIL, STREAM_DOWN_DETAIL } from '../src/pi/mission-control/render';
 import { applyTempoEvent } from '../src/pi/mission-control/board';
 import { SubscribeHttpError } from '../src/client/subscribe';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
@@ -113,6 +120,72 @@ describe('#823 classifyCoarseStreamEnd', () => {
   });
   it('a normal stream-end (no error) → reconnecting', () => {
     expect(classifyCoarseStreamEnd(undefined, false)).to.deep.equal({ connection: 'reconnecting' });
+  });
+});
+
+// ── #826/#828 — coarse-stream watchdog + auto-re-arm decision logic ─────────
+
+describe('#828 shouldRearmOnStreamEnd (re-arm gate)', () => {
+  it('generic reconnecting (no detail) → re-arm', () => {
+    expect(shouldRearmOnStreamEnd({ connection: 'reconnecting' })).to.equal(true);
+  });
+  it('gone (404, maestro torn down) → NO re-arm (terminal)', () => {
+    expect(shouldRearmOnStreamEnd({ connection: 'gone' })).to.equal(false);
+  });
+  it('401 reconnecting WITH a detail (auth) → NO re-arm (would just 401 again)', () => {
+    expect(shouldRearmOnStreamEnd({ connection: 'reconnecting', detail: 'auth rejected — set X' })).to.equal(false);
+  });
+  it('aborted (null) → NO re-arm', () => {
+    expect(shouldRearmOnStreamEnd(null)).to.equal(false);
+  });
+});
+
+describe('#828 rearmDelayMs (equal-jitter backoff)', () => {
+  it('stays within [b/2, b] for the ramp (b = min(1s·2^n, 30s))', () => {
+    const cases: Array<[number, number]> = [
+      [0, 1_000], [1, 2_000], [2, 4_000], [3, 8_000], [4, 16_000], [5, 30_000], [9, 30_000],
+    ];
+    for (const [attempt, b] of cases) {
+      // Bound the jitter deterministically: randomFn=0 → b/2, randomFn≈1 → ~b.
+      expect(rearmDelayMs(attempt, () => 0)).to.equal(b / 2);
+      expect(rearmDelayMs(attempt, () => 0.999999)).to.be.lessThan(b + 1).and.greaterThan(b / 2);
+      // A real random value is always inside the band.
+      const d = rearmDelayMs(attempt, () => 0.5);
+      expect(d).to.be.at.least(b / 2).and.at.most(b);
+    }
+  });
+  it('caps at 30s from attempt 5 onward (never gives up — unbounded cadence at cap)', () => {
+    expect(rearmDelayMs(5, () => 0)).to.equal(15_000);   // 30s/2
+    expect(rearmDelayMs(50, () => 0)).to.equal(15_000);  // still capped, no overflow
+  });
+});
+
+describe('#828 reconnectDetailForAttempt (arming vs settled wording)', () => {
+  it('ramping (< settle threshold) → arming detail → [RECONNECTING]', () => {
+    for (let a = 0; a < REARM_SETTLE_THRESHOLD; a++) {
+      expect(reconnectDetailForAttempt(a)).to.equal(RECONNECT_ARMING_DETAIL);
+    }
+  });
+  it('settled (≥ threshold) → stream-down detail → [STREAM DOWN]', () => {
+    expect(reconnectDetailForAttempt(REARM_SETTLE_THRESHOLD)).to.equal(STREAM_DOWN_DETAIL);
+    expect(reconnectDetailForAttempt(REARM_SETTLE_THRESHOLD + 20)).to.equal(STREAM_DOWN_DETAIL);
+  });
+});
+
+describe('#826 isCoarseStale (watchdog silence detector)', () => {
+  it('not-connected-yet (lastEventAt 0) → never stale', () => {
+    expect(isCoarseStale(0, 10 * COARSE_STALE_MS)).to.equal(false);
+  });
+  it('fresh / within threshold (heartbeats arriving) → not stale', () => {
+    const now = 1_000_000;
+    expect(isCoarseStale(now, now)).to.equal(false);
+    expect(isCoarseStale(now - 10_000, now)).to.equal(false); // one heartbeat ago
+    expect(isCoarseStale(now - COARSE_STALE_MS, now)).to.equal(false); // exactly at threshold
+  });
+  it('silent past the threshold (wedged/dead socket) → stale', () => {
+    const now = 1_000_000;
+    expect(isCoarseStale(now - COARSE_STALE_MS - 1, now)).to.equal(true);
+    expect(isCoarseStale(now - 5 * COARSE_STALE_MS, now)).to.equal(true);
   });
 });
 
