@@ -3,10 +3,11 @@ import { Client } from '@temporalio/client';
 import * as os from 'os';
 import { Config } from '../config';
 import { SessionMetadata, AttachmentPhase } from '../types';
-import { scanEnsembleSessions, type EnsembleSessionInfo } from '../activities/resolve';
+import { scanEnsembleSessionsWithStatus, type EnsembleSessionInfo } from '../activities/resolve';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { formatTimeAgo } from '../utils/duration';
 import { checkSuspension, formatSuspensionBanner } from '../utils/suspension';
+import { VISIBILITY_DEADLINES_MS } from '../utils/visibility-deadline';
 
 /**
  * Default dormancy threshold (1 hour). Per #563: a `detached` player whose
@@ -79,12 +80,25 @@ export function buildEnsembleTool(
         self: client.workflow.getHandle(ownWorkflowId),
       });
 
-      let sessions;
+      let sessions: EnsembleSessionInfo[];
+      let truncated = false;
       try {
-        sessions = await scanEnsembleSessions(client, config.ensemble);
+        const scan = await scanEnsembleSessionsWithStatus(client, config.ensemble);
+        sessions = scan.sessions;
+        truncated = scan.truncated;
       } catch (err) {
         return fail(`Error listing workflows: ${formatError(err)}`);
       }
+
+      // #845 Mode A — when the visibility scan hit its wall-clock deadline,
+      // `sessions` is a PARTIAL roster. Surface that explicitly so an
+      // operator never mistakes a mid-scan snapshot for the full ensemble
+      // (the incident: a 3/8 roster read as "5 players vanished").
+      const partialBanner = truncated
+        ? `⚠ partial roster — ${sessions.length} shown; visibility scan hit its ` +
+          `${Math.round(VISIBILITY_DEADLINES_MS.scanEnsembleSessions / 1000)}s deadline ` +
+          `(likely worker warmup) — re-run to refresh.`
+        : undefined;
 
       // Apply scope filters
       let ownGitRoot: string | undefined;
@@ -118,13 +132,26 @@ export function buildEnsembleTool(
       const banner = formatSuspensionBanner(await suspensionPromise, config.ensemble);
 
       if (active.length === 0 && dormant.length === 0) {
+        // #845 CRITICAL: check truncation FIRST. A truncated scan that
+        // yielded zero rows must NOT render as "No active sessions found" —
+        // false-empty is the most dangerous case (an operator concludes the
+        // whole ensemble died and takes destructive action). Surface the
+        // partial banner instead.
+        if (partialBanner) {
+          return ok([banner, partialBanner].filter(Boolean).join('\n\n'));
+        }
         return ok(banner ? `${banner}\n\nNo active sessions found.` : 'No active sessions found.');
       }
 
       // #563 summary line — surface both counts so operators can see what's
       // being hidden behind the dormant filter without re-running.
       const summary = `**${config.ensemble}**: ${active.length} active, ${dormant.length} dormant`;
-      const sections: string[] = banner ? [banner, summary] : [summary];
+      // Lead banners (suspension #752 + partial-roster #845) precede the
+      // summary so neither can be missed above the roster.
+      const sections: string[] = [
+        ...[banner, partialBanner].filter(Boolean) as string[],
+        summary,
+      ];
 
       const showActive = dormantFilter !== 'show-only';
       const showDormant = dormantFilter !== 'hide';

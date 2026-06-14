@@ -1,5 +1,6 @@
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { SessionMetadata, AttachmentPhase } from '../types';
+import { sessionWorkflowId } from '../config';
 import {
   getAttachmentPhase,
   getSearchAttrString,
@@ -18,6 +19,15 @@ import {
   isVisibilityTimeout,
   VISIBILITY_DEADLINES_MS,
 } from '../utils/visibility-deadline';
+
+/**
+ * Mode-B describe-by-id timeout (#845). The strongly-consistent
+ * `describe()` fallback on `resolveSession`'s not-found branch is a single
+ * O(1) RPC; 2s mirrors {@link DEFAULT_QUERY_TIMEOUT_MS} — two orders of
+ * magnitude over a healthy describe — so a wedged frontend can't re-hang
+ * the outbox loop the visibility deadline (#336/#529) was added to bound.
+ */
+export const RESOLVE_DESCRIBE_TIMEOUT_MS = 2000;
 
 /** Shared query for listing running session workflows. Exported for the
  *  ensemble-scoped variants in `client/core.ts` (#751). */
@@ -38,15 +48,36 @@ export const SESSION_LIST_QUERY = `WorkflowType = "agentSessionWorkflow" AND Exe
  * in `scanEnsembleSessionsCloud`. Enforced by
  * tests/conformance/decision-path-fence.test.ts.
  *
- * **Deadline (#336/#529):** the visibility iterator is bounded by
- * `VISIBILITY_DEADLINES_MS.resolveSession` (default 10s). On timeout,
- * throws `VisibilityIteratorTimeoutError` rather than returning `null`
- * — silent `null` on a partially-scanned set would be indistinguishable
- * from "definitely not found," producing false "Player not found" errors
- * upstream. Every existing caller wraps this in a try/catch (outbox
- * activities, MCP tools' `defineTool` helper, CLI dev-verbs); the throw
- * propagates as a retryable / user-visible "lookup timed out" rather
- * than the misleading "player not found."
+ * **Mode A — deadline truncation (#336/#529):** the visibility iterator is
+ * bounded by `VISIBILITY_DEADLINES_MS.resolveSession` (default 10s). On
+ * timeout it throws `VisibilityIteratorTimeoutError` rather than returning
+ * `null` — silent `null` on a partially-scanned set would be
+ * indistinguishable from "definitely not found." The throw is classified
+ * **retryable** by the outbox activity (`isRetryableTemporalError`), so
+ * Temporal's activity retry policy re-runs the lookup with a fresh
+ * deadline rather than collapsing it to a permanent "player not found."
+ * Synchronous tool/CLI callers surface it as a distinct "resolution
+ * incomplete — retry," never "not found."
+ *
+ * **Mode B — visibility-index lag (#845):** `list()` can complete normally
+ * (no throw) yet miss a freshly-started workflow because the visibility
+ * index trails the workflow store (observed live as a 3/8→8/8 roster
+ * during post-restart worker warmup). An early-exhausting scan is NOT
+ * proof of absence. So on the not-found branch we do **exactly one**
+ * strongly-consistent `describe()` against the *derived* workflow id —
+ * an O(1) read by primary key that bypasses the lagging index. This is a
+ * point lookup, NOT a re-scan: it cannot re-introduce the unbounded-scan
+ * hang the deadline guard was added to prevent.
+ *
+ * **Documented Mode-B limitation:** the derived id
+ * `agent-session-{ensemble}-{playerName}` is minted from a player's
+ * INITIAL name at spawn; `set_name` does not change the workflow id. So
+ * describe-by-derived-id false-negatives for a player that was both
+ * RENAMED and is currently index-lagged — it falls back to `null` (looks
+ * absent) for that narrow intersection. Accepted by design: it closes the
+ * gap for the cold-boot/warmup incident class (nobody renames mid-boot),
+ * and a second full re-scan to cover renamed∩lagged would put scan cost on
+ * every genuine typo'd-name lookup. See issue #845.
  */
 export async function resolveSession(
   client: Client,
@@ -68,15 +99,73 @@ export async function resolveSession(
         return handle;
       }
     } catch (err) {
-      // Re-throw deadline timeouts — callers that wrap us in try/catch
-      // already treat unknown throws as a soft "lookup failed" path,
-      // and the typed error name makes the failure mode legible in
-      // outbox logs / user-facing tool errors.
+      // Re-throw deadline timeouts (Mode A) — callers that wrap us in
+      // try/catch treat the typed throw as a soft "lookup timed out" path,
+      // distinct from the not-found `null` below.
       if (isVisibilityTimeout(err)) throw err;
       // Workflow may have just completed, or worker is wedged (#433) — skip
     }
   }
-  return null;
+  // Mode B (#845): the scan completed without a match, but the visibility
+  // index may simply be lagging a just-started workflow. One strongly-
+  // consistent describe-by-derived-id disambiguates "index lag" from
+  // "genuinely absent" without a second scan.
+  return resolveByDerivedId(client, ensemble, playerName);
+}
+
+/**
+ * Mode-B (#845) strongly-consistent fallback for {@link resolveSession}.
+ *
+ * Reads the session workflow by its *derived* id
+ * (`agent-session-{ensemble}-{playerName}`) via a single bounded
+ * `describe()` — a primary-key lookup that bypasses the eventually-
+ * consistent visibility index. Returns the handle only when the execution
+ * is `RUNNING` and not already torn down; otherwise `null` (genuinely
+ * absent, terminated, gone, renamed-false-negative, or describe timed out).
+ */
+async function resolveByDerivedId(
+  client: Client,
+  ensemble: string,
+  playerName: string,
+): Promise<WorkflowHandle | null> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    // `getHandle` is a lazy, no-RPC handle construction in the real client;
+    // kept inside the try purely so a defensive throw can never escape the
+    // fallback (it must only ever upgrade a null to a handle, never error).
+    const handle = client.workflow.getHandle(sessionWorkflowId(ensemble, playerName));
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('describe-by-id timed out')),
+        RESOLVE_DESCRIBE_TIMEOUT_MS,
+      );
+      timer.unref?.();
+    });
+    const desc = await Promise.race([handle.describe(), timeout]);
+
+    // Only a live (RUNNING) execution is a valid resolve target. A
+    // COMPLETED/TERMINATED status at this id means the player is gone (the
+    // id may even have been reused by a later run — describe returns the
+    // latest, and a non-running latest run is not a deliverable target).
+    if (desc.status.name !== 'RUNNING') return null;
+
+    // Guard against resurrecting a torn-down player: a session in
+    // attachment phase `gone` has no live adapter to receive a cue/signal,
+    // even if its workflow execution is briefly still RUNNING during
+    // teardown. Treat it as absent.
+    if (getAttachmentPhase(desc) === 'gone') return null;
+
+    return handle;
+  } catch {
+    // NotFound → genuinely absent (or the renamed∩lagged false-negative
+    // documented on resolveSession). Timeout/other → treat as absent; the
+    // caller's not-found path (or the activity retry policy for Mode A)
+    // handles it. We never throw from the fallback — it can only upgrade a
+    // null to a found handle, never turn a clean lookup into an error.
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Info returned for each session by scanEnsembleSessions. */
@@ -226,27 +315,53 @@ export async function scanEnsembleSessionsCloud(
 }
 
 /**
- * Scan all running session workflows in an ensemble.
- * Returns metadata + part for each session. Shared by the ensemble MCP tool
- * and the Maestro refresh activity.
+ * Result of {@link scanEnsembleSessionsWithStatus} — the session rows plus
+ * whether the visibility scan completed or was cut short (#845).
+ *
+ * `truncated` is the Mode-A signal: a `VisibilityIteratorTimeoutError`
+ * fired (the wall-clock deadline tripped mid-scan), so `sessions` is a
+ * partial snapshot, NOT the full roster. Callers that render a roster (the
+ * `ensemble` tool) MUST surface this so a partial set is never mistaken
+ * for a complete one. NOTE: this does NOT cover Mode B (visibility-index
+ * lag) — there the scan completes normally and `truncated` is `false` even
+ * though a freshly-started workflow may be missing; that's best-effort by
+ * design and self-heals on the next tick.
+ *
+ * `scanned` is the number of running workflows the iterator visited before
+ * completing or timing out — useful for warn logs ("partial: 3 of ≥N").
+ */
+export interface EnsembleScanResult {
+  sessions: EnsembleSessionInfo[];
+  truncated: boolean;
+  scanned: number;
+}
+
+/**
+ * Scan all running session workflows in an ensemble, reporting whether the
+ * scan completed or was truncated by the visibility deadline (#845).
+ *
+ * This is the single source of truth for the local-profile ensemble scan;
+ * {@link scanEnsembleSessions} is a thin array-facade over it that drops
+ * the status fields for the many callers that don't need them.
  *
  * **Deadline (#336/#529):** the iterator is bounded by
- * `VISIBILITY_DEADLINES_MS.scanEnsembleSessions` (default 15s). On
- * timeout, returns the partial result accumulated so far and emits a
- * warn log. This site is **partial-tolerant by design** — the caller
- * (maestro refresh, ensemble MCP tool) treats the result as a
- * best-effort snapshot that the next tick / re-invocation will fill in.
+ * `VISIBILITY_DEADLINES_MS.scanEnsembleSessions` (default 15s). On timeout
+ * the accumulated rows are returned with `truncated: true` and a warn log
+ * — the scan is **partial-tolerant by design**, but the truncation is now
+ * SIGNALLED rather than silent so a roster renderer can flag it.
  *
  * T0.1 (#748): this legacy shape is the `costProfile: 'local'` path —
- * byte-identical to pre-#748 behavior. The cloud profile uses
+ * byte-identical row data to pre-#748 behavior. The cloud profile uses
  * {@link scanEnsembleSessionsCloud}.
  */
-export async function scanEnsembleSessions(
+export async function scanEnsembleSessionsWithStatus(
   client: Client,
   ensemble: string,
   log: (...args: unknown[]) => void = () => {},
-): Promise<EnsembleSessionInfo[]> {
+): Promise<EnsembleScanResult> {
   const sessions: EnsembleSessionInfo[] = [];
+  let truncated = false;
+  let scanned = 0;
 
   try {
     for await (const workflow of iterateWithDeadline(
@@ -254,6 +369,7 @@ export async function scanEnsembleSessions(
       VISIBILITY_DEADLINES_MS.scanEnsembleSessions,
       'scanEnsembleSessions',
     )) {
+      scanned++;
       try {
         const handle = client.workflow.getHandle(workflow.workflowId);
         // Issue #433 — bound the metadata + part queries so a single wedged
@@ -308,11 +424,32 @@ export async function scanEnsembleSessions(
     }
   } catch (err) {
     if (isVisibilityTimeout(err)) {
+      truncated = true;
       log(`scanEnsembleSessions: ${err.message} — returning partial (${sessions.length} sessions)`);
     } else {
       throw err;
     }
   }
 
-  return sessions;
+  return { sessions, truncated, scanned };
+}
+
+/**
+ * Scan all running session workflows in an ensemble — array facade over
+ * {@link scanEnsembleSessionsWithStatus}.
+ *
+ * Returns just the session rows; the truncation/scan-status fields are
+ * dropped. This is the byte-identical shape the maestro refresh activity,
+ * the #785 upgrade-snapshot, and the other roster consumers already depend
+ * on — keeping it a thin delegate means the truncation-signalling work
+ * (#845) does NOT ripple through those call sites. Callers that need to
+ * know whether the scan was complete (the `ensemble` tool) call the rich
+ * sibling directly.
+ */
+export async function scanEnsembleSessions(
+  client: Client,
+  ensemble: string,
+  log: (...args: unknown[]) => void = () => {},
+): Promise<EnsembleSessionInfo[]> {
+  return (await scanEnsembleSessionsWithStatus(client, ensemble, log)).sessions;
 }

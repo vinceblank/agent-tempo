@@ -17,6 +17,7 @@ import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-h
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
 import { resolveSession } from './resolve';
+import { isVisibilityTimeout } from '../utils/visibility-deadline';
 import { tagActionSource } from '../utils/action-counters';
 import { MEMO_KEYS } from '../utils/search-attributes';
 import { resolveAgentType } from '../ensemble/agent-types';
@@ -73,6 +74,14 @@ function isRetryableTemporalError(err: unknown): boolean {
   // about non-ApplicationFailure errors, but this guard makes the helper safe
   // to call unconditionally.
   if (err instanceof ApplicationFailure) return false;
+  // #845 Mode A: a truncated visibility scan (resolveSession's deadline
+  // tripped mid-scan, #336/#529) is a LATENCY failure — the target may well
+  // exist; the scan just didn't finish. Treat it as transient so the
+  // activity retry policy re-runs resolveSession with a fresh 10s deadline
+  // (backoff-bounded) instead of collapsing it into a permanent
+  // "No active session found". This must NOT re-add an in-resolver retry
+  // loop — the bounding lives in Temporal's policy, not a hot-path scan.
+  if (isVisibilityTimeout(err)) return true;
   const e = err as { name?: string; message?: string } | undefined;
   const name = e?.name ?? '';
   const msg = e?.message ?? '';

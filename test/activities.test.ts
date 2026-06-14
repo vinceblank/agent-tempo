@@ -19,7 +19,7 @@
 import { expect } from 'chai';
 import { ApplicationFailure } from '@temporalio/activity';
 import { createOutboxActivities, type OutboxActivities } from '../src/activities/outbox';
-import { resolveSession, scanEnsembleSessions } from '../src/activities/resolve';
+import { resolveSession, scanEnsembleSessions, scanEnsembleSessionsWithStatus } from '../src/activities/resolve';
 import { createScheduleActivities, type ScheduleActivities } from '../src/activities/schedule-fire';
 import { createMaestroActivities, type MaestroActivities } from '../src/activities/maestro';
 import { conductorWorkflowId, sessionWorkflowId } from '../src/config';
@@ -225,6 +225,141 @@ describe('resolveSession', function () {
   });
 });
 
+// ── resolveSession — Mode B describe-by-id fallback (#845) ──
+//
+// When the visibility index lags a freshly-started workflow, `list()`
+// completes WITHOUT yielding the target — the scan returns no match even
+// though the player exists. resolveSession then does ONE strongly-consistent
+// describe-by-derived-id to disambiguate "index lag" from "genuinely absent".
+
+describe('resolveSession — Mode B index-lag fallback (#845)', function () {
+  /**
+   * Minimal client where `list()` and `getHandle()` are DECOUPLED — the
+   * whole point of Mode B is that the target is missing from the (lagging)
+   * list but reachable by its derived workflow id. `describeById` controls
+   * what the derived-id `describe()` returns (or throws).
+   */
+  function lagClient(opts: {
+    listed?: Array<{ workflowId: string; metadata: any }>;
+    describeById?: Record<string, () => any>;
+  }) {
+    const listed = opts.listed ?? [];
+    const describeById = opts.describeById ?? {};
+    return {
+      workflow: {
+        getHandle(workflowId: string) {
+          return {
+            workflowId,
+            async query(nameOrDef: any) {
+              const name = typeof nameOrDef === 'string' ? nameOrDef : nameOrDef?.name;
+              const row = listed.find((l) => l.workflowId === workflowId);
+              if (name === 'getMetadata') {
+                if (!row) throw new Error('no metadata for ' + workflowId);
+                return row.metadata;
+              }
+              return undefined;
+            },
+            async describe() {
+              const fn = describeById[workflowId];
+              if (!fn) {
+                const e: any = new Error('workflow not found');
+                e.name = 'WorkflowNotFoundError';
+                throw e;
+              }
+              return fn();
+            },
+          };
+        },
+        list() {
+          return {
+            [Symbol.asyncIterator]() {
+              let i = 0;
+              return {
+                async next() {
+                  if (i < listed.length) {
+                    return { value: { workflowId: listed[i++].workflowId }, done: false };
+                  }
+                  return { value: undefined, done: true as const };
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown;
+  }
+
+  it('lag window: list misses the target but describe-by-id finds it RUNNING → returns handle', async function () {
+    // Index totally behind (empty list), but the workflow exists by id.
+    const derivedId = 'agent-session-e1-alice';
+    const client = lagClient({
+      listed: [],
+      describeById: {
+        [derivedId]: () => ({ status: { name: 'RUNNING' }, searchAttributes: {} }),
+      },
+    });
+    const result = await resolveSession(client as any, 'e1', 'alice');
+    expect(result).to.not.be.null;
+    expect(result!.workflowId).to.equal(derivedId);
+  });
+
+  it('genuine absence / renamed false-negative: describe-by-id NotFound → null', async function () {
+    // No describeById entry → describe throws NotFound. This is BOTH the
+    // genuinely-absent case AND the documented renamed∩lagged false-negative
+    // (the derived id uses the player's CURRENT name; a renamed player's
+    // workflow keeps its original-name id, so the lookup misses).
+    const client = lagClient({ listed: [] });
+    const result = await resolveSession(client as any, 'e1', 'ghost');
+    expect(result).to.be.null;
+  });
+
+  it('does not resurrect a destroyed player: describe-by-id non-RUNNING → null', async function () {
+    const derivedId = 'agent-session-e1-alice';
+    const client = lagClient({
+      listed: [],
+      describeById: {
+        [derivedId]: () => ({ status: { name: 'TERMINATED' }, searchAttributes: {} }),
+      },
+    });
+    const result = await resolveSession(client as any, 'e1', 'alice');
+    expect(result).to.be.null;
+  });
+
+  it('does not resurrect a gone player: describe-by-id RUNNING but phase=gone → null', async function () {
+    // ID may have been reused; a session whose attachment phase is already
+    // `gone` has no live adapter, so it must not be a deliver target even if
+    // its workflow execution is briefly still RUNNING during teardown.
+    const derivedId = 'agent-session-e1-alice';
+    const client = lagClient({
+      listed: [],
+      describeById: {
+        [derivedId]: () => ({
+          status: { name: 'RUNNING' },
+          searchAttributes: { AgentTempoAttachmentState: ['gone'] },
+        }),
+      },
+    });
+    const result = await resolveSession(client as any, 'e1', 'alice');
+    expect(result).to.be.null;
+  });
+
+  it('a normal list match returns WITHOUT consulting describe-by-id', async function () {
+    // describe-by-id would THROW if reached; the match must short-circuit.
+    const listedId = 'agent-session-e1-alice';
+    const client = lagClient({
+      listed: [{ workflowId: listedId, metadata: { playerId: 'alice', ensemble: 'e1' } }],
+      describeById: {
+        [listedId]: () => {
+          throw new Error('describe-by-id must not be called on a list hit');
+        },
+      },
+    });
+    const result = await resolveSession(client as any, 'e1', 'alice');
+    expect(result).to.not.be.null;
+    expect(result!.workflowId).to.equal(listedId);
+  });
+});
+
 // ── scanEnsembleSessions ──
 
 describe('scanEnsembleSessions', function () {
@@ -280,6 +415,28 @@ describe('scanEnsembleSessions', function () {
     // Note: legacy `status` passthrough assertion removed in #176 — `scanEnsembleSessions`
     // now exposes `phase` from `AgentTempoAttachmentState`. The mock does not populate
     // search attributes, so `phase` stays undefined here; covered by #178 rewrite.
+  });
+
+  // #845 — the rich sibling carries the truncation signal; the array facade
+  // delegates to it. A normal (completed) scan reports truncated:false.
+  it('scanEnsembleSessionsWithStatus reports {truncated:false, scanned} on a clean scan', async function () {
+    const h1 = mockHandle({ metadata: { playerId: 'alice', ensemble: 'e1' } });
+    const h2 = mockHandle({ metadata: { playerId: 'bob', ensemble: 'e2' } });
+    const client = mockClient([h1, h2]);
+
+    const result = await scanEnsembleSessionsWithStatus(client as any, 'e1');
+    expect(result.truncated).to.be.false;
+    expect(result.scanned).to.equal(2); // both running workflows visited
+    expect(result.sessions).to.have.length(1); // only e1 matches
+    expect(result.sessions[0].playerId).to.equal('alice');
+  });
+
+  it('scanEnsembleSessions (array facade) returns just the rows', async function () {
+    const h1 = mockHandle({ metadata: { playerId: 'alice', ensemble: 'e1' } });
+    const client = mockClient([h1]);
+    const sessions = await scanEnsembleSessions(client as any, 'e1');
+    expect(Array.isArray(sessions)).to.be.true;
+    expect(sessions).to.have.length(1);
   });
 });
 
