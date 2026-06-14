@@ -221,6 +221,18 @@ agent-tempo install-pi            # global install
 agent-tempo install-pi --project  # per-directory .pi/settings.json
 ```
 
+**Board connection states** — the board header shows the live stream health:
+
+| Label | Meaning |
+|---|---|
+| *(no label)* | Stream live |
+| `[RECONNECTING]` | Actively retrying after a transport drop |
+| `[STREAM DOWN]` | Settled reconnect loop — retrying every 30s |
+| `ENSEMBLE GONE` | Daemon returned 404 — the ensemble was destroyed |
+| `[STREAM ENDED]` | Daemon returned 401 — auth error (check `AGENT_TEMPO_HTTP_ADMIN_TOKEN`) |
+
+The board reconnects automatically on transient drops (bounded-ramp then 30s steady). A 35s staleness watchdog (keyed off the daemon's ≤10s heartbeat) catches daemon-death and wedged sockets that the transport alone can't detect. On `ENSEMBLE GONE` the roster clears automatically; on `[STREAM DOWN]` the last-known roster is preserved under the banner.
+
 See [concepts.md](concepts.md) for the Q&A mechanics.
 
 ### `agent-tempo install-pi`
