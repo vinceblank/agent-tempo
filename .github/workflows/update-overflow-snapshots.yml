@@ -81,7 +81,7 @@ jobs:
           cache: npm
 
       - name: Cache dashboard/node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dashboard/node_modules
           key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
@@ -89,7 +89,7 @@ jobs:
             dashboard-node-modules-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ hashFiles('dashboard/package-lock.json') }}
@@ -166,7 +166,7 @@ jobs:
 
       - name: Upload Playwright report on failure (debugging aid)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report-overflow-snapshots
           path: dashboard/tests-overflow/playwright-report/
