@@ -5,6 +5,7 @@ import { resolveSession } from './resolve';
 import { scanEnsembleSessions } from '../activities/resolve';
 import { attachmentInfoQuery, submitOutboxUpdate } from '../workflows/signals';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
+import { isVisibilityTimeout } from '../utils/visibility-deadline';
 import type { AttachmentInfo, AttachmentPhase, OutboxEntryInput } from '../types';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
@@ -174,6 +175,19 @@ export function buildCueTool(
         }
         return ok(`Message sent to ${playerId}. (outbox: ${entryId})`);
       } catch (err) {
+        // #845 Mode A: a truncated roster scan is NOT "player not found" —
+        // the target may exist; the visibility scan just hit its deadline
+        // (e.g. post-restart worker warmup). Surface a DISTINCT, actionable
+        // "resolution incomplete — retry" so the operator doesn't conclude
+        // the player vanished. (The `if (!resolved)` not-found path above
+        // only fires on a clean `null`; the timeout throws past it to here.)
+        if (isVisibilityTimeout(err)) {
+          return fail(
+            `Could not resolve "${playerId}": roster resolution incomplete — the ` +
+            `visibility scan hit its deadline (likely worker warmup), not a ` +
+            `"player not found". Retry in a moment.`,
+          );
+        }
         return fail(`Failed to send message to ${playerId}: ${formatError(err)}`);
       }
     },
