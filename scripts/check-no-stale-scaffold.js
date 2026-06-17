@@ -58,9 +58,11 @@ const FORBIDDEN = /PR-\d+ of #\d+/;
 const COMMENT_LINE = /^\s*(\/\/|\/\*|\*)/;
 
 let found = false;
+let scanned = 0;
 
 for (const dir of SEARCH_DIRS) {
   for (const file of findTsx(dir)) {
+    scanned++;
     const content = fs.readFileSync(file, 'utf8');
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
@@ -83,5 +85,18 @@ if (found) {
   process.exit(1);
 }
 
-console.log('✓  No stale scaffold text in component files.');
+// #707 — a zero-file scan must never read as "clean": if neither search dir
+// yielded a single .tsx file the walk is broken (wrong path / empty checkout /
+// a Windows `**`-glob silently matching nothing), and a green result here
+// would be a false negative. Fail loud instead.
+if (scanned === 0) {
+  console.error(
+    '✗  check-no-stale-scaffold: scanned 0 .tsx files under ' +
+    `${SEARCH_DIRS.map((d) => path.relative(ROOT, d)).join(', ')} — the file ` +
+    'walk is broken. Refusing to report "clean" on an empty scan. See #707.',
+  );
+  process.exit(1);
+}
+
+console.log(`✓  No stale scaffold text in component files (${scanned} scanned).`);
 process.exit(0);

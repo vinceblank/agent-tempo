@@ -34,6 +34,19 @@ const TEST_DIRS = [path.join(REPO_ROOT, 'test'), path.join(REPO_ROOT, 'tests')];
 
 const files = TEST_DIRS.flatMap((d) => collectTs(d));
 
+// #707 — a source-walking check that enumerates ZERO files must never report
+// "clean": a broken enumeration (wrong path, empty checkout, or — the bug
+// that motivated this — a `dir/**/*.ext` glob that silently matches nothing
+// on Windows) would otherwise pass while scanning nothing. Fail loud.
+if (files.length === 0) {
+  console.error(
+    'lint-skip-reasons: enumerated 0 .ts files under test/ + tests/ — the ' +
+    'file walk is broken (wrong path / empty checkout). Refusing to report ' +
+    '"clean" on an empty scan. See #707.',
+  );
+  process.exit(1);
+}
+
 const violations = [];
 
 for (const file of files) {
