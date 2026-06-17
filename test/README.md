@@ -18,6 +18,33 @@ npm run test:shard-2
 npm run test:tui
 ```
 
+## Running tests in a fresh worktree / cold checkout (#720)
+
+A fresh `git worktree` (or a clean clone) has **no `node_modules`, no `dist/`,
+and no `workflow-bundle.js`**. The Mocha integration tests load a prebuilt
+Temporal **workflow bundle** (`workflow-bundle.js`) at `setupTestEnv()` time, and
+that bundle is produced by a webpack pre-bundle step — **not** by
+`npm run build:test` (which only compiles `test/` → `dist-test/`). So a cold
+worktree needs the bundle produced once before the first test run:
+
+```bash
+npm ci                # install deps (once per worktree)
+npm run build:bundle  # tsc + build:scripts + the workflow bundle (skips the dashboard build)
+npm test              # pretest runs the bundle guard, then build:test, then mocha + vitest
+```
+
+`npm run build:bundle` (#720) is the fast path: it does everything the tests need
+(`dist/`, `dist/scripts/`, and `workflow-bundle.js`) while **skipping**
+`build:dashboard` (`npm --prefix dashboard ci`), which the tests never use. The
+full `npm run build` also works but is slower. After any change to
+`src/workflows/`, re-run `npm run build:bundle` so the tests pick up the new
+workflow code (see the [build note](../docs/development.md#build)).
+
+If you forget, the `pretest` guard ([`scripts/check-bundle-present.js`](../scripts/check-bundle-present.js))
+fails fast with a one-line fix instead of the opaque
+`task_types: At least one task type must be enabled` worker error that a missing
+bundle used to cascade into.
+
 ## Shared `TestWorkflowEnvironment` (#210 Phase 1)
 
 The first `setupTestEnv()` call in a Mocha process creates a process-wide

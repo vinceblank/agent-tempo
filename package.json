@@ -61,9 +61,11 @@
     ]
   },
   "scripts": {
-    "build": "tsc && npm run build:scripts && npm run build:dashboard && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build": "tsc && npm run build:scripts && npm run build:dashboard && npm run bundle:workflow",
     "build:scripts": "tsc -p scripts/tsconfig.json",
     "build:dashboard": "npm --prefix dashboard ci && npm --prefix dashboard run build",
+    "bundle:workflow": "node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build:bundle": "tsc && npm run build:scripts && npm run bundle:workflow",
     "size-limit": "size-limit",
     "prepack": "node scripts/strip-mock-adapter.js",
     "verify-tarball": "node scripts/verify-tarball.js",
