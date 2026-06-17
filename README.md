@@ -154,6 +154,7 @@ agent-tempo hosts              # list daemons polling this Temporal namespace (-
 agent-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)
 agent-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
 agent-tempo release [ensemble] # release held players (unlock + deliver tasks)
+agent-tempo dashboard          # open the web dashboard (--pair for QR-code cross-device access)
 agent-tempo daemon <sub>       # manage the worker daemon
 agent-tempo upgrade            # update to latest
 ```
