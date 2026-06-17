@@ -518,13 +518,24 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // engages with the #180 AND guard. Build the full command line as a pre-quoted
     // string and use verbatim mode so cmd receives it as-is.
     const parentCmdTail = `${probeBat} "--remote-control-session-name-prefix" "${probeEnsemble}" "-n" "${playerName}" "--tempo-165-probe"`;
+    // #694 — keep the parent cmd.exe's stdin OPEN (a pipe we never write to / never
+    // end) instead of `stdio: 'ignore'`. `cmd /k` is interactive: after running the
+    // /k command line it reads the NEXT command from stdin — and an ignored stdin is
+    // at EOF immediately, so cmd would exit right after launching the node child,
+    // making the "parent cmd.exe should be alive after spawn" precondition flake
+    // (deterministically fail on some boxes). Holding stdin open blocks that read so
+    // the parent stays alive — faithfully matching PRODUCTION, where the WT path's
+    // `cmd /k` lives in a real Windows Terminal tab whose stdin is the live terminal.
+    // The CommandLine/topology is otherwise identical, so parent-walk still engages.
     const cmdProc = spawn('cmd.exe', ['/k', parentCmdTail], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['pipe', 'ignore', 'ignore'],
       windowsHide: true,
       windowsVerbatimArguments: true,
     });
     cmdProc.unref();
+    // The held-open stdin write end is destroyed in the `finally` below (and the
+    // mocha runner is configured `exit: true`), so it can't keep the loop alive.
     const cmdPid = cmdProc.pid!;
     spawnedPids.push(cmdPid);
 
@@ -610,6 +621,9 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
       ).to.include(cmdPid);
       expect(result.strategy).to.equal('search');
     } finally {
+      // #694 — release the held-open stdin pipe (a `cmd /k` that survived the kill
+      // would otherwise keep blocking on it), then the safety-net kill.
+      try { cmdProc.stdin?.destroy(); } catch { /* already gone */ }
       // Safety net — clean up anything the parent-walk missed so CI doesn't leak procs.
       try { process.kill(cmdPid); } catch { /* already gone */ }
     }
