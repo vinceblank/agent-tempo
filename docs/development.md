@@ -58,7 +58,19 @@ npm test
 
 Tests use Temporal's `TestWorkflowEnvironment` — no live Temporal server required for
 `npm test`. The test harness loads the pre-built `workflow-bundle.js` from disk, so you
-must run `npm run build` before running tests after any workflow change.
+must produce the bundle before running tests after any workflow change.
+
+In a **fresh worktree or clean checkout** (no `node_modules`/`dist/`/bundle), the fast
+path is `npm run build:bundle` — `tsc` + `build:scripts` + the workflow bundle, skipping
+the heavy dashboard build the tests never need:
+
+```bash
+npm ci && npm run build:bundle && npm test
+```
+
+If the bundle is missing, the `pretest` guard fails fast with a one-line fix. See
+[`test/README.md`](../test/README.md#running-tests-in-a-fresh-worktree--cold-checkout-720)
+for the full cold-worktree walkthrough.
 
 When temporarily skipping a test, every `this.skip()` call must carry a
 `// SKIP-REASON: <why>` annotation on the same line or the line immediately above.
