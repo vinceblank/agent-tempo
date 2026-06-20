@@ -63,17 +63,18 @@ The wrapper exec's `gh` directly, so every flag and subcommand works. It also
 clears `GITHUB_TOKEN` in its own environment to prevent CI-inherited tokens
 from outranking the installation token.
 
-> **Windows / PowerShell — silent no-op trap** (tracked in #741): `ensemble-gh`
-> is a bash script. If you invoke it bare from PowerShell (`./scripts/ensemble-gh
-> ...`), PowerShell "runs" it as a native command with **zero output and zero
-> error** — the token is never minted and the `gh` call never fires. Always
-> invoke via `bash`:
+> **Windows / PowerShell** — `scripts/ensemble-gh.cmd` is a sibling Windows shim
+> (#741). PowerShell's PATHEXT resolution picks up the `.cmd` file, so
+> `./scripts/ensemble-gh` works directly from PowerShell — no `bash` prefix needed.
+> The shim locates Git Bash relative to `git.exe` on PATH (falling back to
+> `C:\Program Files\Git\bin\bash.exe`) and fails **loudly** with a non-zero exit if
+> Bash cannot be found, so the silent-no-op failure mode is gone.
+>
+> If for any reason the shim cannot be used, you can still invoke via `bash` explicitly:
 >
 > ```bash
 > bash ./scripts/ensemble-gh pr create --title "..." --body "..."
 > ```
->
-> Grep marker for the silent-failure pattern: `ensemble-gh no-op PowerShell`.
 
 ### When to use `ensemble-gh` vs plain `gh`
 
