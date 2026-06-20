@@ -40,8 +40,19 @@ function listTsFiles(dir: string): string[] {
 
 describe('action-counter coverage of Client constructions (#753)', () => {
   it('every non-excluded `new Client(` site passes interceptors', () => {
+    const files = listTsFiles(SRC_ROOT);
+    // #707 — a drift detector that scans ZERO files would pass while checking
+    // nothing (silent false-clean). If the source walk yields no files the
+    // enumeration is broken (wrong path / empty checkout / a Windows
+    // `dir/**/*.ext` glob silently matching nothing) — fail loud first.
+    expect(
+      files.length,
+      `action-counter coverage enumerated 0 .ts files under ${SRC_ROOT} — ` +
+        'the source walk is broken; refusing to pass on an empty scan (#707).',
+    ).toBeGreaterThan(0);
+
     const offenders: string[] = [];
-    for (const file of listTsFiles(SRC_ROOT)) {
+    for (const file of files) {
       const rel = path.relative(SRC_ROOT, file).replace(/\\/g, '/');
       const text = fs.readFileSync(file, 'utf8');
       // Match the code shape (`new Client({`) rather than bare `new Client(`

@@ -76,6 +76,40 @@ When temporarily skipping a test, every `this.skip()` call must carry a
 `// SKIP-REASON: <why>` annotation on the same line or the line immediately above.
 CI enforces this via `scripts/lint-skip-reasons.js` (exit 1 if any unannotated skip is found).
 
+## Searching the codebase on Windows — the `**`-glob false-negative (#707)
+
+On Windows, a ripgrep glob with a **leading directory segment before `**`**
+silently matches **zero** files. A search tool call like:
+
+```
+Grep pattern="resolveSession" glob="src/**/*.ts"   → "No files found"   ❌ (false negative)
+```
+
+returns nothing even when the symbol demonstrably exists — and a zero-match is
+indistinguishable from "searched and found nothing." This is a correctness trap
+for call-site surveys, drift checks, and any *"prove a symbol is absent"*
+decision (e.g. before a refactor or a "is this used anywhere?" check).
+
+**Use one of these reliable forms instead:**
+
+| Instead of (broken on Windows) | Use |
+|---|---|
+| `glob="src/**/*.ts"` | `path="src"` + `type="ts"` (path-scope, no glob) |
+| `glob="src/**/*.ts"` | `glob="**/*.ts"` (drop the leading dir — a bare recursive glob works) |
+| any glob, when you know the path | `Read` the file directly |
+
+The bug is in the **search-tool layer** (the ripgrep wrapper), **not in this
+repo** — no repo script or CI check shells a `**` glob. Every repo lint, drift
+detector, and conformance fence enumerates source via `fs` recursion or
+`git ls-files`, never a shelled `**` glob.
+
+**Rule for any new source-scanning check:** enumerate via `fs`/`git ls-files`,
+never a shelled `**` glob, **and assert a non-zero file count** so a broken
+enumeration fails loud instead of passing as "clean." The existing checks
+(`lint-skip-reasons`, `check-surface-drift`, `check-no-stale-scaffold`, and the
+`serial-withWorker` / action-counter conformance fences) carry this guard
+(#707): *a check that scans nothing must never report success.*
+
 ## Surface registry
 
 `docs/SURFACE-REGISTRY.md` is the canonical inventory of every public-facing surface:

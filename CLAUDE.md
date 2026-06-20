@@ -174,6 +174,22 @@ npm run check:all   # runs every CI gate locally (build, tests, drift checks, li
 > surveys or migrations, always grep **both** `test/` and `tests/` or you will miss
 > mocks and assertions that only live in one directory.
 
+> **Windows `**`-glob false-negative (#707) — a zero-match can read as "clean".**
+> On Windows, a ripgrep glob with a **leading directory segment before `**`**
+> silently matches **zero** files: `Grep ... glob="src/**/*.ts"` returns *"No
+> files found"* even when matches exist — a false negative that looks identical
+> to "searched and found nothing." This bites call-site surveys, drift checks,
+> and any "prove a symbol is absent" decision. **Reliable forms** (use these):
+> path-scope instead — `Grep path="src" type="ts"` — or drop the leading dir —
+> `glob="**/*.ts"`; or just `Read` the file when you know the path. A bare
+> recursive `**/*.ext` works; `dir/**/*.ext` is the broken shape.
+> The bug is in the search-tool layer, not this repo — **no repo check shells a
+> `**` glob.** Repo lint/drift/conformance checks enumerate via `fs` recursion
+> or `git ls-files` (never a shelled `**` glob) and now **assert a non-zero file
+> count** (#707) so a future enumeration breakage fails loud instead of passing
+> as "clean." Hold that bar for any new source-scanning check: *a check that
+> scans nothing must never report success.*
+
 > **Test-only hooks live with the module they reset and follow the
 > `__<verb><Noun>ForTests` naming convention** — see
 > [docs/adr/0006-test-hooks-naming.md](docs/adr/0006-test-hooks-naming.md). The

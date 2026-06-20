@@ -67,8 +67,19 @@ const WITHWORKER_CALL_RE = /\bwithWorker\w*\s*\(/;
 
 describe('serial-withWorker fence (#721)', () => {
   it('no Promise.all/allSettled in test/ wraps a withWorker* invocation', () => {
+    const files = listTsFiles(TEST_DIR);
+    // #707 — a fence that scans ZERO files would pass while asserting over
+    // nothing (silent false-clean). If the source walk yields no files the
+    // enumeration is broken (wrong path / empty checkout / a Windows
+    // `dir/**/*.ext` glob silently matching nothing) — fail loud first.
+    expect(
+      files.length,
+      `serial-withWorker fence enumerated 0 .ts files under ${TEST_DIR} — ` +
+        'the source walk is broken; refusing to pass on an empty scan (#707).',
+    ).toBeGreaterThan(0);
+
     const offenders: string[] = [];
-    for (const file of listTsFiles(TEST_DIR)) {
+    for (const file of files) {
       const text = fs.readFileSync(file, 'utf8');
       for (const span of promiseAllArgSpans(text)) {
         if (WITHWORKER_CALL_RE.test(span)) {

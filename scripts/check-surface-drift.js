@@ -69,6 +69,17 @@ function extractMcpToolsFromSource() {
   const files = fs.readdirSync(dir)
     .filter(f => f.endsWith('.ts') && f !== 'descriptor.ts');
 
+  // #707 — refuse to run the diff off an empty enumeration. If src/tools
+  // yields zero .ts files the walk is broken (wrong path / empty checkout /
+  // a Windows `**`-glob that silently matched nothing) — failing loud here
+  // beats a misleading drift report built on an empty source set.
+  if (files.length === 0) {
+    throw new Error(
+      'check-surface-drift: enumerated 0 .ts files under src/tools — the ' +
+      'source walk is broken. Refusing to diff against an empty scan. See #707.',
+    );
+  }
+
   const tools = new Set();
   for (const file of files) {
     const src = fs.readFileSync(path.join(dir, file), 'utf8');
