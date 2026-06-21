@@ -24,6 +24,7 @@ import {
   receiveMessageSignal,
   submitOutboxUpdate,
   destroyUpdate,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   getRunIdQuery,
@@ -164,7 +165,7 @@ describe('session wire extensions (#399 W2)', function () {
       this.timeout(10_000);
       const handle = await startFresh(`lease-attached-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       const state = await handle.query(getLeaseStateQuery);
       expect(state.leaseMs).to.equal(30_000);
@@ -180,7 +181,7 @@ describe('session wire extensions (#399 W2)', function () {
       this.timeout(10_000);
       const handle = await startFresh(`lease-detached-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       await handle.executeUpdate(forceDetachUpdate, {
         args: [{ reason: 'user-stop', gracePeriodMs: 0 }],

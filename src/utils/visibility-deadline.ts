@@ -102,6 +102,22 @@ export const VISIBILITY_DEADLINES_MS = {
    * enough to amortize partial scans across many sweeps.
    */
   orphanQueryCleanup: 30_000,
+  /**
+   * #786 — `checkProtocolGuard` daemon boot scan. Walks every Running
+   * agent-tempo workflow (the 4 workflow types) reading only the
+   * `AgentTempoProtocol` memo straight off the visibility page — NO
+   * per-workflow query, so it's pure page iteration and far cheaper than
+   * the orphan scan. 30s is generous headroom for a large-but-healthy
+   * namespace (page-streaming even thousands of rows completes in
+   * seconds) while still bounding a wedged visibility backend.
+   *
+   * **Load-bearing: this budget is FAIL-CLOSED.** A timeout here does NOT
+   * yield a best-effort partial — the guard treats an unfinished scan as
+   * "couldn't prove the cutover is clean" and REFUSES to boot (the #845
+   * partial-scan lesson: a 2.0 worker that replays a 1.x history corrupts
+   * deterministically, so an unverified scan must never be read as clean).
+   */
+  protocolGuardBoot: 30_000,
 } as const;
 
 export type VisibilitySite = keyof typeof VISIBILITY_DEADLINES_MS;

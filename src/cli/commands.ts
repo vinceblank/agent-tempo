@@ -1111,6 +1111,14 @@ interface UpOpts extends CliOverrides {
    * can't exist there anyway (gate 3 in recruit pre-flight).
    */
   scenario?: string;
+  /**
+   * #786 — `up --from-upgrade`. Recreate protocol-2 workflows from the
+   * `upgrade-snapshot-v1.json` left by `upgrade-to-2`, instead of starting a
+   * fresh ensemble. Recreates the roster (structural essentials only),
+   * surfaces undelivered cues for review, and archives the snapshot on
+   * success. Ignores `--lineup` / conductor-spawn flags.
+   */
+  fromUpgrade?: boolean;
 }
 
 /**
@@ -1135,6 +1143,77 @@ export function formatEnsembleReadyLines(
     `Ensemble "${ensemble}" is ready (from lineup ${lineupName}). ${playerCount} player${plural} on standby.`,
     `Connect: agent-tempo command-center ${ensemble}`,
   ];
+}
+
+/**
+ * #786 — `up --from-upgrade` orchestration. Opens a Temporal client, recreates
+ * protocol-2 workflows from `upgrade-snapshot-v1.json`, prints the outcome
+ * (incl. undelivered cues surfaced for review — NEVER redelivered), and
+ * archives the snapshot on success. Separated from `up()` so the I/O is in one
+ * place; the recreation logic itself lives (testably) in
+ * `src/upgrade/from-upgrade.ts`.
+ */
+async function runFromUpgradeFlow(config: Config): Promise<void> {
+  const { runFromUpgrade } = await import('../upgrade/from-upgrade');
+  const { SnapshotValidationError } = await import('../upgrade/snapshot-v1');
+  out.heading('agent-tempo up --from-upgrade');
+
+  const connection = await createTemporalConnection(config);
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  try {
+    const result = await runFromUpgrade(client, {
+      home: AGENT_TEMPO_HOME,
+      taskQueue: config.taskQueue,
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      log: (...args) => out.dim('  ' + args.map(String).join(' ')),
+    });
+
+    if (!result.snapshotFound) {
+      out.warn(`No upgrade snapshot found in ${AGENT_TEMPO_HOME}.`);
+      out.log(`  Run \`agent-tempo upgrade-to-2\` on the 1.x install first.`);
+      return;
+    }
+
+    out.success(
+      `Recreated ${result.workflowsCreated} protocol-2 workflow(s) across ` +
+      `${result.ensemblesRecreated} ensemble(s).`,
+    );
+
+    if (result.undeliveredCues.length > 0) {
+      out.log('');
+      out.warn(`${result.undeliveredCues.length} undelivered cue(s) — review (NOT redelivered):`);
+      for (const c of result.undeliveredCues) {
+        const preview = c.text.length > 120 ? c.text.slice(0, 117) + '…' : c.text;
+        out.log(`  [${c.ensemble}] ${c.from} → ${c.playerId} (${c.timestamp}): ${preview}`);
+      }
+    }
+
+    if (result.failures.length > 0) {
+      out.log('');
+      out.error(`${result.failures.length} workflow(s) failed to recreate — snapshot left in place for retry:`);
+      for (const f of result.failures) out.log(`  ${f.workflowId}: ${f.error}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (result.archived) {
+      out.dim(`  Snapshot archived → ${result.archivePath}`);
+    }
+    out.log('');
+    out.log('  Continuity seeding (state slots / schedules / sessionId / model) is a');
+    out.log('  tracked #786 fast-follow — recreated sessions are structural skeletons.');
+  } catch (err) {
+    // A malformed snapshot is a LOUD failure (never a silent skip).
+    if (err instanceof SnapshotValidationError) {
+      out.error(`Upgrade snapshot is corrupt — refusing to proceed: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  } finally {
+    await connection.close().catch(() => { /* ignore */ });
+  }
 }
 
 export async function up(opts: UpOpts) {
@@ -1185,6 +1264,17 @@ export async function up(opts: UpOpts) {
     out.error(`Infra startup failed: ${err?.message || err}`);
     out.log(`  ${out.dim('You can start it manually: agent-tempo daemon start')}`);
     process.exit(1);
+  }
+
+  // #786 — `up --from-upgrade`: recreate protocol-2 workflows from the snapshot
+  // left by `upgrade-to-2`, then stop. Runs AFTER ensureInfra (Temporal + daemon
+  // up, so the recreated workflows have live workers AND the daemon's boot guard
+  // has already verified a clean cutover) but instead of the lineup/conductor
+  // spawn flow. Continuity seeding (#334 state / schedules / sessionId / model)
+  // is a tracked #786 fast-follow — this MVP recreates structural skeletons only.
+  if (opts.fromUpgrade) {
+    await runFromUpgradeFlow(config);
+    return;
   }
 
   // Step 4: Register MCP server if needed

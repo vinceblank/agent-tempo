@@ -96,6 +96,10 @@ export {
   adapterExitedSignal,
 };
 
+// Re-export PROTOCOL_VERSION so test files can import it alongside
+// claimAttachmentUpdate (claimAttachment requires it as of #786 part 1).
+export { PROTOCOL_VERSION } from '../src/constants';
+
 // ─────────────────────────────────────────────────────────────────────────
 // Reap orphan temporal-sdk-typescript ephemeral servers from prior crashed
 // runs. Wired into Mocha as a global setup fixture from `root-hooks.ts`

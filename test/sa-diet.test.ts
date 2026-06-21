@@ -33,6 +33,7 @@ import {
   pollWithTimeout,
   getClient,
   destroyUpdate,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   setPartSignal,
@@ -121,7 +122,7 @@ describe('T0.5 SA diet (#747) — memo migration', function () {
     const handle = await startFresh(`sadiet-claim-${Date.now()}`);
     try {
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'test-host', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       const info = await handle.query(attachmentInfoQuery);
       expect(info.phase).to.equal('attached');

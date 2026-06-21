@@ -32,6 +32,7 @@ import {
   allMessagesQuery,
   destroyUpdate,
   pollWithTimeout,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -140,6 +141,7 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
       // Pre-claim from a different host so our adapter's claim surfaces AttachmentConflict.
       await handle.executeUpdate(claimAttachmentUpdate, {
         args: [{
+          protocolVersion: PROTOCOL_VERSION,
           host: 'host-other',
           adapterId: 'claude-code',
           adapterClass: 'interactive',

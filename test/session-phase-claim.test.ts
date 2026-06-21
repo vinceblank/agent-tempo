@@ -23,6 +23,7 @@ import {
   startSession,
   playerMetadata,
   destroyUpdate,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -64,7 +65,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`claim-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       expect(token.attachmentId).to.be.a('string');
       expect(token.runId).to.be.a('string');
@@ -83,11 +84,11 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`renew-${Date.now()}`);
       const t1 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
       // Renewal with same expectedAttachmentId.
       const t2 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000, expectedAttachmentId: t1.attachmentId }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000, expectedAttachmentId: t1.attachmentId }],
       });
       expect(t2.attachmentId).to.equal(t1.attachmentId);
       // expiresAt should have been extended (later than or equal to t1's).
@@ -102,13 +103,13 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`conflict-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       let rejected = false;
       try {
         // No expectedAttachmentId + active lease = conflict.
         await handle.executeUpdate(claimAttachmentUpdate, {
-          args: [{ host: 'host-B', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+          args: [{ host: 'host-B', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
         });
       } catch {
         // SDK wraps the ApplicationFailure; the important thing is the update was rejected.
@@ -127,7 +128,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       let rejected = false;
       try {
         await handle.executeUpdate(claimAttachmentUpdate, {
-          args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 999 }],
+          args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 999 }],
         });
       } catch {
         rejected = true;
@@ -143,14 +144,14 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`reattach-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       await handle.executeUpdate(forceDetachUpdate, { args: [{ reason: 'force', gracePeriodMs: 0 }] });
       let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
       expect(info.phase).to.equal('detached');
 
       const t2 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-B', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-B', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
       info = await handle.query(attachmentInfoQuery);
       expect(info.phase).to.equal('attached');
@@ -167,7 +168,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`hb-guard-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       const originalExpiresAt = token.expiresAt;
 
@@ -195,7 +196,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       const PRIOR_DEFAULT_MS = 90_000;
 
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: NEGOTIATED_LEASE_MS }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: NEGOTIATED_LEASE_MS }],
       });
       const claimTime = new Date(token.expiresAt).getTime() - NEGOTIATED_LEASE_MS;
 
@@ -231,7 +232,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       expect(before).to.deep.equal({ currentTool: null });
 
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'pi', adapterClass: 'sdk', leaseMs: 90_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'pi', adapterClass: 'sdk', leaseMs: 90_000 }],
       });
 
       // Heartbeat carrying coarse fields → stored field-wise.
@@ -280,7 +281,7 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       // it's fine to also accept `awaiting` as valid (both are idle attached states).
       const handle = await startFreshSession(`awaiting-vs-attached-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);

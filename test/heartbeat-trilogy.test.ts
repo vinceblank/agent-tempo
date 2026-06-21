@@ -34,6 +34,7 @@ import {
   claimAttachmentUpdate,
   attachmentInfoQuery,
   destroyUpdate,
+  PROTOCOL_VERSION,
 } from './helpers';
 import { testForceContinueAsNewSignal } from '../src/workflows/signals';
 import type { AttachmentInfo, DetachReason } from '../src/types';
@@ -246,6 +247,7 @@ describe('heartbeat trilogy (#249)', function () {
             const LEASE_MS = 90_000;
             const token = await handle.executeUpdate(claimAttachmentUpdate, {
               args: [{
+                protocolVersion: PROTOCOL_VERSION,
                 host: 'test-host',
                 adapterId: 'claude-code',
                 adapterClass: 'interactive' as const,
