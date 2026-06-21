@@ -764,38 +764,30 @@ async function main() {
     }
 
     case 'home': {
-      // #789 — the bare `agent-tempo` landing (D2, @vinceblank-confirmed). The
-      // Ink TUI was deleted; a bare invocation now AUTO-PROVISIONS (bootstrap),
-      // shows live `status`, then points the operator at the interactive
-      // surfaces (the command-center board + web dashboard). No terminal UI.
+      // E.8 / D2 (#789) — bare `agent-tempo`: the #289 six-step auto-provisioning
+      // bootstrap (MCP registration, Temporal reachability, daemon boot,
+      // badges + ensembles prefetch), then a status snapshot + next-step hints.
+      // One-shot; the live operator surfaces are mission-control
+      // (`command-center`, when the Pi seat is installed) and the web dashboard.
+      // `--skip-preflight` renders the degraded no-result home. The rich,
+      // unit-tested render lives in the crash-proof `home-command` module.
       const config = getConfig(overrides);
-      const homeEnsemble = args.ensemble || args.positional[1] || undefined;
-
-      // #289 / S7: run the auto-provisioning bootstrap (register MCP, ensure
-      // Temporal reachability, boot the daemon). Best-effort — per-step failures
-      // degrade gracefully; a thrown error (outside the step boundaries) is
-      // logged and we still show status + hints. `--skip-preflight` opts out.
-      if (!args.skipPreflight) {
-        const { bootstrap } = await import('./cli/startup');
-        try {
-          await bootstrap({ config });
-        } catch (err) {
-          out.warn(`Bootstrap hit an unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // Live status (sessions + schedules). Self-contained; opens + closes its
-      // own Temporal connection. Tolerant of an unreachable Temporal (it prints
-      // a connect hint and exits) — so the hints below only print on success.
-      await status({ ensemble: homeEnsemble, ...overrides });
-
-      // Operator hints — the interactive surfaces that replaced the TUI.
-      out.log('');
-      out.log(out.bold('Next:'));
-      out.log(`  ${out.cyan('agent-tempo command-center')}   Operator board — live ensemble view + controls (alias: cc/board)`);
-      out.log(`  ${out.cyan('agent-tempo up --agent pi')}    Launch a conductor/player in an ensemble`);
-      out.log(`  ${out.cyan('agent-tempo dashboard')}        Open the web dashboard`);
-      out.log(`  ${out.dim('agent-tempo help')}             All commands`);
+      const { runHome } = await import('./cli/home-command');
+      const { probePi, checkPiNodeFloor } = await import('./pi/probe');
+      const pkgVersion = (require('../package.json') as { version: string }).version;
+      await runHome({
+        bootstrap: args.skipPreflight
+          ? null
+          : async () => {
+              const { bootstrap } = await import('./cli/startup');
+              return bootstrap({ config });
+            },
+        // The command-center seat needs BOTH the Pi package and the Node floor
+        // (the same pair command-center-command itself enforces) — suggesting
+        // it on an old Node would dead-end the user.
+        piAvailable: probePi().available && checkPiNodeFloor().ok,
+        version: pkgVersion,
+      });
       break;
     }
 
