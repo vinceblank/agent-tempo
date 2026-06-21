@@ -67,6 +67,7 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
     getPlayers: handler('getPlayers', []),
     getEnsembleChat: handler('getEnsembleChat', { messages: [], total: 0, hasMore: false, hasConductor: false }),
     getSchedules: handler('getSchedules', []),
+    cancelSchedule: handler('cancelSchedule', undefined),
     isMaestroPaused: handler('isMaestroPaused', false),
     isAnySessionHeld: handler('isAnySessionHeld', false),
     listHosts: handler('listHosts', []),
@@ -716,6 +717,98 @@ describe('POST /v1/ensembles/:ensemble/recall', () => {
     });
     const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, { playerId: 'ghost' });
     expect(res.status).toBe(404);
+  });
+
+  // #742 — the command-center `/recall` board command opts into the full
+  // timeline (the dashboard keeps the count-only default).
+  it('full:true → returns the raw received+sent arrays (not a count)', async () => {
+    const b = await boot({
+      mock: {
+        returns: {
+          recall: {
+            received: [{ id: 'r1' }, { id: 'r2' }],
+            sent: [{ id: 's1' }],
+          },
+        },
+      },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, { playerId: 'tempo-eng', full: true });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      ok: true,
+      ensemble: 'demo',
+      playerId: 'tempo-eng',
+      received: [{ id: 'r1' }, { id: 'r2' }],
+      sent: [{ id: 's1' }],
+    });
+    // No count projection on the full path.
+    expect(body.messages).toBeUndefined();
+  });
+});
+
+// ── #742 — command-center read views + schedule cancel ────────────────────
+
+describe('GET /v1/ensembles/:ensemble/attachment-info (#742)', () => {
+  it('routes to client.attachmentInfo with the ?playerId query param', async () => {
+    const b = await boot({ mock: { returns: { attachmentInfo: { phase: 'processing', inFlightCount: 1 } } } });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/attachment-info?playerId=tempo-eng`);
+    expect(res.status).toBe(200);
+    expect(b.calls.find((c) => c.method === 'attachmentInfo')?.args).toEqual(['demo', 'tempo-eng']);
+    expect(await res.json()).toEqual({ phase: 'processing', inFlightCount: 1 });
+  });
+
+  it('400 missing-field when ?playerId absent', async () => {
+    const b = await boot();
+    const res = await fetch(`${b.url}/v1/ensembles/demo/attachment-info`);
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe('playerId');
+  });
+
+  it('404 when the session cannot be resolved', async () => {
+    const b = await boot({ mock: { throws: { attachmentInfo: new Error('No session found with name "ghost".') } } });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/attachment-info?playerId=ghost`);
+    expect(res.status).toBe(404);
+  });
+
+  it('405 on a non-GET method', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/attachment-info?playerId=x`, {});
+    expect(res.status).toBe(405);
+  });
+});
+
+describe('GET /v1/ensembles/:ensemble/schedules (#742)', () => {
+  it('routes to client.getSchedules and returns the entries', async () => {
+    const entries = [{ name: 's1', target: 'tempo-eng', type: 'once', nextFireAt: '2026-07-01T00:00:00Z', firedCount: 0, message: 'go', createdBy: 'op' }];
+    const b = await boot({ mock: { returns: { getSchedules: entries } } });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/schedules`);
+    expect(res.status).toBe(200);
+    expect(b.calls.find((c) => c.method === 'getSchedules')?.args).toEqual(['demo']);
+    expect(await res.json()).toEqual(entries);
+  });
+
+  it('405 on a non-GET method', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/schedules`, {});
+    expect(res.status).toBe(405);
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/unschedule (#742)', () => {
+  it('routes to client.cancelSchedule with the name', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/unschedule`, { name: 'nightly' });
+    expect(res.status).toBe(200);
+    expect(b.calls.find((c) => c.method === 'cancelSchedule')?.args).toEqual(['demo', 'nightly']);
+    expect(await res.json()).toEqual({ ok: true, ensemble: 'demo', name: 'nightly' });
+  });
+
+  it('400 missing-field on absent name', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/unschedule`, {});
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe('name');
   });
 });
 

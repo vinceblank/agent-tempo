@@ -7,7 +7,7 @@
  * Injected fetch / readPort / token so it's unit-testable without a daemon.
  */
 import { readPortFile } from '../../http/port-file';
-import type { AnswerEntry } from '../../types';
+import type { AnswerEntry, HostInfo, AttachmentInfo, ScheduleEntry, Message, SentMessage } from '../../types';
 import type { EnsembleSummary } from '../../client/interface';
 
 /** Env var holding the daemon admin (T3) token (writes + inner tail). */
@@ -240,6 +240,64 @@ export class MissionControlActions {
     return res.ok ? { ok: true, ensembles: res.data } : res;
   }
 
+  // ── Read surface: hosts (#742 gap 5) ──
+  /**
+   * List connected hosts (`GET /v1/hosts`, Tier-1 read) — the cluster host
+   * registry + freshness + capability profile, the same payload the dashboard
+   * `/hosts` view and the CLI `agent-tempo hosts` consume. NOT ensemble-scoped
+   * (the host registry is cluster-global), so it ignores the bound ensemble.
+   */
+  async listHosts(): Promise<{ ok: true; hosts: HostInfo[] } | { ok: false; error: string }> {
+    const res = await this.getJson<HostInfo[]>('/v1/hosts');
+    return res.ok ? { ok: true, hosts: res.data } : res;
+  }
+
+  // ── Read surface: attachment-info (#742 gap — /attachment-info) ──
+  /**
+   * A player's V2 attachment-lifecycle snapshot (`GET /v1/ensembles/:e/attachment-info`,
+   * Tier-1 read). Thin shim over `client.attachmentInfo` — the same payload the
+   * MCP `attachment_info` tool and CLI `attachment-info` render via the shared
+   * `formatAttachmentInfoForDisplay`. The player is a `?playerId=` query param.
+   */
+  async attachmentInfo(
+    playerId: string,
+  ): Promise<{ ok: true; info: AttachmentInfo } | { ok: false; error: string }> {
+    const res = await this.getJson<AttachmentInfo>(
+      `/v1/ensembles/${this.ens()}/attachment-info?playerId=${encodeURIComponent(playerId)}`,
+    );
+    return res.ok ? { ok: true, info: res.data } : res;
+  }
+
+  // ── Read surface: recall (#742 gap — /recall) ──
+  /**
+   * A player's full message timeline (received + sent). Hits the existing
+   * `POST /v1/ensembles/:e/recall` route with `{ full: true }` so the daemon
+   * returns the raw `{ received, sent }` arrays (the default count-only shape
+   * stays for the dashboard). Thin shim over `client.recall`; the caller feeds
+   * the result through the shared `buildTimeline`/`formatRecall` helpers. POST
+   * (not GET) because recall groups with the per-player action surface (T2).
+   */
+  async recall(
+    playerId: string,
+  ): Promise<{ ok: true; received: Message[]; sent: SentMessage[] } | { ok: false; error: string }> {
+    const res = await this.postJson<{ received: Message[]; sent: SentMessage[] }>(
+      `/v1/ensembles/${this.ens()}/recall`,
+      { playerId, full: true },
+    );
+    return res.ok ? { ok: true, received: res.data.received, sent: res.data.sent } : res;
+  }
+
+  // ── Read surface: schedules (#742 gap — /schedule list) ──
+  /**
+   * Active schedules for the bound ensemble (`GET /v1/ensembles/:e/schedules`,
+   * Tier-1 read). Thin shim over `client.getSchedules` — the same `ScheduleEntry[]`
+   * the MCP `schedules` tool and CLI render. Empty when no scheduler is running.
+   */
+  async listSchedules(): Promise<{ ok: true; schedules: ScheduleEntry[] } | { ok: false; error: string }> {
+    const res = await this.getJson<ScheduleEntry[]>(`/v1/ensembles/${this.ens()}/schedules`);
+    return res.ok ? { ok: true, schedules: res.data } : res;
+  }
+
   // ── Ensemble write surface (T2) ──
   cue(to: string, message: string): Promise<ActionResult> {
     // #822 — parse the deliverability hint so the board warns on a detached/gone
@@ -251,6 +309,22 @@ export class MissionControlActions {
   }
   play(release?: boolean): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/play`, release ? { release } : {});
+  }
+  /**
+   * Free HELD players via the dedicated `POST /v1/ensembles/:e/release` route
+   * (#742 gap 8 — `/go`). Optional `playerId` releases ONE held player; omitted
+   * releases all held in the ensemble. Distinct from `play(release:true)`, which
+   * ALSO clears the PAUSE axis — `/go` frees holds without touching pause.
+   */
+  release(playerId?: string): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/release`, playerId ? { playerId } : {});
+  }
+  /**
+   * Cancel a named schedule (`POST /v1/ensembles/:e/unschedule`, #742 gap —
+   * `/unschedule` & `/schedule delete`). Thin shim over `client.cancelSchedule`.
+   */
+  unschedule(name: string): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/unschedule`, { name });
   }
   restart(playerId: string, reason?: string): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/restart`, { playerId, ...(reason ? { reason } : {}) });

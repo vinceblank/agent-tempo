@@ -38,6 +38,10 @@ import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
 import { zodShapeToTypeBox } from '../zod-to-typebox';
 import { COAT_CHECK_CONTENT_MAX } from '../../utils/validation';
+import { formatHostList } from '../../utils/format-hosts';
+import { formatAttachmentInfoForDisplay } from '../../utils/attachment-format';
+import { buildTimeline, formatRecall } from '../../utils/recall-format';
+import type { ScheduleEntry } from '../../types';
 import type { McExtensionAPI, McExtensionContext, McOutboundMessage, McMessageOptions, McToolResult } from './pi-ui';
 
 /** The durable conductor a `/handoff` targets by default (matches catalog's conductorName default). */
@@ -63,6 +67,31 @@ const ASK_POLL_INTERVAL_MS = 1_000;
 /** Mint a url/path-safe correlation id for a Q&A ask (client-side; not workflow code). */
 function mintQuestionId(): string {
   return `q-${crypto.randomUUID()}`;
+}
+
+/** Compact recurrence label for a schedule (ms interval → "5m"/"1h"/…). */
+function formatScheduleInterval(ms: number): string {
+  if (ms >= 86_400_000) return `${ms / 86_400_000}d`;
+  if (ms >= 3_600_000) return `${ms / 3_600_000}h`;
+  if (ms >= 60_000) return `${ms / 60_000}m`;
+  return `${ms / 1000}s`;
+}
+
+/**
+ * #742 — render one {@link ScheduleEntry} for the board, mirroring the MCP
+ * `schedules` tool line shape (name → target | recurrence (bounds) | next + msg
+ * preview). Kept module-local + pure so the controller test can assert it.
+ */
+function formatScheduleLine(s: ScheduleEntry): string {
+  const recur = s.cronExpression
+    ? `cron: ${s.cronExpression} (${s.timezone || 'UTC'})`
+    : s.interval ? `every ${formatScheduleInterval(s.interval)}` : 'one-shot';
+  const bounds: string[] = [];
+  if (s.until) bounds.push(`until ${s.until}`);
+  if (s.remainingCount != null) bounds.push(`${s.firedCount}/${s.firedCount + s.remainingCount} fired`);
+  const boundsStr = bounds.length ? ` (${bounds.join(', ')})` : '';
+  const msgPreview = s.message.length > 60 ? s.message.slice(0, 57) + '...' : s.message;
+  return `• ${s.name} → ${s.target} | ${recur}${boundsStr} | next: ${s.nextFireAt}\n  msg: ${msgPreview}`;
 }
 
 /**
@@ -360,6 +389,151 @@ export class Controller {
   async cmdPlayers(ctx: McExtensionContext): Promise<void> {
     const ids = sortedPlayerIds(this.model);
     this.notify(ctx, ids.length ? `Players (${ids.length}): ${ids.join(', ')}` : 'No players in the ensemble.');
+  }
+
+  // ── Hosts (#742 gap 5) ──
+
+  /**
+   * Connected-host listing — reuses the shared `formatHostList` formatter (the
+   * same text the CLI `hosts` and MCP `hosts` tool render). `includeStale`
+   * surfaces hosts past their liveness window (`/hosts --all`). Returns the
+   * text so a future planner tool can reuse it (same shape as
+   * {@link ensemblesText}). NOT ensemble-scoped — the host registry is global.
+   */
+  async hostsText(includeStale: boolean): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.listHosts();
+    if (!r.ok) return r;
+    return { ok: true, text: formatHostList(r.hosts, { includeStale }) };
+  }
+
+  async cmdHosts(args: string, ctx: McExtensionContext): Promise<void> {
+    const includeStale = /(?:^|\s)(?:--all|-a)(?:\s|$)/.test(args);
+    const r = await this.hostsText(includeStale);
+    this.notify(ctx, r.ok ? r.text : `hosts failed: ${r.error}`);
+  }
+
+  // ── Status (#742 gap 9) ──
+
+  /**
+   * Full board detail — the human counterpart to the `observe_board` planner
+   * tool. Renders the live `BoardModel` (already kept current by the coarse SSE
+   * stream), so there's no extra fetch: the board IS the snapshot. Richer than
+   * the TUI `/status` overlay (phase glyphs + currentTool + context% + tail).
+   */
+  cmdStatus(ctx: McExtensionContext): void {
+    this.notify(ctx, renderBoard(this.model, this.localHost).join('\n'));
+  }
+
+  // ── Release / go (#742 gap 8) ──
+
+  /**
+   * `/go [player]` — free HELD players. Uses the dedicated `release` route so
+   * it frees holds WITHOUT clearing the PAUSE axis (that's `/play` / `/unpause`).
+   * No arg → release all held in the ensemble; `/go <player>` releases one.
+   */
+  async cmdGo(args: string, ctx: McExtensionContext): Promise<void> {
+    const player = args.trim().split(/\s+/).filter(Boolean)[0];
+    const label = player ? `go (release ${player})` : 'go (release held)';
+    this.report(ctx, label, await this.actions.release(player || undefined));
+  }
+
+  // ── Attachment-info (#742 — /attachment-info) ──
+
+  /**
+   * A player's attachment-lifecycle snapshot — reuses the shared
+   * `formatAttachmentInfoForDisplay` (the same text the CLI `attachment-info`
+   * and MCP `attachment_info` tool render). Returns the text so a future planner
+   * tool can reuse it (same shape as {@link hostsText}).
+   */
+  async attachmentInfoText(playerId: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.attachmentInfo(playerId);
+    if (!r.ok) return r;
+    return { ok: true, text: formatAttachmentInfoForDisplay(playerId, r.info).join('\n') };
+  }
+
+  async cmdAttachmentInfo(args: string, ctx: McExtensionContext): Promise<void> {
+    const player = args.trim().split(/\s+/).filter(Boolean)[0];
+    if (!player) {
+      this.notify(ctx, 'Usage: /attachment-info <player>');
+      return;
+    }
+    const r = await this.attachmentInfoText(player);
+    this.notify(ctx, r.ok ? r.text : `attachment-info failed: ${r.error}`);
+  }
+
+  // ── Recall (#742 — /recall) ──
+
+  /**
+   * A player's message timeline — reuses the shared `buildTimeline`/`formatRecall`
+   * helpers (the same render the CLI `recall` and MCP `recall` tool produce).
+   * Includes sent messages (operator wants the full picture). Pulls the full
+   * timeline via the `{ full: true }` recall route, NOT the count-only default.
+   */
+  async recallText(playerId: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.recall(playerId);
+    if (!r.ok) return r;
+    const timeline = buildTimeline(r.received, r.sent, true);
+    return { ok: true, text: formatRecall(timeline).text };
+  }
+
+  async cmdRecall(args: string, ctx: McExtensionContext): Promise<void> {
+    const player = args.trim().split(/\s+/).filter(Boolean)[0];
+    if (!player) {
+      this.notify(ctx, 'Usage: /recall <player>');
+      return;
+    }
+    const r = await this.recallText(player);
+    this.notify(ctx, r.ok ? r.text : `recall failed: ${r.error}`);
+  }
+
+  // ── Schedules (#742 — /schedule, /unschedule) ──
+
+  /**
+   * Active-schedule listing — renders each {@link ScheduleEntry} in the same
+   * shape the MCP `schedules` tool produces (name → target | recurrence | next).
+   */
+  async schedulesText(): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.listSchedules();
+    if (!r.ok) return r;
+    if (r.schedules.length === 0) return { ok: true, text: 'No active schedules.' };
+    return { ok: true, text: r.schedules.map(formatScheduleLine).join('\n') };
+  }
+
+  /**
+   * `/schedule [list | delete <name>]` — list active schedules (default) or
+   * cancel one. CREATE is intentionally NOT here: there is no thin-shim create
+   * method on the client (the MCP `schedule` tool signals the scheduler workflow
+   * directly), so create stays on the MCP tool / CLI per the architect's
+   * thin-shim ruling.
+   */
+  async cmdSchedule(args: string, ctx: McExtensionContext): Promise<void> {
+    const [sub, rest] = Controller.splitFirst(args);
+    if (sub === 'delete' || sub === 'rm') {
+      const name = rest.trim().split(/\s+/).filter(Boolean)[0];
+      if (!name) {
+        this.notify(ctx, 'Usage: /schedule delete <name>');
+        return;
+      }
+      this.report(ctx, `unschedule ${name}`, await this.actions.unschedule(name));
+      return;
+    }
+    if (sub === 'create' || sub === 'new' || sub === 'add') {
+      this.notify(ctx, 'Schedule creation runs through the MCP `schedule` tool / `agent-tempo schedule` CLI — the board lists and deletes only.');
+      return;
+    }
+    // Default (no arg or `list`) → list.
+    const r = await this.schedulesText();
+    this.notify(ctx, r.ok ? r.text : `schedules failed: ${r.error}`);
+  }
+
+  /** `/unschedule <name>` — alias for `/schedule delete <name>`. */
+  async cmdUnschedule(args: string, ctx: McExtensionContext): Promise<void> {
+    const name = args.trim().split(/\s+/).filter(Boolean)[0];
+    if (!name) {
+      this.notify(ctx, 'Usage: /unschedule <name>');
+      return;
+    }
+    this.report(ctx, `unschedule ${name}`, await this.actions.unschedule(name));
   }
 
   // ── Multi-ensemble home (#790) ──
@@ -1098,6 +1272,13 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
 
     // Operator commands (display-only widget → slash-commands drive everything).
     pi.registerCommand('players', { description: 'List ensemble players', handler: (_a, ctx) => ctrl.cmdPlayers(ctx) });
+    pi.registerCommand('hosts', { description: 'List connected hosts (/hosts [--all])', handler: (a, ctx) => ctrl.cmdHosts(a, ctx) });
+    pi.registerCommand('status', { description: 'Show the full board detail', handler: (_a, ctx) => ctrl.cmdStatus(ctx) });
+    pi.registerCommand('go', { description: 'Release HELD players (/go [player])', handler: (a, ctx) => ctrl.cmdGo(a, ctx) });
+    pi.registerCommand('attachment-info', { description: 'Show a player\'s attachment lifecycle (/attachment-info <player>)', handler: (a, ctx) => ctrl.cmdAttachmentInfo(a, ctx) });
+    pi.registerCommand('recall', { description: 'Show a player\'s message timeline (/recall <player>)', handler: (a, ctx) => ctrl.cmdRecall(a, ctx) });
+    pi.registerCommand('schedule', { description: 'List or delete schedules (/schedule [list | delete <name>])', handler: (a, ctx) => ctrl.cmdSchedule(a, ctx) });
+    pi.registerCommand('unschedule', { description: 'Cancel a schedule (/unschedule <name>)', handler: (a, ctx) => ctrl.cmdUnschedule(a, ctx) });
     // #790 — multi-ensemble home: list + re-bind.
     pi.registerCommand('ensembles', { description: 'List all ensembles (▶ marks the bound one)', handler: (_a, ctx) => ctrl.cmdEnsembles(ctx) });
     pi.registerCommand('ensemble', { description: 'Switch the board to another ensemble (/ensemble <name> [--force])', handler: (a, ctx) => ctrl.cmdEnsemble(a, ctx) });

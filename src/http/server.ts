@@ -584,6 +584,36 @@ export async function handle(
     return handleCoatCheckGet(res, ctx.client, ensemble, ticket);
   }
 
+  // #742 — per-player attachment-info read (`/attachment-info` board command).
+  // 2-segment GET; MUST be matched BEFORE the generic writeMatch below, which
+  // would otherwise 404 `attachment-info` as an unknown write action. The
+  // player is a `?playerId=` query param (the path stays ensemble-scoped).
+  const attachmentInfoMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/attachment-info$/);
+  if (attachmentInfoMatch) {
+    const ensemble = decodeURIComponent(attachmentInfoMatch[1]);
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
+    if (method !== 'GET') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
+    }
+    const playerId = url.searchParams.get('playerId');
+    if (!playerId) return errorResponse(res, 400, { error: 'missing-field', field: 'playerId' });
+    return handleAttachmentInfo(res, ctx, ensemble, playerId);
+  }
+
+  // #742 — active-schedule listing (`/schedule list` board command). 2-segment
+  // GET; same ordering rationale as attachment-info (precede writeMatch). The
+  // schedule WRITE path is the `unschedule` write action below + the MCP
+  // `schedule` tool for create (no thin-shim create method on the client).
+  const schedulesMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/schedules$/);
+  if (schedulesMatch) {
+    const ensemble = decodeURIComponent(schedulesMatch[1]);
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
+    if (method !== 'GET') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
+    }
+    return handleSchedules(res, ctx, ensemble);
+  }
+
   // Write surface (PR-7a of #340) — POST `/v1/ensembles/:ensemble/<action>`
   // Match BEFORE the GET-only method gate; everything else (POST to a
   // read endpoint, GET to a write endpoint) flows into the 405 fallback
@@ -890,6 +920,45 @@ async function handleHosts(
   // The 3 s cache lives inside `listHosts`; we don't add another layer.
   const hosts = await ctx.client.listHosts();
   jsonResponse(res, 200, hosts);
+}
+
+/**
+ * #742 — a player's V2 attachment-lifecycle snapshot. Thin shim over
+ * `client.attachmentInfo`; the command-center `/attachment-info` board command
+ * renders the payload via the shared `formatAttachmentInfoForDisplay`. A 404 is
+ * surfaced when the player's session can't be resolved (it throws "No session
+ * found …", mirroring the recall not-found contract).
+ */
+async function handleAttachmentInfo(
+  res: http.ServerResponse,
+  ctx: HandleContext,
+  ensemble: string,
+  playerId: string,
+): Promise<void> {
+  try {
+    const info = await ctx.client.attachmentInfo(ensemble, playerId);
+    jsonResponse(res, 200, info);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/no session found|not found/i.test(message)) {
+      return errorResponse(res, 404, { error: 'session-not-found', ensemble, playerId, detail: message });
+    }
+    throw err;
+  }
+}
+
+/**
+ * #742 — active-schedule listing. Thin shim over `client.getSchedules` (which
+ * already degrades to `[]` when no scheduler is running). The command-center
+ * `/schedule [list]` board command renders the entries.
+ */
+async function handleSchedules(
+  res: http.ServerResponse,
+  ctx: HandleContext,
+  ensemble: string,
+): Promise<void> {
+  const schedules = await ctx.client.getSchedules(ensemble);
+  jsonResponse(res, 200, schedules);
 }
 
 /**
