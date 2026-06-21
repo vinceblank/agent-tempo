@@ -73,6 +73,7 @@ export const WRITE_ACTIONS = [
   'destroy',
   'detach',
   'recall',
+  'unschedule',
   'shutdown',
 ] as const;
 export type WriteAction = (typeof WRITE_ACTIONS)[number];
@@ -122,6 +123,7 @@ export async function handleWriteRoute(
       case 'destroy': return await handleDestroy(res, client, ensemble, body);
       case 'detach':  return await handleDetach(res, client, ensemble, body);
       case 'recall':  return await handleRecall(res, client, ensemble, body);
+      case 'unschedule': return await handleUnschedule(res, client, ensemble, body);
       case 'shutdown': return await handleShutdown(res, client, ensemble, body);
     }
   } catch (err) {
@@ -350,11 +352,37 @@ async function handleRecall(
   // The dashboard's `RecallResult` consumer expects a count, not the raw
   // arrays — projecting `received` + `sent` lengths here keeps the wire
   // payload tight and avoids leaking inbox + sent-history shape into the
-  // browser-side type. Callers wanting the full timeline use the MCP
-  // `recall` tool / TempoClient method directly.
+  // browser-side type. Callers wanting the full timeline pass `{ full: true }`
+  // (the command-center `/recall` board command, #742) or use the MCP `recall`
+  // tool / TempoClient method directly.
   const result = await client.recall(ensemble, playerId);
+  if (body.full === true) {
+    // Full timeline — the operator board feeds this through the shared
+    // `buildTimeline`/`formatRecall` helpers, same as the MCP tool. Kept behind
+    // an opt-in flag so the count-only default stays the dashboard's shape.
+    return jsonResponse(res, 200, { ok: true, ensemble, playerId, received: result.received, sent: result.sent });
+  }
   const messages = result.received.length + result.sent.length;
   jsonResponse(res, 200, { ok: true, ensemble, playerId, messages });
+}
+
+/**
+ * Cancel a named schedule (#742 — the command-center `/unschedule` &
+ * `/schedule delete`). Thin shim over `client.cancelSchedule`. Body is
+ * `{ name }` (the schedule key), distinct from the per-player `{ playerId }`
+ * shape — schedules are ensemble-scoped, keyed by name. 200 (the cancel IS
+ * the operation, not a queued effect).
+ */
+async function handleUnschedule(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const name = stringField(body, 'name');
+  if (!name) return errorResponse(res, 400, { error: 'missing-field', field: 'name' });
+  await client.cancelSchedule(ensemble, name);
+  jsonResponse(res, 200, { ok: true, ensemble, name });
 }
 
 /**
