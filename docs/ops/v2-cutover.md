@@ -171,6 +171,14 @@ automated rollback command.
 - **Mixed-version error messages.** The `protocolVersion` rejection at
   `claimAttachment` will surface an actionable error; exact wording may be
   refined during the beta period.
+- **Command-center `broadcast` and `migrate` not in beta.1.** The operator
+  board does not yet include `broadcast` or `migrate` actions. Use the CLI or
+  web dashboard during the beta window:
+  ```bash
+  agent-tempo broadcast "message"     # CLI fallback
+  agent-tempo migrate <player> --to <host>  # CLI fallback
+  ```
+  Command-center support for both actions lands in beta.2.
 
 ---
 
