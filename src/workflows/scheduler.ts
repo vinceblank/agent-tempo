@@ -7,7 +7,10 @@ import {
   proxyActivities,
   patched,
   log as workflowLog,
+  upsertMemo,
 } from '@temporalio/workflow';
+import { MEMO_KEYS } from '../utils/search-attributes';
+import { PROTOCOL_VERSION } from '../constants';
 
 import {
   addScheduleSignal,
@@ -46,6 +49,11 @@ export interface SchedulerInput {
 }
 
 export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<void> {
+  // #786 — 2.0 cutover protocol stamp (see constants.PROTOCOL_VERSION). Memo,
+  // re-upserted every run incl. CAN, so the boot guard sees every Running 2.0
+  // scheduler as stamped; a 1.x scheduler never runs this → guard refuses.
+  upsertMemo({ [MEMO_KEYS.protocol]: PROTOCOL_VERSION });
+
   let entries: ScheduleEntry[] = input.entries ?? [];
   let dirty = false; // flag to wake the loop when signals arrive
   let schedulerPaused = input.paused ?? false;

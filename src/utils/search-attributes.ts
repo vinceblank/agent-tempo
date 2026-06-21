@@ -65,6 +65,13 @@ export const MEMO_KEYS = {
   workDir: 'AgentTempoWorkDir',
   agentType: 'AgentTempoAgentType',
   gitBranch: 'AgentTempoGitBranch',
+  // #786 — 2.0 cutover protocol stamp. A NUMBER memo (`PROTOCOL_VERSION`) written
+  // on every 2.0-created workflow's start input + memo. The daemon boot guard
+  // reads it straight off `workflow.list()` results (memo IS returned there) to
+  // refuse booting against un-stamped 1.x Running runs — no per-workflow query.
+  // Memo, not a search attribute: avoids a 6th Keyword (the #747 SA-diet keeps
+  // us at 5/10) and needs no operator registration. See constants.PROTOCOL_VERSION.
+  protocol: 'AgentTempoProtocol',
 } as const;
 
 /**
@@ -140,6 +147,27 @@ export function getMemoBool(
 ): boolean | undefined {
   const v = carrier.memo?.[name];
   return typeof v === 'boolean' ? v : undefined;
+}
+
+/** Read a memo value as a number. `undefined` when absent or non-number. */
+export function getMemoNumber(
+  carrier: WorkflowMetaCarrier,
+  name: string,
+): number | undefined {
+  const v = carrier.memo?.[name];
+  return typeof v === 'number' ? v : undefined;
+}
+
+/**
+ * #786 — read the 2.0 cutover protocol stamp from a workflow's memo
+ * (`AgentTempoProtocol`). Returns `undefined` for an un-stamped (1.x) workflow.
+ * The boot guard treats any value other than `PROTOCOL_VERSION` (incl.
+ * `undefined`) as un-stamped and refuses to register workers.
+ */
+export function getWorkflowProtocol(
+  carrier: WorkflowMetaCarrier,
+): number | undefined {
+  return getMemoNumber(carrier, MEMO_KEYS.protocol);
 }
 
 /**
