@@ -18,8 +18,7 @@ Reference documentation for agent-tempo. See the main [README](../README.md) for
 | [configuration.md](configuration.md) | Configuration — env vars, config file, Temporal Cloud |
 | [dev-mode.md](dev-mode.md) | Dev mode — isolated `--dev` profile, mock adapter, scenario library |
 | [copilot.md](copilot.md) | Copilot CLI integration (experimental) |
-| [tui.md](tui.md) | Interactive TUI — slash commands, messaging, scheduling, ensemble management |
-| [tui-performance.md](tui-performance.md) | TUI performance — Ink/React lessons for `src/tui/` contributors |
+| [concepts.md](concepts.md) | Concepts glossary — incl. the command-center mission-control board (the interactive operator surface; the Ink TUI was removed in #789) |
 | [daemon.md](daemon.md) | Worker Daemon — background process that runs Temporal workers |
 | [release-process.md](release-process.md) | Release process — version bump, tag, and publish sequence |
 | [troubleshooting.md](troubleshooting.md) | Troubleshooting — stale sessions, common issues, upgrade notes |

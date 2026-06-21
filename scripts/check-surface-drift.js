@@ -2,10 +2,13 @@
 /**
  * check-surface-drift.js — Verify docs/SURFACE-REGISTRY.md matches source.
  *
- * Checks three surfaces:
+ * Checks two surfaces:
  *   1. MCP tools       src/tools/*.ts           defineTool(server, 'name', ...)
  *   2. CLI commands    src/cli.ts (switch cases) + version/help/daemon/upgrade/config
- *   3. TUI commands    src/tui/commands.ts       COMMANDS record → usage: '/name...'
+ *
+ * (The TUI slash-command surface was removed in #789 with the Ink TUI; the
+ * command-center board registers its operator commands via `pi.registerCommand`
+ * in `src/pi/mission-control/extension.ts`, which is not a drift surface.)
  *
  * Each surface is diffed against docs/SURFACE-REGISTRY.md:
  *   • "in source, not in registry" → undocumented surface — add it to the registry
@@ -54,11 +57,6 @@ function parseRegistryTableFirstCol(registryContent, sectionTitle) {
 
 /** Normalize a CLI command: take only the first whitespace-delimited token. */
 function normalizeCli(s) {
-  return s.split(/\s+/)[0];
-}
-
-/** Normalize a TUI command: take only the first whitespace-delimited token. */
-function normalizeTui(s) {
   return s.split(/\s+/)[0];
 }
 
@@ -133,28 +131,6 @@ function extractCliCommandsFromSource() {
   return commands;
 }
 
-// ── 3. TUI Slash Commands ─────────────────────────────────────────────────────
-
-function extractTuiCommandsFromSource() {
-  const src = read('src/tui/commands.ts');
-
-  // Scope to the COMMANDS record so we don't accidentally match TypeScript
-  // interface declarations or comments above the record.
-  const recordStart = src.indexOf('export const COMMANDS');
-  if (recordStart === -1) {
-    throw new Error('COMMANDS record not found in src/tui/commands.ts');
-  }
-  const section = src.slice(recordStart);
-
-  const commands = new Set();
-  // Each command has:  usage: '/name [args]',
-  // Capture the leading /name token from the usage string.
-  for (const m of section.matchAll(/usage:\s*'\/([\w-]+)/g)) {
-    commands.add('/' + m[1]);
-  }
-  return commands;
-}
-
 // ── Diff helper ───────────────────────────────────────────────────────────────
 
 /**
@@ -196,17 +172,11 @@ const cliSource   = extractCliCommandsFromSource();
 const cliRegistry = parseRegistryTableFirstCol(registry, '## 2. CLI Commands');
 const cliDrift    = diff('CLI commands', cliSource, cliRegistry, normalizeCli, normalizeCli);
 
-// Surface 3 — TUI slash commands (source gives /name; registry column can
-// include arguments; normalize both sides to first whitespace token).
-const tuiSource   = extractTuiCommandsFromSource();
-const tuiRegistry = parseRegistryTableFirstCol(registry, '## 3. TUI Slash Commands');
-const tuiDrift    = diff('TUI slash commands', tuiSource, tuiRegistry, normalizeTui, normalizeTui);
-
 // ── Report ────────────────────────────────────────────────────────────────────
 
 let driftFound = false;
 
-for (const { label, undocumented, phantom } of [mcpDrift, cliDrift, tuiDrift]) {
+for (const { label, undocumented, phantom } of [mcpDrift, cliDrift]) {
   if (undocumented.length === 0 && phantom.length === 0) {
     console.log(`✓  ${label}: clean`);
     continue;

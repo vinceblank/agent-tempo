@@ -3,8 +3,10 @@
  * `TempoClientWithSpawn` split (ADR 0007).
  *
  * The split is the type system's enforcement layer for headless safety:
- * the daemon, MCP tools, and the SSE event source consume `Core`, while
- * only the TUI (and `ensure-conductor-spawned`) opts into `WithSpawn`.
+ * the daemon, MCP tools, and the SSE event source consume `Core`, while the
+ * spawn surface is opt-in via `WithSpawn`. (Its only production opt-in was the
+ * `ensure-conductor-spawned` helper behind the Ink TUI, deleted in #789; the
+ * split is retained pending a follow-up cleanup decision.)
  * These tests pin three invariants:
  *
  *   1. `createTempoClientCore` returns an object that does NOT carry

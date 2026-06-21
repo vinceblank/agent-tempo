@@ -1,11 +1,12 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Vitest configuration for TUI/client pure-logic unit tests.
+ * Vitest configuration for pure-logic unit tests.
  *
- * Phase 1 unit tests live under `tests/tui/` and `tests/client/`.
- * Temporal workflow/activity tests continue to run under Mocha via
- * the `test` script — this config targets ONLY the pure-logic layer.
+ * Phase 1 unit tests live under `tests/` (client, cli, http, pi, tools, …).
+ * Temporal workflow/activity tests continue to run under Mocha via the `test`
+ * script — this config targets ONLY the pure-logic layer. (The `tests/tui/`
+ * suite was removed with the Ink TUI in #789.)
  *
  * See issue #105 for the testing strategy breakdown.
  */
@@ -19,7 +20,6 @@ export default defineConfig({
   },
   test: {
     include: [
-      'tests/tui/**/*.test.ts',
       'tests/client/**/*.test.ts',
       'tests/ensemble/**/*.test.ts',
       'tests/config/**/*.test.ts',

@@ -1,11 +1,12 @@
 /**
  * Shared helper for restore-after-shutdown: make sure a conductor terminal
- * is attached to an ensemble before `/restore` completes. Called by the
- * TUI `/restore` slash command (`App.tsx`, `commands.ts`).
+ * is attached to an ensemble before `/restore` completes.
  *
- * NOTE: This file lives in `src/client/` because the CLI `restore` command
- * was expected to adopt it. If no CLI consumer adopts within 2 PRs after
- * #308 merges, move to `src/tui/utils/` — current consumers are TUI-only.
+ * NOTE (#789): its sole production consumer was the TUI `/restore` slash
+ * command, which was deleted with the Ink TUI. This helper (and the `WithSpawn`
+ * client variant it depends on — ADR 0007) is now orphaned in production,
+ * exercised only by `tests/client/ensure-conductor-spawned.test.ts`. Kept
+ * compiling + tested pending a follow-up decision on the core/withSpawn split.
  *
  * Returns a structured outcome so callers can render a summary without
  * parsing strings. Never throws — callers should treat a missing conductor

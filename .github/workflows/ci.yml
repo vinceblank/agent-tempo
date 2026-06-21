@@ -512,8 +512,10 @@ jobs:
           EOF
 
   test-tui:
-    # Vitest suite (tests/tui + tests/client). Independent of Mocha, so it runs
-    # once across the Node matrix rather than per Mocha shard.
+    # Vitest pure-logic suite (tests/ — client, cli, http, pi, tools, …).
+    # Independent of Mocha, so it runs once across the Node matrix rather than
+    # per Mocha shard. Job name retained post-#789 (the Ink TUI + its tests/tui
+    # suite were deleted) to preserve branch-protection required-check names.
     runs-on: ubuntu-latest
     needs: [lint-test-ensemble, changes]
     # #354 + #355: skip on docs-only PRs and on push-to-main.
@@ -540,7 +542,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run Vitest (TUI + client)
+      - name: Run Vitest (pure-logic suite)
         run: npm run test:tui
 
   build-and-test-windows:
@@ -679,7 +681,7 @@ jobs:
       matrix:
         node-version: [20, 22, 24]
     steps:
-      - run: echo "docs-only PR — TUI vitest skipped"
+      - run: echo "docs-only PR — vitest pure-logic suite skipped"
 
   build-and-test-windows-noop:
     name: build-and-test-windows (shard-${{ matrix.shard }}, node-22)

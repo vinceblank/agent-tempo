@@ -27,11 +27,11 @@ export function printHelp(): void {
 ${out.bold('agent-tempo')} — Multi-session Claude Code coordination via Temporal
 
 ${out.bold('Getting started:')}
-  ${out.cyan('agent-tempo up')}                  Start infrastructure, then launch the TUI with ${out.dim('agent-tempo')}
+  ${out.cyan('agent-tempo up')}                  Start infrastructure, then run ${out.dim('agent-tempo')} for status + operator hints
 
 ${out.bold('Usage:')}
-  agent-tempo                         Launch the TUI (auto-provisions + opens home view)
-  agent-tempo <ensemble>              Launch the TUI directly into an ensemble view
+  agent-tempo                         Auto-provision, show status, and print operator hints
+  agent-tempo <ensemble>              Same, scoped to one ensemble's status
   agent-tempo <command> [options]
 
 ${out.bold('Commands:')}
@@ -61,10 +61,10 @@ ${out.bold('Commands:')}
   ${out.cyan('preflight')}                Run preflight checks only
   ${out.cyan('help')}                     Show this help message
 
-${out.bold('Removed — use the TUI:')}
-  ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown')}
-  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `agent-tempo` · /recruit · /destroy')}
-  ${out.dim('resume')}                              → ${out.dim('/play')}
+${out.bold('Removed — use the command-center board')} ${out.dim('(agent-tempo command-center)')}:
+  ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown · /migrate')}
+  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('agent-tempo up · /recruit · /destroy')}
+  ${out.dim('resume / tui')}                        → ${out.dim('/play · run `agent-tempo` (status) or `command-center` (board)')}
   See https://github.com/vinceblank/agent-tempo/issues/285 for the full migration table.
 
 ${out.bold('Connection options (all commands):')}

@@ -3,13 +3,17 @@
  *
  * The breaking-change posture of #285 removed ten CLI verbs with no alias
  * period. Each removed verb should produce a friendly error pointing at
- * the TUI equivalent instead of silently hitting the default "Unknown
- * command" branch.
+ * the command-center board equivalent instead of silently hitting the
+ * default "Unknown command" branch.
  *
  * #432 promoted `pause` from a removed verb to a dev-mode-live verb (see
  * `src/cli/dev-verbs.ts`). The row was deleted from REMOVED_VERBS in the
- * same PR so the verb's "live in dev mode" status is single-sourced —
- * the table now enumerates nine verbs.
+ * same PR so the verb's "live in dev mode" status is single-sourced.
+ *
+ * #789 deleted the Ink TUI and added `tui` to the table (a bare `agent-tempo`
+ * now lands on status + hints) and repointed every hint from "Use the TUI" to
+ * "Use the command-center board" — the TUI's parity replacement. The table now
+ * enumerates ten verbs.
  */
 import { describe, it, expect } from 'vitest';
 import { REMOVED_VERBS, removedVerbMessage } from '../../src/cli/removed-verbs';
@@ -25,14 +29,17 @@ const EXPECTED_VERBS = [
   'migrate',
   // `pause` removed from this list by #432 — promoted to a dev-mode verb.
   'resume',
+  // `tui` added by #789 — the Ink TUI was deleted; a bare `agent-tempo` now
+  // lands on status + hints, and `agent-tempo tui` gets a migration hint.
+  'tui',
 ];
 
 describe('REMOVED_VERBS', () => {
-  it('enumerates the nine verbs still removed (post-#432: pause promoted to dev-mode)', () => {
+  it('enumerates the ten verbs still removed (post-#432 pause→dev-mode; post-#789 tui added)', () => {
     expect(Object.keys(REMOVED_VERBS).sort()).toEqual([...EXPECTED_VERBS].sort());
   });
 
-  it('names a TUI equivalent for every removed verb', () => {
+  it('names a board equivalent for every removed verb', () => {
     for (const verb of EXPECTED_VERBS) {
       expect(REMOVED_VERBS[verb], `verb "${verb}" missing hint`).toBeTruthy();
     }
@@ -47,12 +54,12 @@ describe('REMOVED_VERBS', () => {
 });
 
 describe('removedVerbMessage', () => {
-  it('includes the verb, the TUI equivalent, and the #285 link', () => {
+  it('includes the verb, the board equivalent, and the #285 link', () => {
     for (const verb of EXPECTED_VERBS) {
       const msg = removedVerbMessage(verb);
       expect(msg).toContain(`"${verb}"`);
-      expect(msg).toContain('Use the TUI');
-      expect(msg).toContain('agent-tempo → ');
+      expect(msg).toContain('Use the command-center board');
+      expect(msg).toContain('agent-tempo command-center → ');
       expect(msg).toContain(REMOVED_VERBS[verb]);
       expect(msg).toContain('github.com/vinceblank/agent-tempo/issues/285');
     }

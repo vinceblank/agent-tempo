@@ -7,8 +7,11 @@
  * no TTY and a stray spawn would launch a terminal nothing can render.
  *
  * The boundary is enforced by the type system: headless callers depend on
- * `TempoClientCore`; only the TUI (and its `ensure-conductor-spawned`
- * helper) opts into the spawn surface.
+ * `TempoClientCore`; the spawn surface is opt-in.
+ *
+ * NOTE (#789): the only production opt-in was the deleted Ink TUI (via its
+ * `ensure-conductor-spawned` helper). This variant is now orphaned in
+ * production — kept compiling pending a follow-up decision on the split.
  *
  * See `docs/adr/0007-tempoclient-core-withspawn-split.md`.
  */

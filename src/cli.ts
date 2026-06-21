@@ -115,7 +115,9 @@ interface ParsedArgs {
 
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
-    command: 'tui',
+    // #789 — the TUI is deleted; a bare `agent-tempo` now resolves to the
+    // `home` command (bootstrap + status + hints), NOT a terminal UI launch.
+    command: 'home',
     positional: [],
     dir: process.cwd(),
     skipPreflight: false,
@@ -761,36 +763,39 @@ async function main() {
       break;
     }
 
-    case 'tui': {
+    case 'home': {
+      // #789 — the bare `agent-tempo` landing (D2, @vinceblank-confirmed). The
+      // Ink TUI was deleted; a bare invocation now AUTO-PROVISIONS (bootstrap),
+      // shows live `status`, then points the operator at the interactive
+      // surfaces (the command-center board + web dashboard). No terminal UI.
       const config = getConfig(overrides);
-      // If --ensemble or positional arg given, start in single-ensemble view.
-      // Otherwise, start in multi-ensemble home view.
-      const tuiEnsemble = args.ensemble || args.positional[1] || undefined;
+      const homeEnsemble = args.ensemble || args.positional[1] || undefined;
 
-      // #289 / S7: run the auto-provisioning bootstrap before handing off
-      // to the TUI. Steps 1–6 register MCP, ensure Temporal reachability,
-      // boot the daemon, and prefetch badges + ensembles so the TUI home
-      // view renders instantly. `skipPreflight` bypass: power users can
-      // opt out if the cache / disk-probe cost ever regresses (no current
-      // way to trigger, but the flag is already on the parser).
-      let bootstrapResult;
+      // #289 / S7: run the auto-provisioning bootstrap (register MCP, ensure
+      // Temporal reachability, boot the daemon). Best-effort — per-step failures
+      // degrade gracefully; a thrown error (outside the step boundaries) is
+      // logged and we still show status + hints. `--skip-preflight` opts out.
       if (!args.skipPreflight) {
         const { bootstrap } = await import('./cli/startup');
         try {
-          bootstrapResult = await bootstrap({ config });
+          await bootstrap({ config });
         } catch (err) {
-          // Bootstrap is best-effort — per-step failures degrade into
-          // `StepOutcome.status: 'failed'` and a usable result. A thrown
-          // error means something outside the step boundaries broke
-          // (e.g. cache-dir creation). Log + continue with an undefined
-          // bootstrap payload so the TUI still launches.
           out.warn(`Bootstrap hit an unexpected error: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
-      // Dynamic import — TUI module uses ESM ink
-      const { run: runTui } = await import('./tui/index');
-      await runTui({ config, ensemble: tuiEnsemble, ...(bootstrapResult ? { bootstrap: bootstrapResult } : {}) });
+      // Live status (sessions + schedules). Self-contained; opens + closes its
+      // own Temporal connection. Tolerant of an unreachable Temporal (it prints
+      // a connect hint and exits) — so the hints below only print on success.
+      await status({ ensemble: homeEnsemble, ...overrides });
+
+      // Operator hints — the interactive surfaces that replaced the TUI.
+      out.log('');
+      out.log(out.bold('Next:'));
+      out.log(`  ${out.cyan('agent-tempo command-center')}   Operator board — live ensemble view + controls (alias: cc/board)`);
+      out.log(`  ${out.cyan('agent-tempo up --agent pi')}    Launch a conductor/player in an ensemble`);
+      out.log(`  ${out.cyan('agent-tempo dashboard')}        Open the web dashboard`);
+      out.log(`  ${out.dim('agent-tempo help')}             All commands`);
       break;
     }
 

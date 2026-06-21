@@ -1,8 +1,11 @@
 /**
  * TempoClient — public interface and related types.
  *
- * Extracted from `src/tui/client.ts` so that non-TUI consumers (CLI, tests,
- * external integrations) can depend on the interface without pulling in Ink/React.
+ * Originally extracted from the former `src/tui/client.ts` so that headless
+ * consumers (CLI, tests, external integrations) could depend on the interface
+ * without pulling in Ink/React. (The Ink TUI was deleted in #789; the interface
+ * remains the shared contract for the CLI, daemon, command-center board, and
+ * external integrations.)
  */
 import type {
   AgentType,
