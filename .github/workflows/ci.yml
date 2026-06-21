@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v2]
   pull_request:
-    branches: [main]
+    branches: [main, v2]
   workflow_dispatch:
 
 concurrency:
@@ -517,9 +517,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-test-ensemble, changes]
     # #354 + #355: skip on docs-only PRs and on push-to-main.
+    # Skip on v2 branch/PRs — TUI is deleted in #789 and vitest tests go with it.
     if: |
-      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
-      || github.event_name == 'workflow_dispatch'
+      ((github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch')
+      && github.base_ref != 'v2'
+      && github.ref != 'refs/heads/v2'
     strategy:
       fail-fast: false
       matrix:
