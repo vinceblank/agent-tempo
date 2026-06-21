@@ -186,21 +186,21 @@ beta.1.** Pi's event-driven phase model remains the direction; the target is a s
 
 ```
 now ──► finish 1.x critical path (#777 #774 #768, T1.1 PR-2/3)
-     ──► ship 1.8.0 STABLE  ◄── the "last 1.x" everyone cutover-hops through
+     ──► ship 1.7.0 STABLE  ◄── the "last 1.x" everyone cutover-hops through
           • Tier 0 + T1.1 + ghost/lifecycle fixes (the unreleased pile)
           • + the `upgrade-to-2` cutover verb (A.3) — the 1.x HALF of the
             migration story must ship BEFORE 2.0-beta.1 exists
-          • 1.8.x branch: critical fixes only thereafter
+          • 1.7.x branch: critical fixes only thereafter
      ──► main becomes 2.0-beta line
           • beta.1: cutover guard + stamp · marker/branch deletion · wire-v2
             removals · TUI deletion · env unification · tool merges (aliased)
           • beta.2+: B2 attachment-core · P1 mission-control gaps · alias drop
             at GA · dashboard review item
-          • GA gate: 1.8 → 2.0 upgrade round-trip in CI (E2E: up on 1.8,
+          • GA gate: 1.7 → 2.0 upgrade round-trip in CI (E2E: up on 1.7,
             upgrade-to-2, verify ensemble continuity on 2.0) + docs surgery done
 ```
 
-- **Why a stable 1.8.0 first**: (i) the cutover protocol needs a 1.x release that *contains*
+- **Why a stable 1.7.0 first**: (i) the cutover protocol needs a 1.x release that *contains*
   the cutover verb; (ii) the unreleased pile (Tier 0 + T1.1) is real value 1.x users should
   get without buying a breaking release; (iii) it gives 0.x/early-1.x users a single
   documented hop. Beta cadence for 2.0: match 1.7's rhythm (frequent small betas).
@@ -224,7 +224,7 @@ current evidence says banners sufficed → keep parked, revisit at 2.0 GA review
 | # | Decision | **Ruling (operator, 2026-06-12)** | Alternative considered & its cost |
 |---|---|---|---|
 | 1 | Migration protocol | **RATIFIED: A2 clean cutover** (guarded; zero residue; clears ALL legacy tolerance at once; #334+lineups are the continuity story) | A1 deprecatePatch ladder: in-place upgrade preserved, but 2-release tax + live replay-compat matrix through 2.0 + per-debt drain stories |
-| 2 | 1.8.0 stable before 2.0 branch | **RATIFIED: yes** — carries the cutover verb + ships the unreleased pile to 1.x users | Cut 2.0 from the beta line directly: faster, but no cutover-verb home and 1.x users never get Tier 0/T1.1 in a stable |
+| 2 | 1.7.0 stable before 2.0 branch | **RATIFIED: yes** — carries the cutover verb + ships the unreleased pile to 1.x users | Cut 2.0 from the beta line directly: faster, but no cutover-verb home and 1.x users never get Tier 0/T1.1 in a stable |
 | 3 | Web dashboard fate | **RATIFIED: stays** as the zero-dependency fallback — 2.0 operator surfaces are CLI + command-center + web dashboard; TUI dies per plan | Delete with TUI: max simplification, one rendering stack — at the cost of no operator surface without the Pi dep |
 | 4 | Tool-merge alias window | **RATIFIED: one beta with aliases, drop at GA** | No aliases (cleanest, most muscle-memory breakage) / keep through GA (registry-size win deferred) |
 | 5 | Env unification in beta.1 | **RATIFIED: yes** — all renames at once while the breaking window is open | Defer: drags dual-reads through 2.x |
