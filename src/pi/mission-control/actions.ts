@@ -7,7 +7,7 @@
  * Injected fetch / readPort / token so it's unit-testable without a daemon.
  */
 import { readPortFile } from '../../http/port-file';
-import type { AnswerEntry } from '../../types';
+import type { AnswerEntry, HostInfo } from '../../types';
 import type { EnsembleSummary } from '../../client/interface';
 
 /** Env var holding the daemon admin (T3) token (writes + inner tail). */
@@ -240,6 +240,18 @@ export class MissionControlActions {
     return res.ok ? { ok: true, ensembles: res.data } : res;
   }
 
+  // ── Read surface: hosts (#742 gap 5) ──
+  /**
+   * List connected hosts (`GET /v1/hosts`, Tier-1 read) — the cluster host
+   * registry + freshness + capability profile, the same payload the dashboard
+   * `/hosts` view and the CLI `agent-tempo hosts` consume. NOT ensemble-scoped
+   * (the host registry is cluster-global), so it ignores the bound ensemble.
+   */
+  async listHosts(): Promise<{ ok: true; hosts: HostInfo[] } | { ok: false; error: string }> {
+    const res = await this.getJson<HostInfo[]>('/v1/hosts');
+    return res.ok ? { ok: true, hosts: res.data } : res;
+  }
+
   // ── Ensemble write surface (T2) ──
   cue(to: string, message: string): Promise<ActionResult> {
     // #822 — parse the deliverability hint so the board warns on a detached/gone
@@ -251,6 +263,15 @@ export class MissionControlActions {
   }
   play(release?: boolean): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/play`, release ? { release } : {});
+  }
+  /**
+   * Free HELD players via the dedicated `POST /v1/ensembles/:e/release` route
+   * (#742 gap 8 — `/go`). Optional `playerId` releases ONE held player; omitted
+   * releases all held in the ensemble. Distinct from `play(release:true)`, which
+   * ALSO clears the PAUSE axis — `/go` frees holds without touching pause.
+   */
+  release(playerId?: string): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/release`, playerId ? { playerId } : {});
   }
   restart(playerId: string, reason?: string): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/restart`, { playerId, ...(reason ? { reason } : {}) });

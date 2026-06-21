@@ -38,6 +38,7 @@ import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
 import { zodShapeToTypeBox } from '../zod-to-typebox';
 import { COAT_CHECK_CONTENT_MAX } from '../../utils/validation';
+import { formatHostList } from '../../utils/format-hosts';
 import type { McExtensionAPI, McExtensionContext, McOutboundMessage, McMessageOptions, McToolResult } from './pi-ui';
 
 /** The durable conductor a `/handoff` targets by default (matches catalog's conductorName default). */
@@ -360,6 +361,52 @@ export class Controller {
   async cmdPlayers(ctx: McExtensionContext): Promise<void> {
     const ids = sortedPlayerIds(this.model);
     this.notify(ctx, ids.length ? `Players (${ids.length}): ${ids.join(', ')}` : 'No players in the ensemble.');
+  }
+
+  // ── Hosts (#742 gap 5) ──
+
+  /**
+   * Connected-host listing — reuses the shared `formatHostList` formatter (the
+   * same text the CLI `hosts` and MCP `hosts` tool render). `includeStale`
+   * surfaces hosts past their liveness window (`/hosts --all`). Returns the
+   * text so a future planner tool can reuse it (same shape as
+   * {@link ensemblesText}). NOT ensemble-scoped — the host registry is global.
+   */
+  async hostsText(includeStale: boolean): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const r = await this.actions.listHosts();
+    if (!r.ok) return r;
+    return { ok: true, text: formatHostList(r.hosts, { includeStale }) };
+  }
+
+  async cmdHosts(args: string, ctx: McExtensionContext): Promise<void> {
+    const includeStale = /(?:^|\s)(?:--all|-a)(?:\s|$)/.test(args);
+    const r = await this.hostsText(includeStale);
+    this.notify(ctx, r.ok ? r.text : `hosts failed: ${r.error}`);
+  }
+
+  // ── Status (#742 gap 9) ──
+
+  /**
+   * Full board detail — the human counterpart to the `observe_board` planner
+   * tool. Renders the live `BoardModel` (already kept current by the coarse SSE
+   * stream), so there's no extra fetch: the board IS the snapshot. Richer than
+   * the TUI `/status` overlay (phase glyphs + currentTool + context% + tail).
+   */
+  cmdStatus(ctx: McExtensionContext): void {
+    this.notify(ctx, renderBoard(this.model, this.localHost).join('\n'));
+  }
+
+  // ── Release / go (#742 gap 8) ──
+
+  /**
+   * `/go [player]` — free HELD players. Uses the dedicated `release` route so
+   * it frees holds WITHOUT clearing the PAUSE axis (that's `/play` / `/unpause`).
+   * No arg → release all held in the ensemble; `/go <player>` releases one.
+   */
+  async cmdGo(args: string, ctx: McExtensionContext): Promise<void> {
+    const player = args.trim().split(/\s+/).filter(Boolean)[0];
+    const label = player ? `go (release ${player})` : 'go (release held)';
+    this.report(ctx, label, await this.actions.release(player || undefined));
   }
 
   // ── Multi-ensemble home (#790) ──
@@ -1098,6 +1145,9 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
 
     // Operator commands (display-only widget → slash-commands drive everything).
     pi.registerCommand('players', { description: 'List ensemble players', handler: (_a, ctx) => ctrl.cmdPlayers(ctx) });
+    pi.registerCommand('hosts', { description: 'List connected hosts (/hosts [--all])', handler: (a, ctx) => ctrl.cmdHosts(a, ctx) });
+    pi.registerCommand('status', { description: 'Show the full board detail', handler: (_a, ctx) => ctrl.cmdStatus(ctx) });
+    pi.registerCommand('go', { description: 'Release HELD players (/go [player])', handler: (a, ctx) => ctrl.cmdGo(a, ctx) });
     // #790 — multi-ensemble home: list + re-bind.
     pi.registerCommand('ensembles', { description: 'List all ensembles (▶ marks the bound one)', handler: (_a, ctx) => ctrl.cmdEnsembles(ctx) });
     pi.registerCommand('ensemble', { description: 'Switch the board to another ensemble (/ensemble <name> [--force])', handler: (a, ctx) => ctrl.cmdEnsemble(a, ctx) });
