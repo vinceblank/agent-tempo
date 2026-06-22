@@ -13,7 +13,7 @@ const okStep = (): StepOutcome => ({ status: 'ok', durationMs: 1 });
 function result(over: Partial<BootstrapResult> = {}): BootstrapResult {
   const steps = Object.fromEntries(
     ([
-      'legacyHomeMigration', 'preflight', 'mcpConfig', 'temporalReach',
+      'preflight', 'mcpConfig', 'temporalReach',
       'searchAttrs', 'daemonBoot', 'badgeCollection',
     ] as StepName[]).map((s) => [s, okStep()]),
   ) as Record<StepName, StepOutcome>;

@@ -17,9 +17,10 @@
  * by reverse proxies, supervisord, and the TUI bootstrap state machine.
  *
  * **Token storage** (§3.1) — `~/.agent-tempo/config.json` field
- * `httpToken`. Auto-generated on first daemon boot when bearer mode is
+ * `readToken` (T1). Auto-generated on first daemon boot when bearer mode is
  * required and no token is set: `crypto.randomBytes(32).toString('base64url')`,
  * 0600 on POSIX. Rotation = delete the field; next daemon boot regenerates.
+ * The admin token (T2/T3) is env-var-only (`AGENT_TEMPO_HTTP_ADMIN_TOKEN`).
  */
 import * as crypto from 'crypto';
 import { ENV, loadConfigFile, saveConfigFile, type PersistedConfig } from '../config';
@@ -112,28 +113,6 @@ export function tokensMatch(received: string, expected: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-/**
- * @deprecated 3e — superseded by {@link loadRbacTokens} (read + admin split).
- * Kept only until every caller migrates; do NOT add new callers. Resolves the
- * legacy single `httpToken` (env-less) for back-compat shims.
- */
-export function loadOrGenerateHttpToken(opts: {
-  bearerRequired: boolean;
-  load?: () => PersistedConfig;
-  save?: (cfg: PersistedConfig) => void;
-}): string | null {
-  const load = opts.load ?? loadConfigFile;
-  const save = opts.save ?? saveConfigFile;
-  const cfg = load();
-  if (cfg.httpToken && typeof cfg.httpToken === 'string' && cfg.httpToken.length > 0) {
-    return cfg.httpToken;
-  }
-  if (!opts.bearerRequired) return null;
-  const token = crypto.randomBytes(32).toString('base64url');
-  save({ ...cfg, httpToken: token });
-  return token;
-}
-
 // ── 3e RBAC token model (MD-E) ──────────────────────────────────────────────
 
 /** Resolved RBAC tokens for the daemon HTTP surface (3e). */
@@ -142,11 +121,6 @@ export interface RbacTokens {
   readToken: string | null;
   /** T1+T2+T3 admin token — ENV-VAR-ONLY, or `null` when unset (→ 503 on T≥2). */
   adminToken: string | null;
-  /**
-   * True when a LEGACY `httpToken` (no `readToken`) was adopted as the read token.
-   * The daemon emits a one-time startup warning so the operator sets an admin token.
-   */
-  legacyMigrated: boolean;
 }
 
 /** Admin token — ENV-VAR-ONLY (never config.json/disk, never auto-generated). */
@@ -157,31 +131,29 @@ export function loadAdminToken(env: NodeJS.ProcessEnv = process.env): string | n
 
 /**
  * Read token (T1). Priority: env `AGENT_TEMPO_HTTP_READ_TOKEN` > config.json
- * `readToken` > LEGACY config.json `httpToken` (adopted → `legacy:true`) >
- * auto-generate when bearer mode is required (persisted as `readToken`).
+ * `readToken` > auto-generate when bearer mode is required (persisted as
+ * `readToken`).
  */
 export function loadReadToken(opts: {
   bearerRequired: boolean;
   env?: NodeJS.ProcessEnv;
   load?: () => PersistedConfig;
   save?: (cfg: PersistedConfig) => void;
-}): { token: string | null; legacy: boolean } {
+}): string | null {
   const env = opts.env ?? process.env;
   const load = opts.load ?? loadConfigFile;
   const save = opts.save ?? saveConfigFile;
 
   const envTok = env[ENV.HTTP_READ_TOKEN];
-  if (envTok && envTok.length > 0) return { token: envTok, legacy: false };
+  if (envTok && envTok.length > 0) return envTok;
 
   const cfg = load();
-  if (cfg.readToken && cfg.readToken.length > 0) return { token: cfg.readToken, legacy: false };
-  // LEGACY: a pre-3e single `httpToken` becomes the READ token (T1) — NOT admin.
-  if (cfg.httpToken && cfg.httpToken.length > 0) return { token: cfg.httpToken, legacy: true };
+  if (cfg.readToken && cfg.readToken.length > 0) return cfg.readToken;
 
-  if (!opts.bearerRequired) return { token: null, legacy: false };
+  if (!opts.bearerRequired) return null;
   const token = crypto.randomBytes(32).toString('base64url');
   save({ ...cfg, readToken: token });
-  return { token, legacy: false };
+  return token;
 }
 
 /** Load both RBAC tokens. The daemon calls this once at startup. */
@@ -191,9 +163,9 @@ export function loadRbacTokens(opts: {
   load?: () => PersistedConfig;
   save?: (cfg: PersistedConfig) => void;
 }): RbacTokens {
-  const { token: readToken, legacy } = loadReadToken(opts);
+  const readToken = loadReadToken(opts);
   const adminToken = loadAdminToken(opts.env);
-  return { readToken, adminToken, legacyMigrated: legacy };
+  return { readToken, adminToken };
 }
 
 /** Access tiers (MD-E): 1 = read/observe, 2 = write/mutate, 3 = supervisory (inner-tail). */

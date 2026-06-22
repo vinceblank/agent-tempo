@@ -81,7 +81,7 @@ describe('bootstrap() — degraded path (Temporal unreachable)', function () {
       daemonBoot: async () => ({ status: 'skipped', durationMs: 0 }),
       isTemporalReachable: async () => false,
     });
-    const expectedKeys = ['legacyHomeMigration', 'preflight', 'mcpConfig', 'temporalReach', 'searchAttrs', 'daemonBoot', 'badgeCollection'];
+    const expectedKeys = ['preflight', 'mcpConfig', 'temporalReach', 'searchAttrs', 'daemonBoot', 'badgeCollection'];
     for (const k of expectedKeys) {
       expect(result.steps, `missing step "${k}"`).to.have.property(k);
       const outcome = (result.steps as any)[k];
@@ -215,49 +215,4 @@ describe('bootstrap() — degraded path (Temporal unreachable)', function () {
     expect(parsed.steps.npmVersionCheck).to.be.undefined;
   });
 
-  // PR-2 of the v1.0 rebrand — step 0 (legacy home migration) wiring.
-  it('legacyHomeMigration step runs before preflight and surfaces its StepOutcome', async function () {
-    const callOrder: string[] = [];
-    const result = await bootstrap({
-      config: baseConfig(),
-      cacheDir,
-      binaryVersion: '0.26.0',
-      fetchLatestVersion: async () => null,
-      daemonBoot: async () => {
-        callOrder.push('daemonBoot');
-        return { status: 'skipped', durationMs: 0 };
-      },
-      isTemporalReachable: async () => {
-        callOrder.push('isTemporalReachable');
-        return false;
-      },
-      legacyHomeMigration: async () => {
-        callOrder.push('legacyHomeMigration');
-        return { status: 'action-taken', durationMs: 1, detail: 'migrated 3 files' };
-      },
-    });
-    expect(callOrder[0]).to.equal('legacyHomeMigration');
-    expect(result.steps.legacyHomeMigration.status).to.equal('action-taken');
-    expect(result.steps.legacyHomeMigration.detail).to.equal('migrated 3 files');
-  });
-
-  it('legacyHomeMigration failure does not block the rest of bootstrap', async function () {
-    const result = await bootstrap({
-      config: baseConfig(),
-      cacheDir,
-      binaryVersion: '0.26.0',
-      fetchLatestVersion: async () => null,
-      daemonBoot: async () => ({ status: 'skipped', durationMs: 0 }),
-      isTemporalReachable: async () => false,
-      legacyHomeMigration: async () => ({
-        status: 'failed',
-        durationMs: 2,
-        detail: 'simulated permission error',
-      }),
-    });
-    expect(result.steps.legacyHomeMigration.status).to.equal('failed');
-    // Subsequent steps still produced outcomes — bootstrap didn't short-circuit.
-    expect(result.steps.preflight).to.have.property('status');
-    expect(result.steps.badgeCollection).to.have.property('status');
-  });
 });

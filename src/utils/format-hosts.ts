@@ -58,7 +58,6 @@ function formatSingleHost(host: HostInfo): string[] {
     if (inst.hasHostQueueWorker) workerBits.push('host');
     bits.push(`workers: ${workerBits.length > 0 ? workerBits.join('+') : 'none'}`);
     if (inst.lastAccessTime) bits.push(`last seen ${inst.lastAccessTime}`);
-    if (inst.legacy) bits.push('legacy-identity');
     lines.push(`  - ${bits.join(' · ')}`);
   }
 

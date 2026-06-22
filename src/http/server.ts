@@ -125,11 +125,6 @@ export interface HttpServerOptions {
    * don't fight production daemons running on the same machine.
    */
   portFilePath?: string;
-  /**
-   * @deprecated 3e — back-compat alias for {@link readToken}. A single injected
-   * bearer is treated as the READ token (T1). Prefer `readToken`/`adminToken`.
-   */
-  httpToken?: string;
   /** 3e — inject the read-tier (T1) token directly (tests). Overrides config/env. */
   readToken?: string;
   /** 3e — inject the admin (T1+T2+T3) token directly (tests). Overrides env. */
@@ -203,22 +198,12 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   // generation now so the daemon doesn't crash mid-request when the first
   // bearer-required call shows up.
   const bindIsLoopback = isLoopbackBindAddr(bindAddr);
-  // 3e RBAC token resolution. Back-compat: a single `httpToken` option (or a
-  // legacy config.json `httpToken`) is adopted as the READ token (T1); the ADMIN
-  // token is env-var-only. Explicit `readToken`/`adminToken` options override
-  // (used by tests). loopback bind ⇒ no bearer required ⇒ tokens may be null.
-  let readToken: string | null;
-  let legacyMigrated = false;
-  if (opts.readToken !== undefined) {
-    readToken = opts.readToken;
-  } else if (opts.httpToken !== undefined) {
-    // Back-compat: a single injected bearer is treated as the READ token (T1).
-    readToken = opts.httpToken;
-  } else {
-    const loaded = loadReadToken({ bearerRequired: !bindIsLoopback });
-    readToken = loaded.token;
-    legacyMigrated = loaded.legacy;
-  }
+  // 3e RBAC token resolution. The READ token (T1) comes from the explicit
+  // `readToken` option (tests) or env/config/auto-gen; the ADMIN token is
+  // env-var-only. loopback bind ⇒ no bearer required ⇒ tokens may be null.
+  const readToken: string | null = opts.readToken !== undefined
+    ? opts.readToken
+    : loadReadToken({ bearerRequired: !bindIsLoopback });
   const adminToken = opts.adminToken ?? loadAdminToken();
   if (!bindIsLoopback && !readToken) {
     throw new Error(
@@ -227,20 +212,10 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       'or unset AGENT_TEMPO_HTTP_BIND.',
     );
   }
-  // 3e MD-E — one-time startup warnings (non-blocking).
+  // 3e MD-E — one-time startup warning (non-blocking).
   //
-  // (1) Legacy migration: a pre-3e single `httpToken` was adopted as the READ
-  //     token (T1) and no admin token is configured, so writes / inner-tail
-  //     (all Tier ≥ 2) will 503 until an admin token is set.
-  if (legacyMigrated && adminToken === null) {
-    log(
-      'NOTICE: adopted legacy config.json `httpToken` as the read-tier token. ' +
-      'Writes and the inner-tail are admin-only and will return ' +
-      '503 until you set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only).',
-    );
-  }
-  // (2) Plaintext-bearer exposure: binding to a non-loopback address serves the
-  //     bearer token over cleartext HTTP. Suppressible, never blocking.
+  // Plaintext-bearer exposure: binding to a non-loopback address serves the
+  // bearer token over cleartext HTTP. Suppressible, never blocking.
   if (!bindIsLoopback && process.env[ENV.TLS_ACKNOWLEDGED] !== '1') {
     log(
       `WARNING: binding to non-loopback ${bindAddr} serves the bearer token over ` +

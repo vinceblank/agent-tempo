@@ -67,35 +67,16 @@ describe('parseIdentity (#274 AC6d)', function () {
       hostname: 'mac-alice',
       pid: 12345,
       version: '0.26.0-beta.7',
-      legacy: false,
     });
   });
 
-  it('parses the pre-v1.0 `claude-tempo:` prefix and tags it as legacy', function () {
-    expect(parseIdentity('claude-tempo:mac-alice:12345:0.26.0-beta.7')).to.deep.equal({
-      hostname: 'mac-alice',
-      pid: 12345,
-      version: '0.26.0-beta.7',
-      legacy: true,
-    });
-  });
-
-  it('parses the legacy SDK default `<pid>@<hostname>`', function () {
-    expect(parseIdentity('9876@win-bob')).to.deep.equal({
-      hostname: 'win-bob',
-      pid: 9876,
-      version: 'unknown',
-      legacy: true,
-    });
-  });
-
-  it('returns null for opaque third-party identities (skipped silently)', function () {
+  it('returns null for opaque / non-agent-tempo identities (skipped silently)', function () {
     expect(parseIdentity('some-other-worker-identity')).to.equal(null);
     expect(parseIdentity('')).to.equal(null);
-    // Note: `agent-tempo:too:few` is malformed (3-segment), covered by the
-    // next test's rejection path — not a taxonomy-opaque case.
-    expect(parseIdentity('abc@host')).to.equal(null); // non-numeric pid
-    expect(parseIdentity('0@host')).to.equal(null); // pid must be > 0
+    // Pre-rebrand `claude-tempo:` and the SDK-default `<pid>@<hostname>` shapes
+    // are no longer recognized under the 2.0 clean cutover — opaque → null.
+    expect(parseIdentity('claude-tempo:mac-alice:12345:0.26.0')).to.equal(null);
+    expect(parseIdentity('9876@win-bob')).to.equal(null);
   });
 
   it('rejects malformed post-#274 format with wrong segment count', function () {
@@ -319,23 +300,6 @@ describe('listHosts (#274 AC6)', function () {
     expect(hosts[0].hostname).to.equal('h');
   });
 
-  it('legacy identity is accepted and tagged with legacy:true', async function () {
-    const table: Record<string, RawPoller[]> = {
-      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller('42@legacy-host', 1_000)],
-    };
-    const hosts = await listHosts(fakeClient, {
-      force: true,
-      deps: {
-        now: () => NOW,
-        describePollers: stubDescribe(table),
-        fetchProfiles: async () => null,
-      },
-    });
-    expect(hosts).to.have.length(1);
-    expect(hosts[0].instances[0].legacy).to.equal(true);
-    expect(hosts[0].instances[0].version).to.equal('unknown');
-  });
-
   it('cache: two calls within TTL use the memoized result; force:true bypasses', async function () {
     let calls = 0;
     const describe = async (
@@ -429,15 +393,6 @@ describe('formatHostList (#274 AC10a)', function () {
   it('profile stale → renders the disagreement warning', function () {
     const out = formatHostList([{ ...liveHost, profileStaleness: 'stale' }]);
     expect(out).to.include('profile version disagrees with live identity');
-  });
-
-  it('legacy-identity instance is flagged', function () {
-    const legacyHost: HostInfo = {
-      ...liveHost,
-      instances: [{ ...liveHost.instances[0], legacy: true, version: 'unknown' }],
-    };
-    const out = formatHostList([legacyHost]);
-    expect(out).to.include('legacy-identity');
   });
 
   it('includeStale:true shows stale hosts', function () {

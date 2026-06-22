@@ -28,7 +28,6 @@ import * as out from './cli/output';
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig, isDevMode } from './config';
-import { formatMigrationResult, type LegacyMigrationResult } from './cli/legacy-migration';
 import { refreshEntrypoint } from './cli/global-wrapper';
 import { resolveEnsemble } from './cli/resolve-ensemble';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
@@ -75,13 +74,10 @@ interface ParsedArgs {
   type?: string;
   includeStale: boolean;
   host?: string;
-  /** `daemon start --force` — bypass the stale-PID-file guard.
-   *  Also consumed by `migrate-from-claude-tempo --force` to bypass the
-   *  conflict + volatile-state guards. */
+  /** `daemon start --force` — bypass the stale-PID-file guard. */
   force: boolean;
-  /** `migrate-from-claude-tempo --dry-run` — print the migration plan without writing.
-   *  Also consumed by `upgrade-to-2 --dry-run` (#785) — print the would-be
-   *  snapshot + destroy list and exit before pausing. */
+  /** `upgrade-to-2 --dry-run` (#785) — print the would-be snapshot + destroy
+   *  list and exit before pausing. */
   dryRun?: boolean;
   /** `upgrade-to-2 --force-drain` (#785) — proceed past a non-empty outbox
    *  drain, recording the stragglers in the snapshot instead of stopping. */
@@ -205,11 +201,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--host' && i + 1 < argv.length) {
       result.host = argv[++i];
     } else if (arg === '--force') {
-      // Consumed by `daemon start --force` (bypass stale-PID guard) and by
-      // `migrate-from-claude-tempo --force` (bypass conflict + volatile-state guards).
+      // Consumed by `daemon start --force` (bypass stale-PID guard).
       result.force = true;
     } else if (arg === '--dry-run') {
-      // `migrate-from-claude-tempo --dry-run` — print the plan, write nothing.
       // `upgrade-to-2 --dry-run` — print snapshot + destroy list, change nothing.
       result.dryRun = true;
     } else if (arg === '--force-drain') {
@@ -319,38 +313,6 @@ function cliOverrides(args: ParsedArgs): CliOverrides {
     temporalTlsCertPath: args.temporalTlsCertPath,
     temporalTlsKeyPath: args.temporalTlsKeyPath,
   };
-}
-
-/**
- * Format + print a {@link LegacyMigrationResult} from
- * `migrate-from-claude-tempo`. Extracted to module scope (an if/else cascade
- * rather than a nested switch) so the body doesn't trip the CLI surface-drift
- * detector, which scans top-level `case '...':` labels in this file.
- */
-function reportMigrationResult(result: LegacyMigrationResult): void {
-  const msg = formatMigrationResult(result);
-  if (result.status === 'no-legacy' || result.status === 'already-migrated') {
-    out.success(msg);
-    return;
-  }
-  if (result.status === 'migrated') {
-    out.success(msg);
-    if (result.copiedFiles?.length) {
-      for (const f of result.copiedFiles) out.log(`  ${out.dim('+')} ${f}`);
-    }
-    if (result.errors?.length) {
-      for (const e of result.errors) out.warn(e);
-    }
-    return;
-  }
-  if (result.status === 'skipped') {
-    out.warn(msg);
-    process.exitCode = 1;
-    return;
-  }
-  // 'failed'
-  out.error(msg);
-  process.exitCode = 1;
 }
 
 async function main() {
@@ -737,21 +699,6 @@ async function main() {
       out.log(`    ${out.cyan('agent-tempo up --agent pi')}        a conductor/player in this ensemble`);
       out.log(`    ${out.cyan('agent-tempo command-center')}       the operator mission-control board`);
       out.log(out.dim('  A bare `pi` stays a plain coding session (neither extension activates).'));
-      break;
-    }
-
-    case 'migrate-from-claude-tempo': {
-      // PR-2 of the v1.0 rebrand — one-shot copy of `~/.agent-tempo/` →
-      // `~/.agent-tempo/`. Crash-proof (no Temporal deps). The `--dev`
-      // top-level flag selects the dev profile (`~/.agent-tempo-dev/` →
-      // `~/.agent-tempo-dev/`) via {@link isDevMode}.
-      const { migrateLegacyHome } = await import('./cli/legacy-migration');
-      const result = await migrateLegacyHome({
-        dryRun: !!(args as { dryRun?: boolean }).dryRun,
-        force: !!(args as { force?: boolean }).force,
-        profile: isDevMode() ? 'dev' : 'prod',
-      });
-      reportMigrationResult(result);
       break;
     }
 

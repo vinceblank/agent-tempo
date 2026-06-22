@@ -117,7 +117,7 @@ async function boot(opts: {
     version: '0.27.0-test',
     bindAddr: opts.bindAddr ?? '127.0.0.1',
     port: 0, // ephemeral
-    httpToken: opts.httpToken,
+    readToken: opts.httpToken,
     allowedOrigins: opts.allowedOrigins,
     portFilePath: portFile,
   });

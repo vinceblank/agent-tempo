@@ -88,7 +88,7 @@ src/
 │   ├── inner-loop-routes.ts # 3 inner-loop HTTP routes: POST /inner/ingest + GET /inner/presence (INGRESS, loopback + X-Ingest-Token, uniform 403); GET /inner (EGRESS operator SSE, requireTier(3))
 │   ├── doorbell.ts    # DoorbellRegistry — in-process Map<"{ensemble}:{playerId}", Set<waiter>>; ring-with-no-listener drops on floor; level-triggered coalescing; never throws (T1.1 PR-1, #776)
 │   ├── doorbell-routes.ts # GET /doorbell/:ensemble/:playerId SSE route — content-free ding events; loopback + X-Ingest-Token auth (same ingress model as inner-loop); NO event IDs / Last-Event-ID / replay by design; :ka keepalive every 15s (T1.1 PR-1, #776)
-│   ├── auth.ts        # 3e MD-E RBAC: two-token model (readToken T1 / adminToken T1+T2+T3 env-var-only); loadRbacTokens; requireTier(tier, input) → TierGuardResult; tierForToken; loadReadToken (env>config>legacy httpToken>auto-gen); loadAdminToken (env-only); TLS/legacy startup warnings in startHttpServer
+│   ├── auth.ts        # 3e MD-E RBAC: two-token model (readToken T1 / adminToken T1+T2+T3 env-var-only); loadRbacTokens; requireTier(tier, input) → TierGuardResult; tierForToken; loadReadToken (env>config>auto-gen); loadAdminToken (env-only); TLS startup warning in startHttpServer
 │   ├── cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)

@@ -56,12 +56,6 @@ const handler = (err: unknown): void => {
   if (isBenignChannelShutdown(err)) {
     // A Temporal gRPC retry timer fired after we closed the connection. The
     // result we cared about was already captured (or degraded). Drop it.
-    if (process.env.CLAUDE_TEMPO_DEBUG) {
-      // eslint-disable-next-line no-console
-      console.error(
-        '[agent-tempo] ignored post-shutdown gRPC channel error (benign Temporal retry-after-close race)',
-      );
-    }
     return;
   }
   // Not ours — restore default crash behavior. Throwing from inside an

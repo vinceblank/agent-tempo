@@ -132,7 +132,7 @@ async function boot(opts: MockOptions = {}, serverOpts: { bindAddr?: string; htt
     bindAddr: serverOpts.bindAddr ?? '127.0.0.1',
     port: 0,
     portFilePath: portFile,
-    ...(serverOpts.httpToken ? { httpToken: serverOpts.httpToken } : {}),
+    ...(serverOpts.httpToken ? { readToken: serverOpts.httpToken } : {}),
     ...(serverOpts.allowedOrigins ? { allowedOrigins: serverOpts.allowedOrigins } : {}),
   });
   const b: Bootstrapped = { handle, url: `http://${handle.bindAddr}:${handle.port}`, calls };

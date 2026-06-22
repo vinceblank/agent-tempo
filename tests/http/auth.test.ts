@@ -10,7 +10,6 @@ import {
   bearerRequired,
   extractBearerToken,
   isLoopbackBindAddr,
-  loadOrGenerateHttpToken,
   loadReadToken,
   loadAdminToken,
   loadRbacTokens,
@@ -103,46 +102,6 @@ describe('tokensMatch', () => {
   });
 });
 
-describe('loadOrGenerateHttpToken', () => {
-  it('returns the persisted token when one exists, regardless of bearer mode', () => {
-    let saved: PersistedConfig | null = null;
-    const cfg: PersistedConfig = { httpToken: 'persisted-value' };
-    const token = loadOrGenerateHttpToken({
-      bearerRequired: false,
-      load: () => cfg,
-      save: (c) => { saved = c; },
-    });
-    expect(token).toBe('persisted-value');
-    expect(saved).toBeNull(); // never overwrites when token already present
-  });
-  it('generates and saves a token when bearer is required and none persisted', () => {
-    let saved: PersistedConfig | null = null;
-    const cfg: PersistedConfig = {};
-    const token = loadOrGenerateHttpToken({
-      bearerRequired: true,
-      load: () => cfg,
-      save: (c) => { saved = c; },
-    });
-    expect(token).toBeTruthy();
-    expect(token!.length).toBeGreaterThanOrEqual(40); // base64url(32 bytes) ≈ 43 chars
-    // base64url alphabet (no +, no /)
-    expect(token!).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(saved).not.toBeNull();
-    expect(saved!.httpToken).toBe(token);
-  });
-  it('returns null without saving when bearer is not required and no token persisted', () => {
-    let saved: PersistedConfig | null = null;
-    const cfg: PersistedConfig = {};
-    const token = loadOrGenerateHttpToken({
-      bearerRequired: false,
-      load: () => cfg,
-      save: (c) => { saved = c; },
-    });
-    expect(token).toBeNull();
-    expect(saved).toBeNull();
-  });
-});
-
 const READ = 'r'.repeat(43);
 const ADMIN = 'a'.repeat(43);
 
@@ -199,24 +158,21 @@ describe('requireTier (3e RBAC matrix — Layer-3 authZ)', () => {
 });
 
 describe('loadReadToken / loadAdminToken / loadRbacTokens (3e)', () => {
-  it('read: env > config.readToken > legacy httpToken (legacy:true) > auto-gen', () => {
+  it('read: env > config.readToken > auto-gen', () => {
     // env wins
     expect(loadReadToken({ bearerRequired: true, env: { AGENT_TEMPO_HTTP_READ_TOKEN: 'envtok' }, load: () => ({}) }))
-      .toEqual({ token: 'envtok', legacy: false });
+      .toBe('envtok');
     // config.readToken
     expect(loadReadToken({ bearerRequired: true, env: {}, load: () => ({ readToken: 'cfgread' }) }))
-      .toEqual({ token: 'cfgread', legacy: false });
-    // legacy httpToken adopted as read (legacy:true)
-    expect(loadReadToken({ bearerRequired: true, env: {}, load: () => ({ httpToken: 'legacy' }) }))
-      .toEqual({ token: 'legacy', legacy: true });
+      .toBe('cfgread');
     // auto-gen when nothing set + bearer required
     let saved: PersistedConfig | null = null;
     const gen = loadReadToken({ bearerRequired: true, env: {}, load: () => ({}), save: (c) => { saved = c; } });
-    expect(typeof gen.token).toBe('string');
-    expect((gen.token as string).length).toBeGreaterThan(20);
-    expect((saved as unknown as PersistedConfig).readToken).toBe(gen.token);
+    expect(typeof gen).toBe('string');
+    expect((gen as string).length).toBeGreaterThan(20);
+    expect((saved as unknown as PersistedConfig).readToken).toBe(gen);
     // no auto-gen when bearer not required
-    expect(loadReadToken({ bearerRequired: false, env: {}, load: () => ({}) })).toEqual({ token: null, legacy: false });
+    expect(loadReadToken({ bearerRequired: false, env: {}, load: () => ({}) })).toBeNull();
   });
 
   it('admin: env-var ONLY, never config/disk; null when unset', () => {
@@ -224,8 +180,8 @@ describe('loadReadToken / loadAdminToken / loadRbacTokens (3e)', () => {
     expect(loadAdminToken({})).toBeNull();
   });
 
-  it('loadRbacTokens combines + flags legacyMigrated', () => {
-    const r = loadRbacTokens({ bearerRequired: true, env: { AGENT_TEMPO_HTTP_ADMIN_TOKEN: 'A' }, load: () => ({ httpToken: 'L' }) });
-    expect(r).toEqual({ readToken: 'L', adminToken: 'A', legacyMigrated: true });
+  it('loadRbacTokens combines read + admin tokens', () => {
+    const r = loadRbacTokens({ bearerRequired: true, env: { AGENT_TEMPO_HTTP_ADMIN_TOKEN: 'A' }, load: () => ({ readToken: 'L' }) });
+    expect(r).toEqual({ readToken: 'L', adminToken: 'A' });
   });
 });
