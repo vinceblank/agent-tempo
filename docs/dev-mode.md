@@ -233,6 +233,5 @@ detector — `selectOrphans` consults both PID files so `--dev daemon stop`
 can never SIGTERM the prod daemon (and vice versa). See ADR 0014 §5.7 for
 details and acceptance criteria.
 
-For three or more parallel environments, set `CLAUDE_TEMPO_HOME_OVERRIDE`
-to a custom path. v1 doesn't enumerate multi-profile setups; remember which
-override goes with which environment.
+For three or more parallel environments, set `AGENT_TEMPO_HOME_OVERRIDE`
+to a custom path. Remember which override goes with which environment.
