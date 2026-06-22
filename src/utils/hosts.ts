@@ -74,49 +74,30 @@ export interface ParsedIdentity {
   hostname: string;
   pid: number;
   version: string;
-  /** `true` when the identity was in the legacy `<pid>@<hostname>` SDK-default shape. */
-  legacy: boolean;
 }
 
 /**
  * Parse a Temporal poller identity back into the daemon that emitted it.
  *
  * Returns `null` for opaque / third-party identities (e.g. Temporal's own
- * system pollers or an unrelated worker sharing the namespace). Callers
- * skip those silently.
+ * system pollers, an unrelated worker sharing the namespace, or an SDK
+ * worker that left the default `<pid>@<hostname>` identity). Callers skip
+ * those silently.
  *
- * The v1.0 format (`agent-tempo:<hostname>:<pid>:<version>`) is
+ * The agent-tempo format (`agent-tempo:<hostname>:<pid>:<version>`) is
  * guaranteed to have exactly 4 colon-delimited segments because every
  * component has its own validation: hostname passes `PLAYER_NAME_REGEX`
  * (no colons possible), pid is numeric, and version is a semver-ish
  * string (no colons).
- *
- * Pre-v1.0 daemons emitted a `claude-tempo:` prefix. Under the v1.0 hard
- * break those daemons can't reach v1.x task queues anyway, but if one does
- * surface in a host listing we tag it `legacy: true` so operators can
- * distinguish a still-running old daemon from a fresh v1.x worker.
  */
 export function parseIdentity(identity: string): ParsedIdentity | null {
-  if (identity.startsWith('agent-tempo:') || identity.startsWith('claude-tempo:')) {
-    const legacy = identity.startsWith('claude-tempo:');
-    const parts = identity.split(':');
-    if (parts.length === 4) {
-      const [, hostname, pidStr, version] = parts;
-      const pid = Number(pidStr);
-      if (hostname.length > 0 && Number.isFinite(pid) && pid > 0 && version.length > 0) {
-        return { hostname, pid, version, legacy };
-      }
-    }
-    return null;
-  }
-  // Legacy SDK default format: `<pid>@<hostname>`
-  const legacyMatch = identity.match(/^(\d+)@(.+)$/);
-  if (legacyMatch) {
-    const pid = Number(legacyMatch[1]);
-    const hostname = legacyMatch[2];
-    if (Number.isFinite(pid) && pid > 0 && hostname.length > 0) {
-      return { hostname, pid, version: 'unknown', legacy: true };
-    }
+  if (!identity.startsWith('agent-tempo:')) return null;
+  const parts = identity.split(':');
+  if (parts.length !== 4) return null;
+  const [, hostname, pidStr, version] = parts;
+  const pid = Number(pidStr);
+  if (hostname.length > 0 && Number.isFinite(pid) && pid > 0 && version.length > 0) {
+    return { hostname, pid, version };
   }
   return null;
 }
@@ -293,7 +274,6 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
         hasWorkflowWorker: false,
         hasActivityWorker: false,
         hasHostQueueWorker: false,
-        ...(ident.legacy ? { legacy: true as const } : {}),
       };
       byPid.set(pid, inst);
     }

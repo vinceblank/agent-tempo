@@ -95,7 +95,7 @@ Two separate tokens, each scoped to a specific access tier:
 | **Read token** | `AGENT_TEMPO_HTTP_READ_TOKEN` | `readToken` in `~/.agent-tempo/config.json` | T1 (observe) | Yes — auto-generated on first non-loopback boot if unset |
 | **Admin token** | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` | **none — env-var-only, never persisted to disk** | T1 + T2 + T3 (full) | No — never auto-generated |
 
-**Resolution order for the read token:** env `AGENT_TEMPO_HTTP_READ_TOKEN` → `config.json#readToken` → legacy `config.json#httpToken` (adopted as T1; daemon emits a one-time startup notice to set an admin token) → auto-generate and persist.
+**Resolution order for the read token:** env `AGENT_TEMPO_HTTP_READ_TOKEN` → `config.json#readToken` → auto-generate and persist.
 
 **The admin token is ENV-VAR-ONLY.** It is never written to `config.json` and never auto-generated. An operator who needs write/inner access must set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` explicitly in the environment (e.g. container env, Tailscale ACL, systemd override).
 
@@ -108,10 +108,6 @@ Two separate tokens, each scoped to a specific access tier:
 > consumer that supplies a token (or whose request `Origin` triggers
 > bearer mode) must use the `TempoClient.subscribe` fetch path. The
 > wrapper picks transports automatically — see Appendix A and ADR 0010.
-
-#### Legacy `httpToken` migration
-
-If `config.json` contains `httpToken` but no `readToken`, the daemon adopts it as the read token (T1) and emits a startup notice recommending the operator set `AGENT_TEMPO_HTTP_ADMIN_TOKEN`. No data migration is required — the existing token continues to work for read access. To gain write/inner access, set the admin env var separately.
 
 ### 3.2 CORS (only enforced when bearer mode is active)
 

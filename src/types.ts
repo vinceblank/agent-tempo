@@ -332,7 +332,7 @@ export interface HostProfile {
  */
 export interface InstanceInfo {
   pid: number;
-  /** Parsed from worker identity. `'unknown'` for legacy-format identities (`<pid>@<hostname>`). */
+  /** Parsed from the `agent-tempo:<hostname>:<pid>:<version>` worker identity. */
   version: string;
   /** Raw `poller.identity` as Temporal returned it. */
   identity: string;
@@ -342,8 +342,6 @@ export interface InstanceInfo {
   hasActivityWorker: boolean;
   /** `true` when the per-host activity queue (`agent-tempo-<hostname>`) has a live poller. Controls `HostInfo.recruitReady`. */
   hasHostQueueWorker: boolean;
-  /** Set only when identity was in the legacy `<pid>@<hostname>` form. */
-  legacy?: true;
 }
 
 /**

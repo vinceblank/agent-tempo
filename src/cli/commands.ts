@@ -2186,12 +2186,8 @@ export async function down(opts: DownOpts) {
  * Returns a formatted string like " (pid 12345)" or "" if no PID file found.
  */
 function getBridgePidInfo(ensemble: string, name: string): string {
-  // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path; transitional
-  // READ-ONLY fallback to the legacy per-cwd ./logs for a pre-upgrade bridge.
-  // TODO(v1.7): drop the legacy fallback.
-  const centralPid = bridgeLogPaths(ensemble, name).pidPath;
-  const legacyPid = join(process.cwd(), 'logs', `${name}.pid`);
-  const pidPath = existsSync(centralPid) ? centralPid : legacyPid;
+  // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path.
+  const pidPath = bridgeLogPaths(ensemble, name).pidPath;
   if (!existsSync(pidPath)) return '';
   try {
     const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
@@ -2222,19 +2218,16 @@ function getBridgePidInfo(ensemble: string, name: string): string {
  * — do NOT reuse this global scan-all from a scoped op: it would kill OTHER live
  * ensembles' bridges. The param is intentionally NOT added now (no caller needs it
  * = speculative; backlogged per the architect's deviation ruling).
- *
- * Plus a transitional READ of the legacy per-cwd `./logs` for a pre-upgrade
- * bridge. TODO(v1.7): drop the legacy `./logs` dir.
  */
 function killBridgeProcesses() {
   const centralRoot = bridgeLogsRoot();
-  const dirs: string[] = [join(process.cwd(), 'logs')]; // legacy (transitional)
+  const dirs: string[] = [];
   try {
     for (const ent of readdirSync(centralRoot, { withFileTypes: true })) {
       if (ent.isDirectory()) dirs.push(join(centralRoot, ent.name));
     }
   } catch {
-    // no central logs root yet — nothing central to scan
+    // no central logs root yet — nothing to scan
   }
 
   for (const logsDir of dirs) {

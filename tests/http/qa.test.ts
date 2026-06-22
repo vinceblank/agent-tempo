@@ -62,7 +62,7 @@ async function boot(
     version: '0.0.0-test',
     bindAddr: '127.0.0.1',
     port: 0,
-    httpToken: auth.httpToken,
+    readToken: auth.httpToken,
     adminToken: auth.adminToken,
     allowedOrigins: auth.allowedOrigins,
     portFilePath: path.join(tmpDir, `daemon-${process.hrtime.bigint().toString(36)}.port`),

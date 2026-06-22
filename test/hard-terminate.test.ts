@@ -409,47 +409,6 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     }
   });
 
-  it('#690: locates a LEGACY <workDir>/logs pid file when no central pid exists (transitional fallback)', async function () {
-    // Pre-upgrade (≤v1.6.1) bridges wrote their pid to <workDir>/logs. Post-#690
-    // the reader checks the central ~/.agent-tempo/logs/<ensemble>/ first, then
-    // falls back (read-only) to the legacy per-cwd dir. This proves the fallback
-    // still finds an orphan from a pre-upgrade spawn. Use the wrong-image bystander
-    // so the guard SKIPS the kill — we only need to prove the pid file was LOCATED
-    // (strategy='pidfile') via the legacy path, with NO logDir override.
-    const bystander = isWindows
-      ? spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', detached: true, windowsHide: true })
-      : spawn('sleep', ['60'], { stdio: 'ignore', detached: true });
-    bystander.unref();
-    spawnedPids.push(bystander.pid!);
-    await new Promise((r) => setTimeout(r, 400));
-    const wrongPid = bystander.pid!;
-
-    try {
-      const playerName = `legacy-copilot-${process.pid}-${Date.now()}`;
-      // A unique ensemble whose CENTRAL dir (~/.agent-tempo/logs/<ensemble>) won't
-      // exist, so the central check misses and the legacy fallback must engage.
-      const ensemble = `legacy-ens-${process.pid}-${Date.now()}`;
-      const legacyLogDir = join(tmpWorkDir, 'logs');
-      mkdirSync(legacyLogDir, { recursive: true });
-      writeFileSync(join(legacyLogDir, `${playerName}.pid`), String(wrongPid));
-
-      const result = await hardTerminateAttachment({
-        ensemble,
-        playerName,
-        agent: 'copilot',
-        workDir: tmpWorkDir,
-        // NO logDir override — central default is used, then the legacy <workDir>/logs.
-      });
-
-      // The legacy pid file was FOUND (strategy=pidfile); the wrong-image guard then
-      // refused the kill (bystander still alive).
-      expect(result.strategy, 'legacy fallback should locate the pid file').to.equal('pidfile');
-      expect(isAlive(wrongPid), 'bystander should survive the sanity guard').to.equal(true);
-    } finally {
-      try { process.kill(wrongPid); } catch { /* already gone */ }
-    }
-  });
-
   it('also kills parent cmd.exe when it matches the -n sentinel (#165 — WT orphan tab fix)', async function () {
     // This test reproduces the production WT spawn topology:
     //   cmd.exe /k "<nodeBin> -e '...' -- -n <playerName>"

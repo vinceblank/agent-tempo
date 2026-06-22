@@ -414,24 +414,16 @@ async function daemonInstall(): Promise<void> {
 async function daemonUninstall(): Promise<void> {
   const platform = process.platform;
   if (platform === 'linux') {
-    // Backward-compat: clean up either the new (`agent-tempo.service`) or
-    // legacy (`agent-tempo.service`) unit so v0.x installs migrate cleanly.
     const dirSystemd = join(homedir(), '.config', 'systemd', 'user');
-    const dstNew = join(dirSystemd, 'agent-tempo.service');
-    const dstLegacy = join(dirSystemd, 'agent-tempo.service');
-    for (const svc of ['agent-tempo', 'agent-tempo']) {
-      try { execFileSync('systemctl', ['--user', 'disable', '--now', svc], { stdio: 'ignore' }); } catch { /* may not be running */ }
-    }
-    let removed = false;
+    const dst = join(dirSystemd, 'agent-tempo.service');
+    try { execFileSync('systemctl', ['--user', 'disable', '--now', 'agent-tempo'], { stdio: 'ignore' }); } catch { /* may not be running */ }
     try {
-      for (const dst of [dstNew, dstLegacy]) {
-        if (existsSync(dst)) {
-          unlinkSync(dst);
-          out.success(`Removed ${dst}`);
-          removed = true;
-        }
+      if (existsSync(dst)) {
+        unlinkSync(dst);
+        out.success(`Removed ${dst}`);
+      } else {
+        out.log('No systemd unit file found.');
       }
-      if (!removed) out.log('No systemd unit file found.');
     } catch (err: any) {
       out.error(`Failed to remove systemd unit: ${err?.message ?? err}`);
       process.exit(1);
@@ -440,20 +432,14 @@ async function daemonUninstall(): Promise<void> {
   }
 
   if (platform === 'darwin') {
-    // Backward-compat: clean up either the new (`com.agent.tempo.plist`) or
-    // legacy (`com.claude.tempo.plist`) plist so v0.x installs migrate cleanly.
-    const dstNew = join(homedir(), 'Library', 'LaunchAgents', 'com.agent.tempo.plist');
-    const dstLegacy = join(homedir(), 'Library', 'LaunchAgents', 'com.claude.tempo.plist');
-    let removed = false;
-    for (const dst of [dstNew, dstLegacy]) {
-      try { execFileSync('launchctl', ['unload', dst], { stdio: 'ignore' }); } catch { /* may not be loaded */ }
-      if (existsSync(dst)) {
-        unlinkSync(dst);
-        out.success(`Removed ${dst}`);
-        removed = true;
-      }
+    const dst = join(homedir(), 'Library', 'LaunchAgents', 'com.agent.tempo.plist');
+    try { execFileSync('launchctl', ['unload', dst], { stdio: 'ignore' }); } catch { /* may not be loaded */ }
+    if (existsSync(dst)) {
+      unlinkSync(dst);
+      out.success(`Removed ${dst}`);
+    } else {
+      out.log('No launchd plist found.');
     }
-    if (!removed) out.log('No launchd plist found.');
     return;
   }
 

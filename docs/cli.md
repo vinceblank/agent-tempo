@@ -30,7 +30,6 @@ agent-tempo <command> [options]
 | `dashboard` | Open the web dashboard in the default browser. Flags: `--port`, `--bind`, `--no-open` (print URL, skip launch), `--pair` (mint a one-time QR-code pairing token for cross-device access), `--json` (machine-parseable output). Requires the daemon to be running. (#340) |
 | `command-center [ensemble]` (aliases: `cc`, `board`) | Launch the interactive Pi mission-control board for an ensemble. Operator-only — never claims attachment or registers as a player. Requires `@earendil-works/pi-coding-agent` and Node ≥ 22.19. See [Command-center](#agent-tempo-command-center) below. (#729) |
 | `install-pi` | Install agent-tempo's Pi extensions (player + command-center) into Pi's settings.json. Idempotent; prunes stale/old-version paths on re-run. Use `--project` for per-directory installation. (#700, #738) |
-| `migrate-from-claude-tempo` | One-shot home-directory migration from `~/.claude-tempo/` → `~/.agent-tempo/`. Use `--dry-run` to preview without writing; `--force` to bypass conflict and volatile-state guards. |
 | `scenarios <sub>` | **Dev mode only.** Browse the shipped scenario library (`list`, `show <name>`). Requires `--dev`. See [dev-mode.md](dev-mode.md). |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |

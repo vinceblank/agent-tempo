@@ -14,9 +14,8 @@ import * as out from './output';
 import { PI_NODE_FLOOR, PI_PACKAGE } from '../pi/probe';
 import type { BootstrapResult, StepName, StepOutcome } from './startup';
 
-/** Friendly labels for the six bootstrap steps (+ migration pre-step). */
+/** Friendly labels for the bootstrap steps. */
 const STEP_LABELS: Record<StepName, string> = {
-  legacyHomeMigration: 'legacy home migration',
   preflight: 'preflight',
   mcpConfig: 'MCP registration',
   temporalReach: 'Temporal reachability',

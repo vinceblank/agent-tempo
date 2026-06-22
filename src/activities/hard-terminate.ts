@@ -26,7 +26,6 @@
  */
 import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
 import type { AgentType } from '../types';
 import { bridgeLogPaths } from '../config';
 import { ENSEMBLE_SENTINEL_FLAG, escapeNameForRegex } from '../constants';
@@ -46,9 +45,9 @@ export interface HardTerminateInput {
   playerName: string;
   /** Adapter type — controls PID-file lookup and expected process-name verification. */
   agent: AgentType;
-  /** Session's workDir — used to locate the copilot bridge PID file (`<workDir>/logs/<playerName>.pid`). */
+  /** Session's workDir — carried on the activity input as a session attribute. */
   workDir: string;
-  /** Optional explicit logDir override; falls back to `<workDir>/logs`. */
+  /** Optional explicit logDir override for the central bridge log path. */
   logDir?: string;
 }
 
@@ -66,7 +65,7 @@ export interface HardTerminateResult {
  * what happened so callers can record it in workflow history without blocking state flips.
  */
 export async function hardTerminateAttachment(input: HardTerminateInput): Promise<HardTerminateResult> {
-  const { ensemble, playerName, agent, workDir, logDir } = input;
+  const { ensemble, playerName, agent, logDir } = input;
   const notes: string[] = [];
   const killedPids: number[] = [];
 
@@ -74,13 +73,8 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
 
   // ── Copilot bridge: PID file is authoritative ──
   if (agent === 'copilot') {
-    // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path now.
-    // Transitional (one version, v1.6.2) READ-ONLY fallback to the legacy per-cwd
-    // <workDir>/logs so we can still find+kill an orphan from a pre-upgrade spawn.
-    // TODO(v1.7): drop the legacy fallback.
-    const centralPid = bridgeLogPaths(ensemble, playerName, logDir).pidPath;
-    const legacyPid = join(logDir || join(workDir, 'logs'), `${playerName}.pid`);
-    const pidPath = existsSync(centralPid) ? centralPid : legacyPid;
+    // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path.
+    const pidPath = bridgeLogPaths(ensemble, playerName, logDir).pidPath;
     if (existsSync(pidPath)) {
       try {
         const pidStr = readFileSync(pidPath, 'utf8').trim();

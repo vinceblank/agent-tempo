@@ -294,19 +294,6 @@ export interface PersistedConfig {
   defaultAgent?: AgentType;
   claudeBin?: string;
   /**
-   * Bearer token for the daemon's HTTP/SSE event source (#94, #95,
-   * SSE-PROTOCOL.md §3.1). Auto-generated on first daemon boot when
-   * bearer mode is required (`AGENT_TEMPO_HTTP_BIND` non-loopback OR
-   * a request with a non-loopback `Origin`) and no token is set:
-   * `crypto.randomBytes(32).toString('base64url')`, 0600 on POSIX.
-   * Rotation = delete this field; next daemon boot regenerates.
-   *
-   * 3e: this LEGACY single token is migrated to the READ tier (T1) — a daemon
-   * with only `httpToken` set keeps read access and emits a one-time startup
-   * warning to set an admin token for writes/gate/inner. Prefer `readToken`.
-   */
-  httpToken?: string;
-  /**
    * 3e RBAC — the READ-tier (T1) bearer token. Env `AGENT_TEMPO_HTTP_READ_TOKEN`
    * takes precedence over this; auto-generated here on first bearer-mode boot if
    * neither is set. The ADMIN token is deliberately ABSENT from this file (it is
