@@ -815,9 +815,10 @@ export type OutboxEntry =
   | ResetOutboxEntry;
 
 /**
- * Pending reset flag set on a session workflow by `deliverReset`, polled by the
- * Pi extension via `pendingResetQuery` and cleared via `ackResetSignal(resetId)`
- * after the extension performs the wipe. Single-slot, latest-wins.
+ * Pending reset flag set on a session workflow by `deliverReset`, read by the
+ * Pi extension off the combined `pendingIntake` query and cleared via
+ * `ackResetSignal(resetId)` after the extension performs the wipe. Single-slot,
+ * latest-wins.
  */
 export interface PendingReset {
   /** Correlation id (the originating outbox entry id). Ack clears only on match. */

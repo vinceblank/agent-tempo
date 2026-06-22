@@ -259,19 +259,11 @@ export const maestroPlayersByEnsembleQuery = defineQuery<Record<string, MaestroP
 /** Get recent messages across all ensembles (ring buffer, max 500). */
 export const maestroRecentMessagesQuery = defineQuery<MaestroRelayMessage[]>('maestroRecentMessages');
 
-/**
- * #274 — the `hostname → HostProfile` map maintained by the global maestro.
- *
- * Returned as a plain `Record<string, HostProfile>` (not a `Map`) so the
- * default Temporal payload converter serializes it without a codec tweak.
- * The `src/utils/hosts.ts` join helper consumes this and reconstructs a
- * `Map`-shaped view at the consumer boundary if callers find it useful.
- *
- * Consumers MUST treat the returned profiles as opaque beyond the
- * `hostname` field — per-field validation happens at the join site, not
- * at query time.
- */
-export const hostProfilesQuery = defineQuery<Record<string, HostProfile>>('hostProfiles');
+// 2.0 (#788): the legacy `hostProfilesQuery` ('hostProfiles') was removed —
+// superseded by `hostProfilesWithExistenceQuery` below, which folds the
+// running-check + profiles into a single round-trip. Every consumer uses the
+// WithExistence form. Consumers MUST still treat the returned profiles as
+// opaque beyond the `hostname` field (validation happens at the join site).
 
 /**
  * #280 — combined existence + profiles query.

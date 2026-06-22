@@ -999,8 +999,9 @@ export function createOutboxActivities(
     /**
      * D14 `deliverReset` — set a `pendingReset` flag on the target via
      * `setPendingResetSignal` (a signal, like deliverCue — NOT a direct
-     * subprocess call). The Pi extension polls `pendingResetQuery`, performs the
-     * clean-wipe (`newSession`), then clears it via `ackResetSignal(resetId)`.
+     * subprocess call). The Pi extension reads the pending reset off the
+     * combined `pendingIntake` query, performs the clean-wipe (`newSession`),
+     * then clears it via `ackResetSignal(resetId)`.
      */
     async deliverReset(input: DeliverResetInput): Promise<OutboxActivityResult> {
       const { ensemble, targetPlayerId, resetId, fresh, reason, requestedBy } = input;

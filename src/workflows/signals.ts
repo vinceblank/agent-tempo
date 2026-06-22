@@ -91,23 +91,26 @@ export const allSentMessagesQuery = defineQuery<SentMessage[]>('allSentMessages'
 
 // ── Reset (D14) — context clean-wipe poll-delivery ──
 // `deliverReset` sets the pending flag via `setPendingResetSignal`; the Pi
-// extension polls `pendingResetQuery`, performs the wipe (newSession), then
-// clears it via `ackResetSignal(resetId)`. Single-slot, latest-wins. The
-// workflow stamps `requestedAt` (deterministic). See WIRE-PROTOCOL.md.
+// extension reads the pending reset off the combined `pendingIntakeQuery`
+// (`.pendingReset`), performs the wipe (newSession), then clears it via
+// `ackResetSignal(resetId)`. Single-slot, latest-wins. The workflow stamps
+// `requestedAt` (deterministic). See WIRE-PROTOCOL.md.
+// 2.0 (#788): the standalone `pendingResetQuery` ('pendingReset') was removed —
+// reset now rides the combined `pendingIntake` query; these signals stay.
 export const setPendingResetSignal =
   defineSignal<[{ resetId: string; fresh: boolean; reason?: string; requestedBy?: string }]>('setPendingReset');
-export const pendingResetQuery = defineQuery<PendingReset | null>('pendingReset');
 export const ackResetSignal = defineSignal<[string]>('ackReset');
 
 // ── Combined intake (T0.3 of #747, #750) ──
 // One query serving BOTH of the Pi cue pump's per-tick reads — the undelivered
-// message list (= `pendingMessages`) and the single-slot pending reset
-// (= `pendingReset`) — halving the pump's idle Temporal actions (2 → 1
-// query/tick; queries are billable on Temporal Cloud). ADDITIVE: the two
-// legacy queries remain served (stable wire names); new pumps fall back to
-// them against pre-#750 workflows that lack this handler. Ack surfaces are
-// unchanged (`markDelivered` / `ackReset` — same race-safe id-match
-// semantics). See docs/WIRE-PROTOCOL.md.
+// message list (= `pendingMessages`, still served standalone for the SDK
+// adapters) and the single-slot pending reset — halving the pump's idle
+// Temporal actions (2 → 1 query/tick; queries are billable on Temporal Cloud).
+// Ack surfaces are unchanged (`markDelivered` / `ackReset` — same race-safe
+// id-match semantics). See docs/WIRE-PROTOCOL.md.
+// 2.0 (#788): the standalone `pendingReset` query was removed; `pendingMessages`
+// stays for the SDK adapters; the pre-#750 fallback is gone (A2 guarantees every
+// 2.0 workflow serves this handler).
 
 /** Result shape of {@link pendingIntakeQuery}. */
 export interface PendingIntake {

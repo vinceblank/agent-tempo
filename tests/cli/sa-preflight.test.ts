@@ -13,7 +13,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   REQUIRED_SEARCH_ATTRIBUTES,
-  LEGACY_SEARCH_ATTRIBUTES,
   verifySearchAttributes,
   assertSearchAttributesOrExit,
   formatPreflightError,
@@ -24,7 +23,7 @@ import {
 
 const ALL_REGISTERED = new Set(REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name));
 
-describe('SA diet lists (T0.5, #747)', () => {
+describe('SA diet lists (T0.5 #747; legacy list removed in 2.0 #788)', () => {
   it('REQUIRED holds exactly the 5 filter attributes', () => {
     expect(REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name).sort()).toEqual([
       'AgentTempoAttachedHost',
@@ -32,26 +31,6 @@ describe('SA diet lists (T0.5, #747)', () => {
       'AgentTempoEnsemble',
       'AgentTempoHostname',
       'AgentTempoPlayerId',
-    ]);
-  });
-
-  it('REQUIRED ∪ LEGACY is the historic pre-diet 9, with no overlap', () => {
-    // Guards both directions of drift: an attribute silently dropped from
-    // both lists (operators lose its name in diagnostics) or duplicated
-    // across them (registration ambiguity).
-    const required = REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name);
-    const legacy = LEGACY_SEARCH_ATTRIBUTES.map((a) => a.name);
-    expect(required.filter((n) => legacy.includes(n))).toEqual([]);
-    expect([...required, ...legacy].sort()).toEqual([
-      'AgentTempoAttachedHost',
-      'AgentTempoAttachmentId',
-      'AgentTempoAttachmentState',
-      'AgentTempoEnsemble',
-      'AgentTempoGitRoot',
-      'AgentTempoHostname',
-      'AgentTempoIsConductor',
-      'AgentTempoPlayerId',
-      'AgentTempoPlayerType',
     ]);
   });
 });

@@ -1525,7 +1525,7 @@ describe('maestro activities', function () {
       const client = mockClient([h]);
       const activities = createMaestroActivities(client as any);
 
-      const players = await activities.refreshEnsembleState('e1');
+      const { players } = await activities.refreshEnsembleStateV2({ ensemble: 'e1' });
       expect(players).to.have.length(1);
       expect(players[0].playerId).to.equal('alice');
       expect(players[0].ensemble).to.equal('e1');
@@ -1539,7 +1539,7 @@ describe('maestro activities', function () {
       const client = mockClient([h]);
       const activities = createMaestroActivities(client as any);
 
-      const players = await activities.refreshEnsembleState('e1');
+      const { players } = await activities.refreshEnsembleStateV2({ ensemble: 'e1' });
       expect(players).to.have.length(0);
     });
   });

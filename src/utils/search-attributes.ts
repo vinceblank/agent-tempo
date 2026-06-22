@@ -171,26 +171,25 @@ export function getWorkflowProtocol(
 }
 
 /**
- * Dual-read a string field: memo first (runs started on or after the
- * v1.8-sa-diet patch), legacy search attribute as fallback (older runs).
+ * Read a string metadata field from the workflow memo.
  *
- * TODO(next major): remove the SA fallback chain here and in
- * {@link getWorkflowMetaBool}, and drop `LEGACY_SEARCH_ATTRIBUTES` in
- * `src/cli/sa-preflight.ts` — see #747 and docs/ops/sa-diet-migration.md.
+ * 2.0 (#788): memo-only. The legacy search-attribute fallback is gone — the
+ * A2 clean cutover (guarded by #786) means no pre-v1.8 SA-only run survives
+ * for a 2.0 worker to read, so every metadata field now lives in the memo.
  */
 export function getWorkflowMetaString(
   carrier: WorkflowMetaCarrier,
   name: string,
 ): string | undefined {
-  return getMemoString(carrier, name) ?? getSearchAttrString(carrier, name);
+  return getMemoString(carrier, name);
 }
 
-/** Dual-read a boolean field — memo preferred, SA fallback. */
+/** Read a boolean metadata field from the workflow memo (2.0: memo-only — #788). */
 export function getWorkflowMetaBool(
   carrier: WorkflowMetaCarrier,
   name: string,
 ): boolean | undefined {
-  return getMemoBool(carrier, name) ?? getSearchAttrBool(carrier, name);
+  return getMemoBool(carrier, name);
 }
 
 // ── Typed wrappers for agent-tempo's custom search attributes ──

@@ -109,19 +109,14 @@ export interface MaestroActivityOptions {
 /** Activity interface — used by proxyActivities in the Maestro workflow. */
 export interface MaestroActivities {
   /**
-   * Legacy V1 refresh — the `costProfile: 'local'` path AND the replay
-   * path for every maestro started before #748.
-   * TODO(next major, #748): remove once the minimum deployment age
-   * exceeds the longest-lived pre-#748 maestro history (they replay V1);
-   * remove together with the V1 branch in workflows/maestro.ts.
-   */
-  refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]>;
-  /**
-   * T0.1 (#748) — additive V2: called only by maestros started with
-   * `costProfile: 'cloud'` in their input. SA/memo-based ensemble-scoped
-   * scan + in-process observer presence for workflow-side cadence
-   * stretching. V1 stays for in-flight pre-#748 maestros (replay safety)
-   * and the local profile.
+   * Ensemble-scoped player scan. Returns the player rows plus `observersPresent`
+   * (SSE subscriber presence) for workflow-side cadence stretching on the cloud
+   * profile. Honors the daemon's cost profile internally: cloud → SA/memo
+   * ensemble-scoped scan, local → the legacy visibility scan.
+   *
+   * 2.0 (#788): the only refresh activity — the former V1 `refreshEnsembleState`
+   * was removed; both profiles call this (the A2 cutover means no pre-#748
+   * maestro survives to need the V1 replay path).
    */
   refreshEnsembleStateV2(input: { ensemble: string }): Promise<RefreshEnsembleStateV2Result>;
   fetchConductorHistory(input: FetchConductorHistoryInput): Promise<FetchConductorHistoryResult>;
@@ -182,18 +177,6 @@ export function createMaestroActivities(
     }
   };
   return tagActionSource(maestroSource, {
-    async refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]> {
-      try {
-        const sessions = await scanEnsembleSessions(client, ensemble);
-        return sessions.map(toPlayerInfo(ensemble));
-      } catch (err) {
-        log('refreshEnsembleState failed:', err);
-        throw ApplicationFailure.nonRetryable(
-          `Failed to scan ensemble: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    },
-
     async refreshEnsembleStateV2(input: { ensemble: string }): Promise<RefreshEnsembleStateV2Result> {
       try {
         // Honor the DAEMON's configured profile for the scan strategy: a

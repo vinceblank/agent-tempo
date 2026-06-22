@@ -1,13 +1,14 @@
 /**
- * PiWorkflowClient combined intake + pre-#750 fallback (T0.3 of #747, #750) —
- * unit tests with a stubbed Temporal client (no live server).
+ * PiWorkflowClient combined intake (T0.3 of #747, #750) — unit tests with a
+ * stubbed Temporal client (no live server).
  *
- * Locks the compatibility contract (#750 constraint 4):
+ * Locks the 2.0 intake contract (#788 removed the pre-#750 fallback):
  *   - new pump + new workflow → ONE `pendingIntake` query per fetch;
- *   - new pump + OLD workflow (handler not registered) → falls back to the
- *     legacy `pendingMessages` + `pendingReset` pair, and CACHES the verdict
- *     so the failed probe is paid once, not per tick;
- *   - genuine failures (anything not query-not-registered) propagate.
+ *   - OLD workflow (handler not registered) → the QueryNotRegisteredError now
+ *     PROPAGATES; the A2 clean cutover (guarded by #786) guarantees every 2.0
+ *     session workflow serves `pendingIntake`, so the legacy two-query fallback
+ *     was dead and is removed;
+ *   - genuine failures (anything not query-not-registered) propagate too.
  */
 import { expect } from 'chai';
 import { QueryNotRegisteredError } from '@temporalio/client';
@@ -92,20 +93,17 @@ describe('PiWorkflowClient.fetchIntake (#750)', () => {
     expect(counts).to.deep.equal({ pendingIntake: 1, pendingMessages: 0, pendingReset: 0 });
   });
 
-  it('pre-#750 workflow → falls back to the legacy pair and CACHES the verdict', async () => {
+  it('pre-#750 workflow → propagates QueryNotRegisteredError (no fallback in 2.0, #788)', async () => {
     const { client, counts } = stubClient({ pendingIntake: 'unregistered' });
     const wf = await buildClient(client);
 
-    const first = await wf.fetchIntake();
-    expect(first.messages).to.deep.equal([TEST_MSG]);
-    expect(first.pendingReset?.resetId).to.equal('r1');
-    expect(counts.pendingIntake).to.equal(1); // probed once…
-
-    await wf.fetchIntake();
-    await wf.fetchIntake();
-    expect(counts.pendingIntake).to.equal(1); // …and never again
-    expect(counts.pendingMessages).to.equal(3);
-    expect(counts.pendingReset).to.equal(3);
+    let err: unknown = null;
+    await wf.fetchIntake().catch((e) => { err = e; });
+    expect(isQueryNotRegisteredError(err), 'the missing-handler error propagates').to.equal(true);
+    expect(counts.pendingIntake).to.equal(1); // queried once…
+    // …and the removed legacy two-query fallback never fires.
+    expect(counts.pendingMessages).to.equal(0);
+    expect(counts.pendingReset).to.equal(0);
   });
 
   it('genuine failures propagate (no silent fallback on transport errors)', async () => {
