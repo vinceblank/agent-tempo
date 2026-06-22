@@ -71,6 +71,7 @@ import { PROTOCOL_VERSION } from '../src/constants';
 const SILENT = (..._args: unknown[]): void => {};
 
 // Continuity fixtures — stable across phases so assertions stay readable.
+const SOLOIST_PLAYER_ID = 'soloist';
 const SOLOIST_SESSION_ID = 'sess-cutover-smoke';
 const SOLOIST_MODEL = 'anthropic/claude-opus-4-7';
 const SOLOIST_STATE_KEY = 'handoff';
@@ -137,7 +138,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const soloistHandle = await startSession({
           metadata: playerMetadata({
             ensemble,
-            playerId: 'soloist',
+            playerId: SOLOIST_PLAYER_ID,
             playerType: 'tempo-soloist',
             sessionId: SOLOIST_SESSION_ID,   // dimension 4: resume pointer
             model: SOLOIST_MODEL,            // dimension 3: non-default model
@@ -146,7 +147,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
 
         // Dimension 2: #334 state slot — player curates what survives the cutover.
         await soloistHandle.executeUpdate(savePlayerStateUpdate, {
-          args: [{ key: SOLOIST_STATE_KEY, content: SOLOIST_STATE_CONTENT, savedBy: 'soloist' }],
+          args: [{ key: SOLOIST_STATE_KEY, content: SOLOIST_STATE_CONTENT, savedBy: SOLOIST_PLAYER_ID }],
         });
 
         // Dimension 1: durable schedule — operator intent must survive the cutover.
@@ -158,7 +159,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const entry: ScheduleEntry = {
           name: SCHEDULE_NAME,
           message: 'daily standup ping',
-          target: 'soloist',
+          target: SOLOIST_PLAYER_ID,
           createdBy: 'operator',
           type: 'cron',
           nextFireAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -201,10 +202,10 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         expect(schedSnap, 'schedule captured').to.exist;
         expect(schedSnap!.cronExpression).to.equal(SCHEDULE_CRON);
         expect(schedSnap!.timezone).to.equal(SCHEDULE_TZ);
-        expect(schedSnap!.target).to.equal('soloist');
+        expect(schedSnap!.target).to.equal(SOLOIST_PLAYER_ID);
 
         // ── Dimension 2: state slot captured ──
-        const soloistSnap = ens!.players.find((p) => p.playerId === 'soloist');
+        const soloistSnap = ens!.players.find((p) => p.playerId === SOLOIST_PLAYER_ID);
         expect(soloistSnap, 'soloist in snapshot').to.exist;
         expect(soloistSnap!.stateSlots[SOLOIST_STATE_KEY]).to.equal(SOLOIST_STATE_CONTENT);
 
@@ -246,7 +247,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         ).to.be.true;
 
         // ── Soloist skeleton: poll until the session workflow is RUNNING ──
-        const soloistWfId = sessionWorkflowId(ensemble, 'soloist');
+        const soloistWfId = sessionWorkflowId(ensemble, SOLOIST_PLAYER_ID);
         const soloistWf = getClient().workflow.getHandle(soloistWfId);
 
         // Give the workflow a moment to start (USE_EXISTING, worker picks it up).
@@ -263,12 +264,15 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
           100,
         );
 
-        // ── Dimension 2: state slot seeded with savedBy='self-restart' + savedAt ──
+        // ── Dimension 2: state slot seeded with savedBy=playerId (owner-self) + savedAt ──
+        // from-upgrade seeds savedBy as player.playerId (#868 owner-seeding — the owner is the
+        // player itself). 'self-restart' is the from-field used when a *restart* DELIVERS state,
+        // a different concept. CI caught this mismatch on the first run.
         const stateEntry = await soloistWf.query(playerStateQuery, { key: SOLOIST_STATE_KEY });
         expect(stateEntry, 'state slot seeded').to.not.be.null;
         expect(stateEntry!.content).to.equal(SOLOIST_STATE_CONTENT);
-        expect(stateEntry!.savedBy, 'savedBy=self-restart (cutover delivery identity)').to.equal(
-          'self-restart',
+        expect(stateEntry!.savedBy, 'savedBy=player itself (owner-seeded by from-upgrade)').to.equal(
+          SOLOIST_PLAYER_ID,
         );
         expect(stateEntry!.savedAt, 'savedAt is ISO timestamp').to.match(
           /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
@@ -294,7 +298,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const seededEntry = schedEntries.find((s) => s.name === SCHEDULE_NAME);
         expect(seededEntry, 'schedule seeded in recreated scheduler').to.exist;
         expect(seededEntry!.cronExpression).to.equal(SCHEDULE_CRON);
-        expect(seededEntry!.target).to.equal('soloist');
+        expect(seededEntry!.target).to.equal(SOLOIST_PLAYER_ID);
         // firedCount must be reset — carrying it forward would misreport delivery history.
         expect(seededEntry!.firedCount, 'firedCount reset to 0').to.equal(0);
 
