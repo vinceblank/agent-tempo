@@ -36,9 +36,10 @@ export interface SearchAttributeCarrier {
  *
  * T0.5 (#747): the read-only metadata fields (`gitRoot`, `playerType`,
  * `isConductor`, plus `part`) migrated from search attributes to the workflow
- * memo. The dual-read helpers below prefer the memo (new runs) and fall back
- * to the legacy search attribute (runs started before the v1.8-sa-diet patch)
- * — this file is the single choke point for that migration window.
+ * memo. The memo readers below are now memo-only — #788 pruned the legacy-SA
+ * fallback, since the 2.0 clean cutover (guarded by #786) leaves no pre-v1.8
+ * SA-only run for a 2.0 worker to read. This file is the single choke point
+ * for those reads.
  */
 export interface WorkflowMetaCarrier extends SearchAttributeCarrier {
   memo?: Record<string, unknown>;
@@ -47,7 +48,7 @@ export interface WorkflowMetaCarrier extends SearchAttributeCarrier {
 /**
  * Canonical memo key names (T0.5, #747) — single registry shared by every
  * write site (session workflow, the five `client.workflow.start({ memo })`
- * seeds) and the dual-read helpers below, so a key can never silently
+ * seeds) and the memo readers below, so a key can never silently
  * drift between writer and reader. Wire-stable: renaming a key is a
  * breaking change (docs/WIRE-PROTOCOL.md §Workflow memo).
  *
@@ -229,11 +230,11 @@ export function getEnsembleName(
 }
 
 /**
- * Read the conductor flag — memo `AgentTempoIsConductor` preferred (T0.5),
- * legacy search attribute as fallback for pre-v1.8 runs.
+ * Read the conductor flag from memo `AgentTempoIsConductor` (T0.5; memo-only
+ * after the #788 legacy-SA prune).
  *
- * Returns `undefined` when absent in both (e.g. transiently un-indexed after
- * a conductor spawn). Callers wanting the pre-#178 workflow-id-suffix
+ * Returns `undefined` when absent (e.g. transiently un-indexed after a
+ * conductor spawn). Callers wanting the pre-#178 workflow-id-suffix
  * fallback (`endsWith('-conductor')`) should apply it on `undefined`.
  */
 export function getIsConductor(
@@ -243,10 +244,9 @@ export function getIsConductor(
 }
 
 /**
- * Read the player type — memo `AgentTempoPlayerType` preferred (T0.5),
- * legacy search attribute as fallback for pre-v1.8 runs. Callers keep their
- * existing workflow-id-suffix fallback (`endsWith('-maestro')`) on
- * `undefined`.
+ * Read the player type from memo `AgentTempoPlayerType` (T0.5; memo-only
+ * after the #788 legacy-SA prune). Callers keep their existing
+ * workflow-id-suffix fallback (`endsWith('-maestro')`) on `undefined`.
  */
 export function getPlayerType(
   carrier: WorkflowMetaCarrier,

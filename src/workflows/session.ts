@@ -193,7 +193,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * Shared by the run-start upsert and the updateMetadata handler so the
    * two write sites can't drift. Key names come from the shared
    * {@link MEMO_KEYS} registry (also used by the client-side
-   * `workflow.start({ memo })` seeds and the dual-read helpers).
+   * `workflow.start({ memo })` seeds and the memo readers).
    */
   const metaMemo = (): Record<string, unknown> => ({
     ...(input.metadata.gitRoot ? { [MEMO_KEYS.gitRoot]: input.metadata.gitRoot } : {}),
