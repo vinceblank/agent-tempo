@@ -182,9 +182,9 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         expect(upgradeResult.status, 'upgrade status').to.equal('done');
         expect(upgradeResult.phase, 'upgrade phase').to.equal('done');
 
-        // SNAPSHOT-precedes-DESTROY invariant: snapshot file must exist NOW
-        // (i.e. was written before destroy ran). The phase stamp 'done' means
-        // destroy completed, so if the file is here we know it preceded destroy.
+        // Snapshot written by upgrade engine — existence confirms the engine completed
+        // the snapshot phase. The invariant (SNAPSHOT precedes DESTROY) is enforced at
+        // the type level: `destroyAndFinish` takes the persisted snapshot as a required arg.
         const snapPath = snapshotPath(home);
         expect(existsSync(snapPath), 'snapshot file exists after upgrade').to.be.true;
 
