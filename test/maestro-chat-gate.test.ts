@@ -10,8 +10,9 @@
  *      refresh keeps ticking);
  *   2. observers appear → the chat fetch resumes on the next tick (the
  *      durable high-water marks make the catch-up fetch complete);
- *   3. local profile → byte-identical: V1 refresh + chat fetch every tick,
- *      presence never consulted.
+ *   3. local profile → V2 refresh + chat fetch every tick, presence never
+ *      consulted (post-#788 both profiles call refreshEnsembleStateV2; the V1
+ *      activity is removed — local just doesn't gate on observersPresent).
  *
  * Determinism note encoded here for reviewers: the gate sits behind
  * `patched('v1.8-t06-chat-gate')` — post-#759 cloud maestros RECORDED chat
@@ -135,17 +136,19 @@ describe('T0.6 maestro chat gate (#760)', function () {
     });
   });
 
-  it('LOCAL profile byte-identity: V1 refresh + chat fetch every tick, presence never consulted', async function () {
+  it('LOCAL profile: V2 refresh + chat fetch every tick, presence never consulted', async function () {
     this.timeout(60_000);
     const counters: Counters = { v1: 0, v2: 0, chat: 0, observersPresent: false };
     await withChatGateWorker(counters, async () => {
       const handle = await startMaestro(/* no costProfile */);
       try {
-        await pollWithTimeout(() => counters.v1 >= 3, 20_000, 100);
+        // Post-#788 both profiles call refreshEnsembleStateV2; local just never
+        // gates the chat fetch on observersPresent.
+        await pollWithTimeout(() => counters.v2 >= 3, 20_000, 100);
         // Chat ran alongside every completed tick (allow the off-by-one of
         // an in-flight tick) DESPITE observersPresent=false — local ignores it.
-        expect(counters.chat, 'local chat fetches').to.be.at.least(counters.v1 - 1);
-        expect(counters.v2, 'V2 must not run under local input').to.equal(0);
+        expect(counters.chat, 'local chat fetches').to.be.at.least(counters.v2 - 1);
+        expect(counters.v1, 'V1 refresh is removed in 2.0 — never called').to.equal(0);
       } finally {
         await shutdown(handle);
       }

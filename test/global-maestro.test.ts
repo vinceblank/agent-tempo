@@ -25,7 +25,6 @@ import {
   maestroFetchConductorHistoryUpdate,
   maestroGlobalSendCommandUpdate,
   hostProfileSignal,
-  hostProfilesQuery,
   hostProfilesWithExistenceQuery,
 } from '../src/workflows/maestro-signals';
 import type { MaestroPlayerInfo, HostProfile } from '../src/types';
@@ -493,7 +492,7 @@ describe('agentGlobalMaestroWorkflow', function () {
       this.timeout(10_000);
       await withWorkerAndGlobalMaestroActivities({}, async () => {
         const handle = await startGlobalMaestro(getClient());
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles).to.deep.equal({});
         await handle.signal(maestroShutdownSignal);
         await handle.result();
@@ -517,7 +516,7 @@ describe('agentGlobalMaestroWorkflow', function () {
         };
         await handle.signal(hostProfileSignal, profile);
 
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles).to.have.property('mac-alice');
         expect(profiles['mac-alice']).to.deep.equal(profile);
 
@@ -533,7 +532,7 @@ describe('agentGlobalMaestroWorkflow', function () {
 
         await handle.signal(hostProfileSignal, { hostname: 'bare-host' });
 
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles).to.have.property('bare-host');
         expect(profiles['bare-host'].hostname).to.equal('bare-host');
         // No other fields enforced; the rest of the shape is opaque.
@@ -558,7 +557,7 @@ describe('agentGlobalMaestroWorkflow', function () {
           experimentalFlags: { nested: { deep: 'value' } },
         } as unknown as HostProfile);
 
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles['future-host']).to.have.property('futureCapability', 'warp-drive');
         expect(profiles['future-host']).to.have.nested.property(
           'experimentalFlags.nested.deep',
@@ -584,7 +583,7 @@ describe('agentGlobalMaestroWorkflow', function () {
           hostname: 'a'.repeat(65), // >64 char cap
         } as unknown as HostProfile);
 
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles).to.deep.equal({});
 
         await handle.signal(maestroShutdownSignal);
@@ -608,7 +607,7 @@ describe('agentGlobalMaestroWorkflow', function () {
           defaultAgent: 'copilot',
         });
 
-        const profiles = await handle.query(hostProfilesQuery);
+        const { profiles } = await handle.query(hostProfilesWithExistenceQuery);
         expect(profiles['upsert-host'].version).to.equal('0.26.0-beta.7');
         expect(profiles['upsert-host'].defaultAgent).to.equal('copilot');
 
@@ -635,8 +634,8 @@ describe('agentGlobalMaestroWorkflow', function () {
         expect(combined.profiles).to.have.property('combined-host');
         expect(combined.profiles['combined-host']).to.deep.equal(profile);
 
-        // Result must agree with the legacy single-purpose query (back-compat).
-        const legacy = await handle.query(hostProfilesQuery);
+        // Result must agree with a second read of the combined query (back-compat).
+        const { profiles: legacy } = await handle.query(hostProfilesWithExistenceQuery);
         expect(combined.profiles).to.deep.equal(legacy);
 
         await handle.signal(maestroShutdownSignal);

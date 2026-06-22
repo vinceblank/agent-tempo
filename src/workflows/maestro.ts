@@ -77,8 +77,7 @@ import {
   maestroGlobalSendCommandUpdate,
   // #274 — host discovery
   hostProfileSignal,
-  hostProfilesQuery,
-  // #280 — combined existence + profiles query
+  // #280 — combined existence + profiles query (legacy hostProfilesQuery removed in 2.0 #788)
   hostProfilesWithExistenceQuery,
 } from './maestro-signals';
 import { ApplicationFailure } from '@temporalio/workflow';
@@ -102,8 +101,8 @@ import {
 // Only proxy activities actually used in the workflow.
 // fetchConductorHistory is available in the activities but reserved for Phase 2 (TUI).
 
-const { refreshEnsembleState, refreshEnsembleStateV2, relayCommandToConductor, fetchEnsembleChat } =
-  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleState' | 'refreshEnsembleStateV2' | 'relayCommandToConductor' | 'fetchEnsembleChat'>>({
+const { refreshEnsembleStateV2, relayCommandToConductor, fetchEnsembleChat } =
+  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleStateV2' | 'relayCommandToConductor' | 'fetchEnsembleChat'>>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
   });
@@ -616,14 +615,15 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
       // activity: SA/memo-based ensemble-scoped scan + the daemon's SSE
       // observer presence, which drives next tick's cadence (20s watched /
       // 60s unwatched via resolveRefreshIntervalMs).
-      let newPlayers: MaestroPlayerInfo[];
+      // 2.0 (#788): single refresh activity (V2). It honors the daemon cost
+      // profile internally (cloud → SA/memo scan, local → legacy scan) and
+      // returns `observersPresent`. Only the cloud profile uses presence to
+      // stretch the refresh cadence; local keeps its fixed interval.
+      const v2 = await refreshEnsembleStateV2({ ensemble: input.ensemble });
+      const newPlayers: MaestroPlayerInfo[] = v2.players;
+      observersPresent = v2.observersPresent;
       if (cloudProfile) {
-        const v2 = await refreshEnsembleStateV2({ ensemble: input.ensemble });
-        newPlayers = v2.players;
-        observersPresent = v2.observersPresent;
         refreshIntervalMs = resolveRefreshIntervalMs(input, observersPresent);
-      } else {
-        newPlayers = await refreshEnsembleState(input.ensemble);
       }
       const nowDate = workflowNow();
       const now = nowDate.toISOString();
@@ -886,7 +886,6 @@ const GLOBAL_MAX_EVENTS = 500;
 const globalActivities = proxyActivities<
   Pick<MaestroActivities,
     | 'discoverEnsembles'
-    | 'refreshEnsembleState'
     | 'refreshEnsembleStateV2'
     | 'relayCommandToConductor'
     | 'deliverMaestroMessage'
@@ -970,8 +969,6 @@ export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Pro
   setHandler(maestroRecentMessagesQuery, () => recentMessages);
   setHandler(maestroEventsQuery, () => events);
   setHandler(maestroPendingCommandsQuery, () => pendingCommands);
-  // Return a defensive copy so callers can't mutate workflow state.
-  setHandler(hostProfilesQuery, () => ({ ...hostProfiles }));
   // #280 — combined query: reaching this handler proves the workflow is
   // running, so `exists` is always `true` here. Callers infer "missing"
   // by catching transport-level errors (workflow not found, etc.).
@@ -1084,14 +1081,10 @@ export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Pro
     let observersPresent = true;
     for (const ensemble of knownEnsembles) {
       try {
-        let newPlayers: MaestroPlayerInfo[];
-        if (cloudProfile) {
-          const v2 = await globalActivities.refreshEnsembleStateV2({ ensemble });
-          newPlayers = v2.players;
-          observersPresent = v2.observersPresent;
-        } else {
-          newPlayers = await globalActivities.refreshEnsembleState(ensemble);
-        }
+        // 2.0 (#788): single refresh activity (V2) — see the per-ensemble note above.
+        const v2 = await globalActivities.refreshEnsembleStateV2({ ensemble });
+        const newPlayers: MaestroPlayerInfo[] = v2.players;
+        observersPresent = v2.observersPresent;
         const oldPlayers = playersByEnsemble[ensemble] ?? [];
         const now = new Date().toISOString();
 

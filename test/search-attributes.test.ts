@@ -130,26 +130,28 @@ describe('getEnsembleName', function () {
 });
 
 describe('getIsConductor', function () {
-  it('returns true for native true from AgentTempoIsConductor', function () {
-    expect(getIsConductor(carrier('AgentTempoIsConductor', [true]))).to.equal(true);
+  it('returns true for native true from the AgentTempoIsConductor memo', function () {
+    expect(getIsConductor({ memo: { AgentTempoIsConductor: true } })).to.equal(true);
   });
 
   it('returns false for native false', function () {
-    expect(getIsConductor(carrier('AgentTempoIsConductor', [false]))).to.equal(false);
+    expect(getIsConductor({ memo: { AgentTempoIsConductor: false } })).to.equal(false);
   });
 
   it('returns undefined when absent (caller falls back to workflow-id convention)', function () {
     expect(getIsConductor({})).to.be.undefined;
-    expect(getIsConductor(carrier('AgentTempoIsConductor', []))).to.be.undefined;
+    expect(getIsConductor({ memo: {} })).to.be.undefined;
   });
 
-  it('tolerates string "true" / "false" shapes', function () {
-    expect(getIsConductor(carrier('AgentTempoIsConductor', ['true']))).to.equal(true);
-    expect(getIsConductor(carrier('AgentTempoIsConductor', ['false']))).to.equal(false);
+  it('memo-only: string "true" / "false" shapes are NOT coerced (#788)', function () {
+    // The memo reader is strict (native boolean only); the SA string tolerance
+    // does not carry over now that the conductor flag is memo-only (#788).
+    expect(getIsConductor({ memo: { AgentTempoIsConductor: 'true' } })).to.be.undefined;
+    expect(getIsConductor({ memo: { AgentTempoIsConductor: 'false' } })).to.be.undefined;
   });
 });
 
-// ── T0.5 (#747) — memo readers + dual-read (memo preferred, SA fallback) ──
+// ── T0.5 (#747) — memo readers; 2.0 memo-only reads (no SA fallback — #788) ──
 
 describe('getMemoString / getMemoBool', function () {
   it('reads typed memo values', function () {
@@ -168,8 +170,8 @@ describe('getMemoString / getMemoBool', function () {
   });
 });
 
-describe('dual-read (memo preferred, SA fallback)', function () {
-  it('prefers the memo value when both are present', function () {
+describe('memo-only reads (no SA fallback in 2.0 — #788)', function () {
+  it('reads the memo value (and ignores any SA shadow of the same key)', function () {
     const wf: WorkflowMetaCarrier = {
       memo: { AgentTempoPlayerType: 'from-memo' },
       searchAttributes: { AgentTempoPlayerType: ['from-sa'] },
@@ -178,15 +180,19 @@ describe('dual-read (memo preferred, SA fallback)', function () {
     expect(getPlayerType(wf)).to.equal('from-memo');
   });
 
-  it('falls back to the legacy SA for pre-v1.8 runs (no memo)', function () {
+  it('no SA fallback in 2.0: an SA-only carrier (no memo) returns undefined', function () {
+    // Pre-#788 this fell back to the legacy search attribute. The A2 clean
+    // cutover (guarded by #786) means no SA-only run survives for a 2.0 worker
+    // to read, so the readers are memo-only — an SA-only value is invisible.
     const wf: WorkflowMetaCarrier = {
       searchAttributes: { AgentTempoPlayerType: ['tempo-soloist'] },
     };
-    expect(getPlayerType(wf)).to.equal('tempo-soloist');
+    expect(getPlayerType(wf)).to.be.undefined;
+    expect(getWorkflowMetaString(wf, 'AgentTempoPlayerType')).to.be.undefined;
   });
 
-  it('boolean dual-read: memo false is NOT clobbered by SA true', function () {
-    // `false` is a legitimate memo value — the `??` chain must not skip it.
+  it('boolean read: memo false is returned (not skipped by a falsy guard)', function () {
+    // `false` is a legitimate memo value — the reader must not skip it.
     const wf: WorkflowMetaCarrier = {
       memo: { AgentTempoIsConductor: false },
       searchAttributes: { AgentTempoIsConductor: [true] },
@@ -195,9 +201,9 @@ describe('dual-read (memo preferred, SA fallback)', function () {
     expect(getIsConductor(wf)).to.equal(false);
   });
 
-  it('getIsConductor falls back to the legacy SA', function () {
+  it('getIsConductor: no SA fallback — an SA-only carrier returns undefined (#788)', function () {
     expect(getIsConductor({ searchAttributes: { AgentTempoIsConductor: [true] } }))
-      .to.equal(true);
+      .to.be.undefined;
   });
 
   it('returns undefined when both carriers are empty', function () {
@@ -222,10 +228,12 @@ describe('multi-attribute carriers', function () {
   // attributes set simultaneously. Each typed wrapper must pull its own
   // attribute cleanly and ignore the others.
   it('each typed wrapper reads its own attribute independently', function () {
-    const wf: SearchAttributeCarrier = {
+    // getEnsembleName / getAttachmentPhase read search attributes; getIsConductor
+    // is memo-only (#788) — so the conductor flag lives in the memo here.
+    const wf: WorkflowMetaCarrier = {
+      memo: { AgentTempoIsConductor: true },
       searchAttributes: {
         AgentTempoEnsemble: ['tempo-impl'],
-        AgentTempoIsConductor: [true],
         AgentTempoAttachmentState: ['attached'],
         UnrelatedAttr: ['noise'],
       },

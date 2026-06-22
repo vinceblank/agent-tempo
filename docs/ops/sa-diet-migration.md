@@ -137,3 +137,34 @@ reads memos, and v1.8-started runs keep working (their `patched` marker is
 in history; pre-v1.8 workers will fail replay of v1.8 histories though —
 standard rule: do not downgrade workers below the newest patch marker your
 runs have recorded. Restart affected sessions if you must downgrade).
+
+## 2.0 (#788) — dropping the legacy search attributes
+
+The 2.0 cutover finishes the diet. #787 removed the last *writers* of the
+read-only legacy SAs (the `v1.8-sa-diet` branch collapse made the memo write
+unconditional), and #788 made the metadata read **memo-only** (the SA-fallback
+arm in `getWorkflowMeta*` is gone) and removed the `LEGACY_SEARCH_ATTRIBUTES`
+list from `sa-preflight.ts`. After upgrading to 2.0, these four attributes are
+**orphaned** — no 2.0 run reads or writes them:
+
+- `AgentTempoGitRoot`
+- `AgentTempoPlayerType`
+- `AgentTempoIsConductor`
+- `AgentTempoAttachmentId`
+
+They are harmless to leave registered, but operators who want to reclaim the
+Keyword-cap slots (the SQLite dev server caps at 10 per namespace) can drop
+them once **no pre-2.0 run remains** (the A2 cutover + the #786 boot guard
+guarantee this on a clean 2.0 daemon):
+
+```
+temporal operator search-attribute remove --name AgentTempoGitRoot      --namespace <ns> --yes
+temporal operator search-attribute remove --name AgentTempoPlayerType   --namespace <ns> --yes
+temporal operator search-attribute remove --name AgentTempoIsConductor  --namespace <ns> --yes
+temporal operator search-attribute remove --name AgentTempoAttachmentId --namespace <ns> --yes
+```
+
+On Temporal Cloud, remove them via the Cloud UI or `tcld namespace
+search-attributes` instead. Dropping a search attribute is irreversible for
+historical visibility queries against old runs — but those runs are gone after
+the cutover, so there is nothing to lose.

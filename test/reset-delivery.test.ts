@@ -29,7 +29,7 @@ import {
 } from './helpers';
 import {
   setPendingResetSignal,
-  pendingResetQuery,
+  pendingIntakeQuery,
   ackResetSignal,
 } from '../src/workflows/signals';
 import type { PendingReset } from '../src/types';
@@ -52,7 +52,7 @@ describe('reset delivery (D14)', function () {
       this.timeout(10_000);
       const h = await startFresh(`reset-sq-${Date.now()}`);
       await h.signal(setPendingResetSignal, { resetId: 'r1', fresh: true, reason: 'stuck', requestedBy: 'conductor' });
-      const pr = await h.query(pendingResetQuery);
+      const pr = (await h.query(pendingIntakeQuery)).pendingReset;
       expect(pr, 'pendingReset').to.not.equal(null);
       const reset = pr as PendingReset;
       expect(reset).to.include({ resetId: 'r1', fresh: true, reason: 'stuck', requestedBy: 'conductor' });
@@ -64,7 +64,7 @@ describe('reset delivery (D14)', function () {
       const h = await startFresh(`reset-ack-${Date.now()}`);
       await h.signal(setPendingResetSignal, { resetId: 'r1', fresh: true });
       await h.signal(ackResetSignal, 'r1');
-      expect(await h.query(pendingResetQuery)).to.equal(null);
+      expect((await h.query(pendingIntakeQuery)).pendingReset).to.equal(null);
     });
 
     it('ackReset with a NON-matching id does NOT clear (race-safe)', async function () {
@@ -72,9 +72,9 @@ describe('reset delivery (D14)', function () {
       const h = await startFresh(`reset-race-${Date.now()}`);
       await h.signal(setPendingResetSignal, { resetId: 'r1', fresh: true });
       await h.signal(ackResetSignal, 'r2'); // stale/foreign ack — must NOT clear r1
-      expect((await h.query(pendingResetQuery) as PendingReset | null)?.resetId).to.equal('r1');
+      expect((await h.query(pendingIntakeQuery)).pendingReset?.resetId).to.equal('r1');
       await h.signal(ackResetSignal, 'r1'); // matching ack clears
-      expect(await h.query(pendingResetQuery)).to.equal(null);
+      expect((await h.query(pendingIntakeQuery)).pendingReset).to.equal(null);
     });
 
     it('is latest-wins (a newer setPendingReset replaces the prior)', async function () {
@@ -82,7 +82,7 @@ describe('reset delivery (D14)', function () {
       const h = await startFresh(`reset-lww-${Date.now()}`);
       await h.signal(setPendingResetSignal, { resetId: 'r1', fresh: true });
       await h.signal(setPendingResetSignal, { resetId: 'r2', fresh: true, reason: 'newer' });
-      const pr = await h.query(pendingResetQuery) as PendingReset | null;
+      const pr = (await h.query(pendingIntakeQuery)).pendingReset;
       expect(pr?.resetId).to.equal('r2');
       expect(pr?.reason).to.equal('newer');
     });
@@ -99,12 +99,12 @@ describe('reset delivery (D14)', function () {
       });
 
       await pollWithTimeout(async () => {
-        const pr = await bob.query(pendingResetQuery);
+        const pr = (await bob.query(pendingIntakeQuery)).pendingReset;
         const ob = await alice.query(outboxQuery);
         return pr !== null && ob.find((e) => e.type === 'reset')?.status === 'delivered';
       }, POLL_DELIVERY_MS);
 
-      const pr = await bob.query(pendingResetQuery) as PendingReset | null;
+      const pr = (await bob.query(pendingIntakeQuery)).pendingReset;
       expect(pr, 'bob pendingReset').to.not.equal(null);
       expect(pr!.resetId).to.equal(entryId); // resetId === the originating outbox entry id
       expect(pr!.fresh).to.equal(true);

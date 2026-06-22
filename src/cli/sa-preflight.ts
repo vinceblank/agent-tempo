@@ -57,25 +57,11 @@ export const REQUIRED_SEARCH_ATTRIBUTES: ReadonlyArray<{
   { name: 'AgentTempoAttachmentState', type: 'Keyword' },
 ]);
 
-/**
- * T0.5 (#747) — legacy attributes that pre-v1.8 deployments registered and
- * pre-v1.8 workflow runs still carry. NEVER auto-unregistered (dropping a
- * search attribute is a privileged, operator-only action — see
- * `docs/ops/sa-diet-migration.md`); fresh namespaces simply don't register
- * them. Kept here so tooling can name them in diagnostics and so the
- * dual-read fallback window (memo preferred, SA fallback in
- * `utils/search-attributes.ts`) is documented next to the list it falls
- * back to. Dual-read fallback may be removed at the next major.
- */
-export const LEGACY_SEARCH_ATTRIBUTES: ReadonlyArray<{
-  name: string;
-  type: 'Keyword' | 'Bool';
-}> = Object.freeze([
-  { name: 'AgentTempoGitRoot', type: 'Keyword' },
-  { name: 'AgentTempoPlayerType', type: 'Keyword' },
-  { name: 'AgentTempoIsConductor', type: 'Bool' },
-  { name: 'AgentTempoAttachmentId', type: 'Keyword' },
-]);
+// 2.0 (#788): the `LEGACY_SEARCH_ATTRIBUTES` list (gitRoot / playerType /
+// isConductor / attachmentId) is gone. #787's saDiet collapse removed their
+// last writers and #788 made the metadata read memo-only, so there is nothing
+// left to register or fall back to. Operators dropping the now-orphaned legacy
+// SAs from an upgraded namespace: see docs/ops/sa-diet-migration.md.
 
 export interface SearchAttributePreflightOpts {
   temporalAddress: string;

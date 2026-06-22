@@ -43,7 +43,7 @@ import {
 } from '../workflows/signals';
 import { getSchedulesQuery } from '../workflows/scheduler-signals';
 import {
-  hostProfilesQuery,
+  hostProfilesWithExistenceQuery,
   getEnsembleDescriptionQuery,
   coatCheckListQuery,
 } from '../workflows/maestro-signals';
@@ -404,11 +404,14 @@ async function fetchHostProfiles(
   queryTimeoutMs: number,
 ): Promise<Record<string, HostProfile>> {
   try {
-    return (await queryHandleWithTimeout(
+    // 2.0 (#788): legacy `hostProfilesQuery` removed — use the combined
+    // existence+profiles query and take the profiles map.
+    const result = (await queryHandleWithTimeout(
       deps.client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID),
-      hostProfilesQuery,
+      hostProfilesWithExistenceQuery,
       { timeoutMs: queryTimeoutMs },
-    )) as Record<string, HostProfile>;
+    )) as { exists: boolean; profiles: Record<string, HostProfile> };
+    return result.profiles;
   } catch {
     return {};
   }

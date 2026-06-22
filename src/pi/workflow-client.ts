@@ -28,7 +28,6 @@ import {
   pendingMessagesQuery,
   markDeliveredSignal,
   updateMetadataSignal,
-  pendingResetQuery,
   ackResetSignal,
   pendingIntakeQuery,
   type PendingIntake,
@@ -353,58 +352,30 @@ export class PiWorkflowClient {
   // ── Combined intake (T0.3 of #747, #750) ──
 
   /**
-   * `true` until a `pendingIntake` query is rejected as unregistered — i.e.
-   * the session workflow predates #750. Cached so the pump pays the failed
-   * probe ONCE, not every tick, then sticks to the legacy two-query path for
-   * the lifetime of this client. Known cost-only staleness: the Pi client
-   * handle follows continueAsNew transparently, so a pre-#750 workflow that
-   * CANs onto a #750+ worker bundle MID-SESSION keeps paying 2 queries/tick
-   * here until the extension process restarts (fresh client → fresh probe).
-   * Benign and self-healing — correctness is unaffected either way.
-   */
-  private combinedIntakeSupported = true;
-
-  /**
    * One-query intake: undelivered cues + the pending reset together —
-   * halves the pump's idle Temporal actions (2 → 1 query/tick). Falls back
-   * to the legacy `pendingMessages` + `pendingReset` pair when the workflow
-   * lacks the combined handler (pre-#750 build); genuine failures (timeouts,
-   * connection errors) propagate to the pump's existing per-tick handling.
+   * halves the pump's idle Temporal actions (2 → 1 query/tick).
+   *
+   * 2.0 (#788): the pre-#750 two-query fallback (`combinedIntakeSupported`
+   * probe + the legacy `pendingMessages` + `pendingReset` pair) is gone — the
+   * A2 clean cutover (guarded by #786) guarantees every 2.0 session workflow
+   * serves the `pendingIntake` handler, so the fallback was dead.
    */
   async fetchIntake(): Promise<PendingIntake> {
-    if (this.combinedIntakeSupported) {
-      const handle = this.requireHandle();
-      try {
-        const intake = await handle.query(pendingIntakeQuery);
-        // Shape-guard: a real server either serves the query or rejects it
-        // as unregistered, but belt-and-braces against converter quirks /
-        // test doubles — a malformed result downgrades to the legacy pair
-        // rather than crashing the pump tick.
-        if (intake && Array.isArray(intake.messages)) return intake;
-        this.combinedIntakeSupported = false;
-        log('pendingIntake returned a malformed result — falling back to the legacy pair');
-      } catch (err) {
-        if (!isQueryNotRegisteredError(err)) throw err;
-        this.combinedIntakeSupported = false;
-        log(
-          'pendingIntake query not registered on this workflow (pre-#750 build) — ' +
-          'falling back to the legacy pendingMessages + pendingReset pair',
-        );
-      }
-    }
-    const [messages, pendingReset] = await Promise.all([
-      this.fetchPending(),
-      this.fetchPendingReset(),
-    ]);
-    return { messages, pendingReset };
+    return this.requireHandle().query(pendingIntakeQuery);
   }
 
   // ── Reset intake (3d D14) ──
 
-  /** Poll the workflow's single-slot pending reset (null = none). */
+  /**
+   * Poll the workflow's single-slot pending reset (null = none).
+   *
+   * 2.0 (#788): the standalone `pendingReset` query was removed — derive the
+   * reset from the combined `pendingIntake` query. Only the cue-pump's
+   * no-`intakeSource` fallback path reaches this; the primary pump path reads
+   * `pendingReset` straight off `fetchIntake`'s result.
+   */
   async fetchPendingReset(): Promise<PendingReset | null> {
-    const handle = this.requireHandle();
-    return handle.query(pendingResetQuery);
+    return (await this.requireHandle().query(pendingIntakeQuery)).pendingReset;
   }
 
   /**

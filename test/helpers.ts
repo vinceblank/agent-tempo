@@ -1639,7 +1639,10 @@ export async function withWorkerAndMaestroActivities<T>(
     workflowBundle,
     activities: {
       ...scheduleActivities,
-      refreshEnsembleState: async (_ensemble: string) => mockPlayers(),
+      // 2.0 (#788): the maestro workflow calls refreshEnsembleStateV2 for both
+      // cost profiles (V1 removed). Mock returns the same players + a present
+      // observer (local profile never gates cadence on it).
+      refreshEnsembleStateV2: async (_input: { ensemble: string }) => ({ players: mockPlayers(), observersPresent: true }),
       relayCommandToConductor: async (input: { text: string; source: string; replyTo?: string }) => {
         relayedCommands.push(input);
         return relayResult();
@@ -1694,7 +1697,8 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
     activities: {
       ...scheduleActivities,
       discoverEnsembles: async () => mockEnsembles(),
-      refreshEnsembleState: async (ensemble: string) => mockPlayersByEnsemble(ensemble),
+      // 2.0 (#788): global maestro calls refreshEnsembleStateV2 for both profiles (V1 removed).
+      refreshEnsembleStateV2: async (input: { ensemble: string }) => ({ players: mockPlayersByEnsemble(input.ensemble), observersPresent: true }),
       relayCommandToConductor: async (input: { ensemble: string; text: string; source: string; replyTo?: string }) => {
         relayedCommands.push(input);
         return relayResult();

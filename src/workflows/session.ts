@@ -46,7 +46,6 @@ import {
   markDeliveredSignal,
   updateMetadataSignal,
   setPendingResetSignal,
-  pendingResetQuery,
   ackResetSignal,
   pendingIntakeQuery,
   getPartQuery,
@@ -542,7 +541,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });
-  setHandler(pendingResetQuery, () => pendingReset);
   setHandler(ackResetSignal, (resetId) => {
     // Race-safe: only clear if the ack matches the current pending reset, so a
     // newer reset landing during the extension's wipe isn't silently dropped.

@@ -20,7 +20,6 @@ import {
 import {
   pendingIntakeQuery,
   pendingMessagesQuery,
-  pendingResetQuery,
   setPendingResetSignal,
   ackResetSignal,
   receiveMessageSignal,
@@ -66,9 +65,7 @@ describe('pendingIntake combined query (#750)', function () {
     await h.signal(setPendingResetSignal, { resetId: 'r1', fresh: true, reason: 'stuck', requestedBy: 'conductor' });
 
     const intake: PendingIntake = await h.query(pendingIntakeQuery);
-    const legacy = await h.query(pendingResetQuery);
 
-    expect(intake.pendingReset).to.deep.equal(legacy);
     expect(intake.pendingReset).to.include({ resetId: 'r1', fresh: true, reason: 'stuck' });
     expect(intake.messages).to.deep.equal([]);
   });
@@ -84,9 +81,8 @@ describe('pendingIntake combined query (#750)', function () {
     expect(intake.messages[0].text).to.equal('cue while reset pending');
     expect(intake.pendingReset?.resetId).to.equal('r-both');
 
-    // Field-for-field parity with the legacy pair in the same state.
+    // Field-for-field parity with the legacy messages query in the same state.
     expect(intake.messages).to.deep.equal(await h.query(pendingMessagesQuery));
-    expect(intake.pendingReset).to.deep.equal(await h.query(pendingResetQuery));
   });
 
   it('reflects the unchanged ack surfaces: markDelivered + race-safe ackReset', async function () {
