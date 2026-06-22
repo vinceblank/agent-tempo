@@ -111,7 +111,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 
 **Count:** 26 commands (including `down --destroy` as a distinct flag variant)  
 **Full reference:** [docs/cli.md](cli.md)  
-**Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints. **#789:** `tui` removed (the Ink TUI was deleted) — a bare `agent-tempo` now lands on `home` (status + hints); the operator board is `agent-tempo command-center`.
+**Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints. **#789:** `tui` removed (the Ink TUI was deleted) — a bare `agent-tempo` now lands on `home` (status + hints); the operator board is `agent-tempo command-center`. **#794:** `migrate-from-claude-tempo` removed — the 1.x home-dir shim is no longer needed post-`upgrade-to-2`.
 
 ---
 

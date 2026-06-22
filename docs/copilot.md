@@ -36,10 +36,10 @@ agent-tempo config set default-agent copilot
 Or via environment variable:
 
 ```bash
-export CLAUDE_TEMPO_DEFAULT_AGENT=copilot
+export AGENT_TEMPO_DEFAULT_AGENT=copilot
 ```
 
-Resolution order: `--agent` flag → `CLAUDE_TEMPO_DEFAULT_AGENT` env → config file → `claude`.
+Resolution order: `--agent` flag → `AGENT_TEMPO_DEFAULT_AGENT` env → config file → `claude`.
 
 ## Model Override
 
@@ -58,5 +58,5 @@ COPILOT_BRIDGE_MODEL=gpt-4o agent-tempo start myband --agent copilot
 
 ## Related
 
-- [configuration.md](configuration.md) — `CLAUDE_TEMPO_DEFAULT_AGENT` and other env vars
+- [configuration.md](configuration.md) — `AGENT_TEMPO_DEFAULT_AGENT` and other env vars
 - [cli.md](cli.md) — `--agent` flag reference
