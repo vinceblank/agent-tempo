@@ -391,6 +391,16 @@ export interface PlayerStateEntry {
 
 export interface SessionInput {
   metadata: SessionMetadata;
+  /**
+   * #786 — 2.0 cutover protocol stamp. Set to `PROTOCOL_VERSION` (2) at every
+   * 2.0 start site so it's in history from run 1 and survives `continueAsNew`
+   * (carried by the `...input` spread at the CAN site). The workflow ALSO upserts
+   * the `AgentTempoProtocol` memo authoritatively from the constant — a 2.0
+   * bundle always stamps 2 regardless of input — so a 1.x run (which never sets
+   * this) is detectable by the boot guard. Optional only for type back-compat
+   * across the cutover; 2.0 always sets it.
+   */
+  protocol?: number;
   /** Restored from continue-as-new */
   part?: string;
   /** Restored from continue-as-new (undelivered only) */

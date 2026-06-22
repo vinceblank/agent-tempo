@@ -195,6 +195,15 @@ export const claimAttachmentUpdate = defineUpdate<
     leaseMs: number;
     /** Present on renewal; absent on fresh claim. */
     expectedAttachmentId?: string;
+    /**
+     * #786 — REQUIRED 2.0-wire field: the adapter's protocol version
+     * (`PROTOCOL_VERSION`). A 2.0 workflow rejects any value `!== PROTOCOL_VERSION`
+     * (incl. `undefined` = a v1 adapter) in the update VALIDATOR — pre-admission,
+     * no history event — with an actionable error naming the host + the upgrade
+     * command. Cross-host cutover safety: a stale 1.x adapter on another machine
+     * cannot silently claim a 2.0 workflow.
+     */
+    protocolVersion: number;
   }]
 >('claimAttachment');
 

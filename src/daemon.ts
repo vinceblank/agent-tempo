@@ -1156,6 +1156,51 @@ async function main() {
     }
   }
 
+  // #786 — 2.0 cutover BOOT GUARD. Runs AFTER the search-attribute preflight
+  // and BEFORE createWorkers(): a 2.0 worker cannot deterministically replay a
+  // 1.x-recorded history, so refuse to register workers if visibility still
+  // shows ANY Running agent-tempo workflow lacking the protocol-2 stamp (a
+  // pre-cutover 1.x run). FAIL-CLOSED — a timed-out/errored scan, or a failure
+  // to even run the scan, refuses too (we couldn't PROVE the cutover is clean;
+  // see the #845 partial-scan lesson). Namespace-scoped via the client below.
+  // See src/upgrade/boot-guard.ts.
+  {
+    const { checkProtocolGuard } = await import('./upgrade/boot-guard');
+    let result: { ok: boolean; reason?: string; message?: string };
+    let guardConn: Awaited<ReturnType<typeof createTemporalConnection>> | null = null;
+    try {
+      guardConn = await createTemporalConnection(config);
+      const guardClient = new Client({
+        connection: guardConn,
+        namespace: config.temporalNamespace,
+        interceptors: actionCountingInterceptors(),
+      });
+      result = await checkProtocolGuard(guardClient, { log });
+    } catch (err) {
+      // FAIL-CLOSED — couldn't even run the scan (e.g. connection failure).
+      // Without a completed scan we can't prove a clean cutover, so refuse
+      // rather than risk a 2.0 worker replaying a 1.x history.
+      result = {
+        ok: false,
+        reason: 'scan-incomplete',
+        message:
+          `agent-tempo 2.0 boot guard could not run the protocol scan ` +
+          `(${err instanceof Error ? err.message : String(err)}). Refusing to boot ` +
+          `(fail-closed). Verify Temporal at ${config.temporalAddress} ` +
+          `(namespace ${config.temporalNamespace}) is reachable, then retry.`,
+      };
+    } finally {
+      if (guardConn) await guardConn.close().catch(() => { /* ignore */ });
+    }
+    if (!result.ok) {
+      process.stderr.write('ERROR: ' + result.message + '\n');
+      log(`Daemon refused to boot — ${result.reason} (#786 protocol guard)`);
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
+      process.exit(1);
+    }
+  }
+
   // Use mutable refs so signal handlers can be registered before workers
   // are created — closes the narrow window where a SIGTERM during
   // createWorkers() would be missed.

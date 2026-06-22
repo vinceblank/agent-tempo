@@ -19,6 +19,7 @@ import {
   attachmentInfoQuery,
   adapterExitedSignal,
 } from '../workflows/signals';
+import { PROTOCOL_VERSION } from '../constants';
 import type {
   AdapterClass,
   AdapterDescriptor,
@@ -480,6 +481,7 @@ export abstract class BaseAttachment {
         adapterId: this.descriptor.adapterId,
         adapterClass: this.descriptor.adapterClass as AdapterClass,
         leaseMs: 3 * this.descriptor.heartbeatMs,
+        protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
         ...(expectedAttachmentId ? { expectedAttachmentId } : {}),
       }],
     });
@@ -1252,6 +1254,7 @@ export abstract class BaseAttachment {
               adapterId: this.descriptor.adapterId,
               adapterClass: this.descriptor.adapterClass as AdapterClass,
               leaseMs: 3 * this.descriptor.heartbeatMs,
+              protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
             }],
           });
 

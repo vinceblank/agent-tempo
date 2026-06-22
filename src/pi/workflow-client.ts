@@ -33,6 +33,7 @@ import {
   pendingIntakeQuery,
   type PendingIntake,
 } from '../workflows/signals';
+import { PROTOCOL_VERSION } from '../constants';
 import type {
   AttachmentToken,
   DetachReason,
@@ -219,6 +220,7 @@ export class PiWorkflowClient {
           adapterId: PI_ADAPTER_ID,
           adapterClass: 'interactive',
           leaseMs: this.leaseMs,
+          protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
           ...(this.expectedAttachmentId ? { expectedAttachmentId: this.expectedAttachmentId } : {}),
         },
       ],

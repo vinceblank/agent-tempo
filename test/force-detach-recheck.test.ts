@@ -27,6 +27,7 @@ import {
   getNativeConnection,
   getWorkflowBundle,
   mintTaskQueue,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -119,7 +120,7 @@ describe('forceDetach post-await re-check (#798)', function () {
 
       // Old attachment A.
       const tokenA = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: hostname, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: hostname, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       // Fire forceDetach — it parks inside the gated hardTerminate stub.
@@ -133,7 +134,7 @@ describe('forceDetach post-await re-check (#798)', function () {
       await handle.signal(requestDetachSignal, { reason: 'restart', deadlineMs: 0 });
       await handle.signal(adapterExitedSignal, { attachmentId: tokenA.attachmentId, reason: 'restart' });
       const tokenB = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: hostname, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: hostname, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       expect(tokenB.attachmentId).to.not.equal(tokenA.attachmentId);
 
@@ -174,7 +175,7 @@ describe('forceDetach post-await re-check (#798)', function () {
         }),
       });
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: hostname, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: hostname, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       const result = await handle.executeUpdate(forceDetachUpdate, {

@@ -10,7 +10,7 @@ import {
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
   DEFAULT_RESTART_LEASE_MS,
 } from '../utils/validation';
-import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
+import { ENSEMBLE_SENTINEL_FLAG, PROTOCOL_VERSION } from '../constants';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter, spawnPiHeadless } from '../spawn';
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
@@ -1134,6 +1134,7 @@ export function createOutboxActivities(
             adapterId,
             adapterClass,
             leaseMs: DEFAULT_RESTART_LEASE_MS,
+            protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
           }],
         });
 

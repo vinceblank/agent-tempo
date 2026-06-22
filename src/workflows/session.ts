@@ -12,6 +12,7 @@ import {
   log as workflowLog,
 } from '@temporalio/workflow';
 import { MEMO_KEYS } from '../utils/search-attributes';
+import { PROTOCOL_VERSION } from '../constants';
 import { ApplicationFailure } from '@temporalio/common';
 
 /**
@@ -272,6 +273,16 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     AgentTempoAttachmentState: [input.phase ?? 'booting'],
     ...(saDiet ? {} : { AgentTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''] }),
   });
+
+  // #786 — 2.0 cutover protocol STAMP. Authoritative from the constant (this IS
+  // the 2.0 bundle → always PROTOCOL_VERSION, regardless of `input.protocol`).
+  // Re-upserted on EVERY run, incl. continueAsNew successors, so visibility
+  // always shows the stamp for the daemon boot guard — no need to thread a memo
+  // arg through the CAN payload. A 1.x run never executes this, so the guard
+  // sees its memo as undefined → un-stamped → refuse. Unconditional (no
+  // `patched()` marker): #786 is the first change on the 2.0 line, so there are
+  // no pre-stamp v2 histories to protect from this new command.
+  upsertMemo({ [MEMO_KEYS.protocol]: PROTOCOL_VERSION });
 
   // ── State (carried across continue-as-new) ──
   let part = input.part ?? input.autoSummary ?? 'No description set';
@@ -982,7 +993,21 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     activityCount++;
     return attachmentTokenFrom(newAttachment, leaseMs);
   }, {
-    validator: ({ leaseMs }) => {
+    validator: ({ host, leaseMs, protocolVersion }) => {
+      // #786 — cross-host cutover safety, checked FIRST (pure, synchronous, no
+      // IO, no history event — rejects pre-admission). A v1 adapter omits
+      // `protocolVersion` (→ undefined); any value other than PROTOCOL_VERSION is
+      // a stale/foreign adapter that must not claim this 2.0 workflow. Actionable
+      // error names the host + the fix.
+      if (protocolVersion !== PROTOCOL_VERSION) {
+        throw ApplicationFailure.nonRetryable(
+          `claimAttachment rejected on ${workflowInfo().workflowId}: adapter on host ` +
+          `'${host}' speaks protocol ${protocolVersion ?? '(v1/unset)'}, but this is a ` +
+          `protocol-${PROTOCOL_VERSION} (2.0) workflow. Upgrade the agent-tempo install on ` +
+          `that host to 2.0 (it cannot drive a 2.0 session).`,
+          'ProtocolMismatch',
+        );
+      }
       if (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 600_000) {
         throw ApplicationFailure.nonRetryable(
           `leaseMs must be between 1000 and 600000, got ${leaseMs}`,

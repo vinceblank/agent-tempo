@@ -7,7 +7,10 @@ import {
   proxyActivities,
   patched,
   uuid4,
+  upsertMemo,
 } from '@temporalio/workflow';
+import { MEMO_KEYS } from '../utils/search-attributes';
+import { PROTOCOL_VERSION } from '../constants';
 
 /**
  * Workflow-deterministic clock — mirrors the helper in `src/workflows/session.ts`.
@@ -157,6 +160,13 @@ const TEMPO_BPM_WINDOW_MS = 60_000;
 
 export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
   patched('v0.17-initial');
+
+  // #786 — 2.0 cutover protocol stamp (see constants.PROTOCOL_VERSION). Memo,
+  // re-upserted every run incl. CAN successors, so the daemon boot guard sees
+  // every Running 2.0 maestro as stamped; a 1.x maestro never runs this → its
+  // memo is undefined → guard refuses. Unconditional — #786 is first on the 2.0
+  // line, no pre-stamp v2 histories to protect.
+  upsertMemo({ [MEMO_KEYS.protocol]: PROTOCOL_VERSION });
 
   // T0.1 (#748) — input-driven, NOT patched-gated: pre-#748 runs have no
   // costProfile field, so they resolve to the legacy 5s default and the V1
@@ -901,6 +911,11 @@ const globalActivities = proxyActivities<
 
 export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Promise<void> {
   patched('v0.18-global-maestro');
+
+  // #786 — 2.0 cutover protocol stamp (the namespace-wide global maestro is
+  // stamped too, so the boot guard's scan never sees it as un-stamped). See
+  // constants.PROTOCOL_VERSION + agentMaestroWorkflow's stamp note.
+  upsertMemo({ [MEMO_KEYS.protocol]: PROTOCOL_VERSION });
 
   // T0.1 (#748) — input-driven (see agentMaestroWorkflow): pre-#748 runs
   // have no costProfile field → legacy 5s + V1 refresh, identical commands.

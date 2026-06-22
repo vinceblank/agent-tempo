@@ -111,6 +111,12 @@ interface ParsedArgs {
    * `scenarios/` dir) or absolute path. Dev-mode only.
    */
   scenario?: string;
+  /**
+   * `up --from-upgrade` (#786) — recreate protocol-2 workflows from a
+   * `upgrade-snapshot-v1.json` left by `upgrade-to-2`. Recreates the roster
+   * (structural essentials only) and archives the snapshot on success.
+   */
+  fromUpgrade?: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -176,6 +182,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.project = true;
     } else if (arg === '--no-hold') {
       result.noHold = true;
+    } else if (arg === '--from-upgrade') {
+      // `up --from-upgrade` (#786) — recreate protocol-2 workflows from the
+      // upgrade snapshot left by `upgrade-to-2`.
+      result.fromUpgrade = true;
     } else if (arg === '--destroy') {
       result.destroy = true;
     } else if (arg === '--kill-shared-temporal') {
@@ -548,6 +558,7 @@ async function main() {
         noHold: args.noHold,
         agent: resolvedAgent(),
         ...(args.scenario ? { scenario: args.scenario } : {}),
+        ...(args.fromUpgrade ? { fromUpgrade: true } : {}),
         ...overrides,
       });
       break;

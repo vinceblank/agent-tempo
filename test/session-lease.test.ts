@@ -20,6 +20,7 @@ import {
   startSession,
   playerMetadata,
   destroyUpdate,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -38,12 +39,12 @@ describe('attachment lease (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startSession({ metadata: playerMetadata({ playerId: `renew-${Date.now()}` }) });
       const t1 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       // Renewal path — same attachmentId, fresh expiresAt.
       const t2 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000, expectedAttachmentId: t1.attachmentId }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000, expectedAttachmentId: t1.attachmentId }],
       });
       expect(t2.attachmentId).to.equal(t1.attachmentId, 'renewal preserves attachmentId');
       // In test env the clock may not advance between the two calls; at minimum the renewed

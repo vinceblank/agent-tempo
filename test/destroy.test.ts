@@ -18,6 +18,7 @@ import {
   getNativeConnection,
   TASK_QUEUE,
   mintTaskQueue,
+  PROTOCOL_VERSION,
 } from './helpers';
 
 describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', function () {
@@ -170,7 +171,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
 
       // Create a live attachment — the #164 bug is specifically about this path.
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'test-host', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       // Capture phase before the workflow completes — queries don't work on
@@ -200,7 +201,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
 
       // Create a live attachment.
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'test-host', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       // Fire forceDetach and destroy concurrently.
@@ -333,7 +334,7 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
       // (adapter had attached and then its lease was reaped).
       const token = await handle.executeUpdate(
         (await import('../src/workflows/signals')).claimAttachmentUpdate,
-        { args: [{ host: hostname, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }] },
+        { args: [{ host: hostname, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }] },
       );
       await handle.executeUpdate(
         (await import('../src/workflows/signals')).forceDetachUpdate,
@@ -390,7 +391,7 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
 
       await handle.executeUpdate(
         (await import('../src/workflows/signals')).claimAttachmentUpdate,
-        { args: [{ host: hostname, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }] },
+        { args: [{ host: hostname, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }] },
       );
 
       // phase=attached → #164 path; previously worked, must still work.

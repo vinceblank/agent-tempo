@@ -19,6 +19,29 @@
 export const ENSEMBLE_SENTINEL_FLAG = '--remote-control-session-name-prefix';
 
 /**
+ * 2.0 wire-protocol version (#786 — the cutover keystone). Single source of truth
+ * for the protocol stamp, the boot guard, and the `claimAttachment` adapter
+ * handshake.
+ *
+ * - **Stamp:** every 2.0-created workflow records `protocol: PROTOCOL_VERSION` on
+ *   its START input (so it's in history from run 1 and survives `continueAsNew`
+ *   via the input spread) and upserts the memo key {@link
+ *   MEMO_KEYS.protocol | `AgentTempoProtocol`} = PROTOCOL_VERSION.
+ * - **Boot guard:** a 2.0 daemon refuses to register workers if visibility shows
+ *   any Running agent-tempo workflow lacking the stamp — a 2.0 worker can never
+ *   deterministically replay a 1.x-recorded history, so we fail LOUD at boot
+ *   (printing `agent-tempo upgrade-to-2`) instead of non-determinism-faulting
+ *   deep in a workflow task later.
+ * - **claimAttachment:** the adapter sends `protocolVersion`; a 2.0 workflow
+ *   rejects any value `!== PROTOCOL_VERSION` (incl. a v1 adapter that omits it).
+ *
+ * This module is runtime-free, so the constant is safe to import from BOTH the
+ * sandboxed workflow bundle (the stamp + claim validator) AND the daemon guard /
+ * CLI (the check). Bumping it is a hard cutover — see `docs/design/v2-scoping.md`.
+ */
+export const PROTOCOL_VERSION = 2 as const;
+
+/**
  * Escape the two regex metacharacters that can appear in validated player/ensemble
  * names (which are constrained to `[A-Za-z0-9._-]+`). Safe to interpolate the
  * result into a regex source string.

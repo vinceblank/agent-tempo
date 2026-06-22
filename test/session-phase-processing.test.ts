@@ -27,6 +27,7 @@ import {
   processingStartUpdate,
   processingEndUpdate,
   isDestroyedQuery,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -54,7 +55,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`proc-phase-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
 
       // Start processing
@@ -87,14 +88,14 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`supersede-${Date.now()}`);
       const t1 = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
       // Force-detach; then claim fresh.
       await handle.executeUpdate(forceDetachUpdate, {
         args: [{ reason: 'restart', gracePeriodMs: 0 }],
       });
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-B', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-B', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
 
       // Old attachment id -> rejected.
@@ -133,7 +134,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`awaiting-direct-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
       // Start processing a message
@@ -162,7 +163,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`awaiting-to-proc-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
 
       // Get to awaiting via processingStart/End cycle on an empty outbox.
@@ -193,7 +194,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`awaiting-drain-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
       // Enter awaiting.
@@ -224,7 +225,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`awaiting-force-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
       // Enter awaiting.
@@ -256,7 +257,7 @@ describe('session phase machine — processing/awaiting (v0.25 PR-A)', function 
     await withWorker(async () => {
       const handle = await startFreshSession(`awaiting-gone-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
 
       // Enter awaiting.

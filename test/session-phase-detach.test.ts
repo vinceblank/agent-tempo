@@ -33,6 +33,7 @@ import {
   destroyUpdate,
   isDestroyedQuery,
   skipTime,
+  PROTOCOL_VERSION,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -63,7 +64,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`drain-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
       await handle.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs: 5_000 });
@@ -101,7 +102,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
       await handle.executeUpdate(claimAttachmentUpdate, {
         // Long lease — without the Gap 1b wake-epoch fix, the main loop would sleep on
         // the ~10 min lease timer and miss the 2s drain deadline entirely.
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
       });
 
       // Request graceful detach with a short custom deadline. The pre-fix code threw
@@ -149,7 +150,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`drain-default-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
       });
 
       // Intentionally cast to bypass the typed signature so we can simulate a legacy
@@ -187,7 +188,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`fd-idem-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       const r1 = await handle.executeUpdate(forceDetachUpdate, {
         args: [{ reason: 'force', gracePeriodMs: 0 }],
@@ -207,7 +208,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`gone-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'test' }] });
       await handle.result();
@@ -245,7 +246,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
       let rejected = false;
       try {
         await handle.executeUpdate(claimAttachmentUpdate, {
-          args: [{ host: 'host-X', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+          args: [{ host: 'host-X', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
         });
       } catch {
         rejected = true;
@@ -260,7 +261,7 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
     await withWorker(async () => {
       const handle = await startFreshSession(`pref-${Date.now()}`);
       await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       await handle.executeUpdate(setPreferredHostUpdate, { args: [{ host: 'host-preferred' }] });
       await handle.executeUpdate(forceDetachUpdate, { args: [{ reason: 'user-stop', gracePeriodMs: 0 }] });
