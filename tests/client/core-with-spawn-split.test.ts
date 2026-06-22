@@ -4,9 +4,9 @@
  *
  * The split is the type system's enforcement layer for headless safety:
  * the daemon, MCP tools, and the SSE event source consume `Core`, while the
- * spawn surface is opt-in via `WithSpawn`. (Its only production opt-in was the
- * `ensure-conductor-spawned` helper behind the Ink TUI, deleted in #789; the
- * split is retained pending a follow-up cleanup decision.)
+ * spawn surface is opt-in via `WithSpawn`. (#789 removed `spawnConductor` with
+ * the Ink TUI; WithSpawn's only distinct method is now `createEnsemble` — still
+ * live via the CLI `up` path + the command-center board. The split STAYS.)
  * These tests pin three invariants:
  *
  *   1. `createTempoClientCore` returns an object that does NOT carry
@@ -91,7 +91,9 @@ const CORE_METHOD_NAMES = [
   'subscribe',
 ] as const;
 
-const SPAWN_METHOD_NAMES = ['createEnsemble', 'spawnConductor'] as const;
+// #789: `spawnConductor` removed with the Ink TUI — WithSpawn's only distinct
+// (TTY-bound) method is now `createEnsemble`.
+const SPAWN_METHOD_NAMES = ['createEnsemble'] as const;
 
 // A bare Temporal Client cast is fine here — we never invoke any method,
 // only inspect the returned object's shape. `createTempoClientCore`
@@ -101,7 +103,7 @@ const FAKE_CLIENT = {} as Client;
 
 describe('TempoClient surface boundary (#308 follow-up — ADR 0007)', () => {
   describe('createTempoClientCore', () => {
-    it('does NOT expose createEnsemble or spawnConductor', () => {
+    it('does NOT expose the spawn method (createEnsemble)', () => {
       const core = createTempoClientCore(FAKE_CLIENT);
       for (const name of SPAWN_METHOD_NAMES) {
         expect(
@@ -109,6 +111,8 @@ describe('TempoClient surface boundary (#308 follow-up — ADR 0007)', () => {
           `Core must not expose ${name}`,
         ).toBeUndefined();
       }
+      // #789 — `spawnConductor` was removed entirely; Core never exposed it.
+      expect((core as Record<string, unknown>).spawnConductor).toBeUndefined();
     });
 
     it('DOES expose every method documented as Core in §2.1 of the design doc', () => {
@@ -130,7 +134,7 @@ describe('TempoClient surface boundary (#308 follow-up — ADR 0007)', () => {
   });
 
   describe('createTempoClientWithSpawn', () => {
-    it('exposes every Core method PLUS the two spawn methods', () => {
+    it('exposes every Core method PLUS the spawn method (createEnsemble)', () => {
       const withSpawn = createTempoClientWithSpawn(FAKE_CLIENT);
       for (const name of [...CORE_METHOD_NAMES, ...SPAWN_METHOD_NAMES]) {
         expect(
@@ -138,6 +142,11 @@ describe('TempoClient surface boundary (#308 follow-up — ADR 0007)', () => {
           `WithSpawn must expose ${name}`,
         ).toBe('function');
       }
+    });
+
+    it('#789 — no longer exposes the removed spawnConductor method', () => {
+      const withSpawn = createTempoClientWithSpawn(FAKE_CLIENT);
+      expect((withSpawn as Record<string, unknown>).spawnConductor).toBeUndefined();
     });
   });
 

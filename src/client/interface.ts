@@ -541,15 +541,9 @@ export interface TempoClientWithSpawn extends TempoClientCore {
    * daemon, or other headless processes.
    */
   createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
-  /**
-   * Spawn a conductor terminal for an existing ensemble — the restore-
-   * after-shutdown path. Shells out to `agent-tempo up <name>` which is
-   * idempotent at the workflow layer. Semantically distinct from
-   * {@link TempoClientWithSpawn.createEnsemble}: this fires on an ensemble
-   * that already exists; a "create" contradiction would mislead future
-   * readers. **Requires a TTY context.**
-   */
-  spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void>;
+  // #789: `spawnConductor` removed with the Ink TUI (its only caller was the
+  // TUI's `ensure-conductor-spawned` helper). `createEnsemble` is now WithSpawn's
+  // sole distinct method.
 }
 
 /**

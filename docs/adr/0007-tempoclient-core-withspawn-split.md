@@ -5,6 +5,14 @@
 - **Authors**: tempo-architect
 - **Related**: [`docs/design/tempoclient-core-spawn-split.md`](../design/tempoclient-core-spawn-split.md), PR #308 review (Recommendation 3), PRs #94 / #95 (SSE event source)
 
+> **NOTE (#789, TUI deletion):** `spawnConductor` was removed in #789 — its only
+> caller was the Ink TUI's `ensure-conductor-spawned` helper (also deleted).
+> WithSpawn's only distinct method is now `createEnsemble` (still live via the
+> CLI `up` path and the command-center board). The Core-vs-WithSpawn split
+> itself STAYS unchanged. (Follow-up, not yet scheduled: confirm whether
+> `createEnsemble` retains enough non-collapsible callers to keep the split, or
+> whether a future §C surface-trim supersedes this ADR.)
+
 ## Context
 
 `TempoClient` (37 methods) is the canonical Node-side abstraction over Temporal for agent-tempo. Of those 37 methods, exactly two — `createEnsemble` and `spawnConductor` — shell out to a local terminal via `runTempoCli('agent-tempo up …')`. The other 35 are pure Temporal RPC.

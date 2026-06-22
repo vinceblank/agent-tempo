@@ -6,9 +6,9 @@
  * future SSE event source, and any external SDK consumer that wants a
  * headless surface (no `child_process` dependency).
  *
- * The two spawn methods (`createEnsemble`, `spawnConductor`) and the
- * `runTempoCli` helper live in `./with-spawn.ts`, which composes this
- * factory and adds the TTY-bound surface.
+ * The spawn method (`createEnsemble`) and the `runTempoCli` helper live in
+ * `./with-spawn.ts`, which composes this factory and adds the TTY-bound surface.
+ * (`spawnConductor` was removed in #789 with the Ink TUI.)
  *
  * See `docs/adr/0007-tempoclient-core-withspawn-split.md` and
  * `docs/design/tempoclient-core-spawn-split.md`.
