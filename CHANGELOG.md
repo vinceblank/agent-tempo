@@ -123,9 +123,9 @@ will correctly claim the new session.
 - `pendingReset` Temporal query, V1 `refresh` signal, `ClaudeTempo*` SA dual-read (#788)
 - All 20 `patched()` workflow determinism markers (#787)
 
-### Pending (placeholder — not yet merged)
+### Deferred to 2.0.0-beta.2
 
-- **#793 — tool-family verb aliases** — aliased merges, likely non-breaking; confirmation pending before GA
+- **#793 — tool-family verb aliases** — aliased tool merges (coat-check ×4→1, state ×3→1, schedule ×3→1, stages ×2→1). Ruled OUT of beta.1 by architect; aliases present through beta and will be removed at GA.
 
 ---
 
