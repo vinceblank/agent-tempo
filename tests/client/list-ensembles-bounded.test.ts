@@ -22,6 +22,10 @@ import { VisibilityIteratorTimeoutError } from '../../src/utils/visibility-deadl
 interface FakeWf {
   workflowId: string;
   searchAttributes?: Record<string, unknown>;
+  /** Decoded workflow memo — where conductor/playerType live after #788's
+   *  SA→memo migration (the readers `getIsConductor`/`getPlayerType` are
+   *  memo-only now). Ensemble name + phase stay in `searchAttributes`. */
+  memo?: Record<string, unknown>;
 }
 
 /** Build a minimal fake Client whose `workflow.list` returns the given entries. */
@@ -66,21 +70,32 @@ function makeFakeClient(opts: {
   } as unknown as Client;
 }
 
-/** Build an entry with the search attributes that `listEnsemblesBounded` reads. */
+/**
+ * Build an entry mirroring what `listEnsemblesBounded` reads. Ensemble name +
+ * phase are search attributes (`getEnsembleName`/`getAttachmentPhase` stay SA);
+ * conductor + playerType go in the **memo** (`getIsConductor`/`getPlayerType`
+ * are memo-only after #788's SA→memo migration). Memo values are plain decoded
+ * values, not the array-wrapped form search attributes use.
+ */
 function entry(ensemble: string, opts: {
   phase?: string;
   isConductor?: boolean;
   playerType?: string;
   workflowId?: string;
 } = {}): FakeWf {
+  const hasMeta = opts.isConductor !== undefined || opts.playerType !== undefined;
   return {
     workflowId: opts.workflowId ?? `${ensemble}-player-${Math.random().toString(36).slice(2)}`,
     searchAttributes: {
       AgentTempoEnsemble: [ensemble],
       ...(opts.phase !== undefined ? { AgentTempoAttachmentState: [opts.phase] } : {}),
-      ...(opts.isConductor !== undefined ? { AgentTempoIsConductor: [opts.isConductor] } : {}),
-      ...(opts.playerType !== undefined ? { AgentTempoPlayerType: [opts.playerType] } : {}),
     },
+    ...(hasMeta ? {
+      memo: {
+        ...(opts.isConductor !== undefined ? { AgentTempoIsConductor: opts.isConductor } : {}),
+        ...(opts.playerType !== undefined ? { AgentTempoPlayerType: opts.playerType } : {}),
+      },
+    } : {}),
   };
 }
 

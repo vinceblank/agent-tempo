@@ -23,10 +23,12 @@
  *  - V3: destroyUpdate's kill-window interleave fence (the
  *    "abandoned by setPhase('gone')" comment) must stay present.
  *  - KNOWN EXCEPTION: `playerReportSignal` registers BEFORE its producer
- *    `setStageSignal` — protected by the #777 reconciliation
- *    (`v0.27-stage-reconcile-reports`), NOT by order. Pinned as
- *    consumer-first so an accidental "fix" reordering it doesn't silently
- *    change which protection is load-bearing.
+ *    `setStageSignal` — protected by the #777 reconciliation (the
+ *    "commutative reconciliation against pre-stage reports" block in the
+ *    setStage handler; formerly gated by `patched('v0.27-stage-reconcile-
+ *    reports')`, now unconditional after #787's patched-strip), NOT by order.
+ *    Pinned as consumer-first so an accidental "fix" reordering it doesn't
+ *    silently change which protection is load-bearing.
  *
  * ── Traps the convention names (adopted from the audit's caveats) ──
  *
@@ -134,7 +136,13 @@ describe('registration-order fences (#797 / #782)', () => {
     // If this flips, the #777 reconciliation becomes dead code and the
     // protection story changes — that's a conscious decision, not a drift.
     expect(report).toBeLessThan(setStage);
-    expect(src).toMatch(/v0\.27-stage-reconcile-reports/);
+    // The reconciliation that makes consumer-first SAFE was gated behind
+    // `patched('v0.27-stage-reconcile-reports')` until #787 stripped every
+    // patched() marker for the 2.0 clean slate (it is now UNCONDITIONAL).
+    // Pin its continued presence by the block comment AND a load-bearing code
+    // token, so deleting the reconciliation can never pass silently.
+    expect(src).toMatch(/commutative reconciliation against pre-stage reports/);
+    expect(src).toMatch(/playerEntry\.reconciled = true/);
   });
 
   it('C2 loudness: fireSchedule retry-exhaustion logs the lost fire (scheduler.ts)', () => {
