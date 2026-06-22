@@ -22,7 +22,7 @@ ship the payload without the safety core.
   `up --from-upgrade` recreates protocol-2 workflows AND seeds #334 state slots, schedules, `sessionId`,
   non-default `model` from the snapshot; undelivered cues surfaced-for-review (not redelivered); snapshot
   archived-on-success / pristine-on-failure. *(A stamp-only recreate is lossy → breaks the A2 thesis → NOT
-  shippable to a tester.)*
+  shippable to a tester.)* *(MERGED to v2 — #868.)*
 - [ ] **Minimal cutover SMOKE (CI).** *Done bar:* one automated happy-path test — up on 1.7.0 →
   upgrade-to-2 → install 2.0-beta.1 → up --from-upgrade → assert players recreated + schedules/state/
   sessionId preserved + all stamped protocol-2 + guard refuses an un-stamped run. *(This is the beta.1
@@ -44,9 +44,14 @@ ship the payload without the safety core.
 - [ ] **#789 — TUI deleted.** *GATE: #742 P0 mission-control parity CLOSED first.* *Done bar:* `src/tui/`
   + 21 test files gone; `ink`×3/`react`/`@types/react` dropped from package.json; bare-command default
   repointed (bootstrap + `status` + hints per D2); `docs/tui*.md` deleted; README surgery; removed-verb hints.
-- [ ] **#793 — tool merges, ALIASED.** *Done bar:* coat-check ×4→1, state ×3→1, schedule ×3→1, stages
-  ×2→1, gates partial — via the descriptor layer; **aliases present and stay through the beta** (drop at GA);
-  tool tests green; registered-tool count down ~8.
+
+> **#793 (tool-family merges) moved OUT of beta.1 → beta.2.** Ratified 2026-06-22. #793-aliased is
+> *additive/non-breaking*, and beta.1's principle is "land the irreversible now, defer the additive" — so
+> it never belonged in the must-ship set (pulled in as a muscle-memory nicety, not a gate). Deferring is
+> costless: aliases mean zero breakage whenever it lands, beta.2 still gives soak before the GA alias-drop,
+> and the "~8-tool count reduction" is a **GA event** (alias-drop), *not* a beta.1 payoff — aliases are
+> themselves registered tools, so the count doesn't fall during the beta. See §2 for the beta.2 line +
+> merge design + the alias-not-remove invariant.
 
 ## 1c. Cross-cutting gates
 - [ ] `npm run check:all` green (build, tests, drift, lints, size-limit, tarball).
@@ -59,6 +64,29 @@ ship the payload without the safety core.
 ## 2. Explicitly DEFERRED (name them so nothing creeps into beta.1)
 - **Full #796 round-trip E2E *passing*** (multi-host, force-drain, straggler, edge-case matrix) → **GA gate.**
   *(beta.1 ships the minimal smoke only — §1.)*
+- **#793 — aliased tool-family merges** → **beta.2.** Ratified 2026-06-22 (DEFER; beta.1 cuts without it).
+  - **CONDITION — alias-not-remove (load-bearing).** The deferral is safe *if and only if* #793 stays
+    additive: add the merged canonical tools, keep the old names as forwarding **aliases**. The moment
+    anyone proposes *removing* the old tool names (breaking the MCP surface), #793 **snaps back into
+    beta.1** — a tester must NOT eat a second tool-surface break (after #789's) in a later beta.
+  - **Mechanism.** Descriptor layer (`src/tools/descriptor.ts`): each family → ONE canonical
+    `TempoToolDescriptor` with a discriminated `action` enum + shared handler; old per-action tools stay
+    registered as thin **alias descriptors** forwarding to that handler, each with a
+    `deprecated: use <canonical> with action=<x>` description. `renderToMcp` renders both; update
+    `scripts/check-surface-drift.js` + `docs/SURFACE-REGISTRY.md`.
+  - **Param shape — flat `action` enum + per-action optional fields, runtime-guarded. NOT zod
+    `discriminatedUnion`** (MCP tool schemas flatten to a single JSON-Schema object; a union renders
+    awkwardly for MCP clients — a flat `{action, ...optional}` with per-action docs is cleaner and keeps
+    the alias forwarders trivial).
+  - **Families (canonical → action):** ① coat-check ×4→1 → `coat_check {put|get|list|evict}`;
+    ② state ×3→1 → `state {save|fetch|clear}`; ③ schedule ×3→1 → `schedule {create|cancel|list}` (canonical
+    reuses the `schedule` name; old bare schedule = `create`); ④ **stages → `stage {run|list|cancel}` — ⚠
+    corpus says "×2→1" but there are 3 files (stage/stages/cancel-stage); eng to reconcile the exact
+    split**; ⑤ **gates PARTIAL — merge `gates`(list) into `gate {define|list}`, keep `evaluate_gate`
+    SEPARATE** (evaluate is a distinct runtime *operation*, not a CRUD action on the gate definition — that
+    semantic line is the partial boundary).
+  - **Alias lifecycle:** present + functional through every beta; **drop at GA** (D4) — the single breaking
+    step, and the moment the ~8-tool count reduction actually lands.
 - **Alias drop** (#793 aliases) → **GA.**
 - **B2 attachment-core extraction** → **beta.2+** (contingent on T1.1 PR-2/3 settled).
 - **#795 SA auto-registration** → **beta.2** (D5).
