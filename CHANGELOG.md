@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-06-21
+
+Final stable release of the 1.x line. Promotes the beta.0–beta.13 cycle,
+which added the Pi-native integration stack, mission-control board, SDK-adapter
+idle-backoff, doorbell wake-up, saveable state, durable scheduling, command-center
+operator surface, and the `upgrade-to-2` cutover verb that prepares installations
+for the upcoming 2.0 protocol break. Post-beta.13 fixes are included below.
+
+### Added
+
+- **`upgrade-to-2` cutover verb (#785)** — 6-phase resumable protocol to safely migrate
+  from 1.x to 2.0: preflight → pause → drain → snapshot → destroy → done. Captures
+  lineups, #334 state slots, schedules, `sessionId`, and non-default `model`; snapshot
+  strictly precedes destroy. `--dry-run`, `--yes`, and `--force-drain` flags included.
+
+- **Windows `ensemble-gh.cmd` shim (#741)** — `./scripts/ensemble-gh` now works directly
+  from PowerShell via PATHEXT resolution. Three-strategy bash-locate (PATH → git-relative →
+  fallback); fails loudly if bash is not found.
+
+### Fixed
+
+- **Security: suppress secret-env echo on Windows `cmd.exe` (#847)** — `@`-prefix on
+  generated cmd secret-file lines prevents `ANTHROPIC_API_KEY` and other secrets from
+  appearing in terminal scrollback.
+
+- **Trustworthy roster: partial-scan signal + describe-by-id fallback (#845)** — truncation
+  signal + `⚠ partial roster` banner at the visibility page-limit boundary (Mode A);
+  strongly-consistent `describeWorkflow` fallback for freshly-recruited sessions not yet
+  indexed (Mode B — actual incident fix).
+
+- **Pi: `up --agent pi` double-load fix (#825)** — collapses onto single registration
+  source; drops the inline `-e` argument and adds `installPiExtensions()` guard.
+
+- **`command-center` role is now deterministic (#820)** — sets `AGENT_TEMPO_PI_ROLE=command-center`
+  and clears `PLAYER_NAME`/`CONDUCTOR` in the spawn env; no longer hijacks the conductor.
+
+- **Pi/opencode/claude-api adapters advertised in `hostProfile` (#819)** — daemon now
+  uses the same `sdk-probe` detection as the recruit-preflight path; `agent-tempo hosts`
+  correctly reflects installed optional-dep adapters.
+
+- **Daemon liveness survives a missing pid file (#811)** — port-ownership probe fallback;
+  daemon re-asserts its pid file on port bind.
+
+- **Mixed-case model ids accepted in recruit (#773)** — zod regex now allows uppercase
+  in the `provider/model` selector.
+
+- **Source-scanning checks hardened against empty scans (#707)** — lint guards now
+  catch silent empty-glob results that would otherwise pass vacuously; Windows `**`-glob
+  trap documented.
+
+- **`build:bundle` fast path for cold worktrees (#720)** — `npm run build:bundle` skips
+  the full `tsc` compile when only the worker bundle needs rebuilding.
+
+- **`hard-terminate` test fixture fix (#694)** — keeps fixture `cmd.exe` alive so the
+  #165 WT-orphan precondition stops flaking on Windows CI.
+
+### Changed
+
+- **CI: GitHub Actions updated to Node 24-compatible action versions (#838, #843)** —
+  `actions/cache@v5`, `upload-artifact@v6`, `download-artifact@v7`, `dorny/paths-filter@v4`.
+
+- **SDK-adapter idle-backoff (#749)** — poll interval stretches 2s → 30s while idle,
+  snaps back on delivery (~15× fewer Temporal queries at rest).
+
 ## [1.7.0-beta.12] - 2026-06-14
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
