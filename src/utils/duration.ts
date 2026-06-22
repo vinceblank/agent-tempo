@@ -38,12 +38,9 @@ export function formatDurationMs(ms: number): string {
  *
  * `now` is injectable for deterministic tests; defaults to `Date.now()`.
  *
- * **Why a second time helper exists** (the TUI has `formatRelativeTime`
- * in `src/tui/utils/format.ts` doing roughly the same thing):
- * `src/tui/` carries Ink/React transitive imports the headless tools layer
- * mustn't take on. This helper has zero dependencies and is freely
- * importable by any layer. Consolidation across the two homes is tracked
- * as future deduplication work, not in scope here.
+ * This helper has zero dependencies and is freely importable by any layer.
+ * (It once co-existed with the TUI's `formatRelativeTime`; the Ink TUI was
+ * deleted in #789, so this is now the single relative-time helper.)
  */
 export function formatTimeAgo(iso: string, now: number = Date.now()): string {
   const t = Date.parse(iso);

@@ -8,7 +8,7 @@ agent-tempo <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `tui [ensemble]` | Launch the Terminal UI. Omit `ensemble` for the multi-ensemble home view; pass a name to open directly in that ensemble. (Auto-provisions on first run.) |
+| `agent-tempo` (no command) | Bare landing (#789, D2): auto-provision infrastructure (bootstrap), print live `status`, then point you at the operator surfaces (`command-center` board + web dashboard). Pass an ensemble name to scope the status. Replaced the deleted Terminal UI. |
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
 | `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate every workflow. `--kill-shared-temporal` overrides the cross-profile guard and kills the Temporal server even if the other profile is active (#423). |
 | `server` | Start the Temporal dev server and register search attributes |
@@ -20,7 +20,7 @@ agent-tempo <command> [options]
 | `destroy [ensemble] [-y]` | Terminate every workflow in an ensemble — ordered shutdown via outbox drain. Resolves the ensemble via the shared resolver (`--ensemble` flag > positional > env > `default`); with no arguments, targets `default`. Prompts for typed confirmation; `-y` skips. |
 | `attachment-info <name>` (alias: `attachment`) | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
 | `recall <name>` | Read a player's message history (#128). Flags: `--limit N` (default 20, max 100), `--offset N` (paging, default 0), `--preview N` (truncate bodies to N chars; omit for full text), `--from X` (sender filter for received), `--since ISO` (time filter), `--include-sent` (include outbound too), `--json` (emit raw `{received, sent, total, shown, hasMore, text}`). |
-| `hosts` | **#274.** List daemons polling this Temporal namespace with their advertised capabilities. Flags: `--all` includes stale hosts; `--json` emits raw `HostInfo[]`. Output matches MCP `hosts` tool and TUI `/hosts` (shared formatter). |
+| `hosts` | **#274.** List daemons polling this Temporal namespace with their advertised capabilities. Flags: `--all` includes stale hosts; `--json` emits raw `HostInfo[]`. Output matches MCP `hosts` tool and the command-center `/hosts` board command (shared formatter). |
 | `refresh-host-profile` | **#274.** Re-advertise this daemon's capability profile to the global Maestro. Useful after editing `~/.agent-tempo/config.json` or adding/removing player-type files without restarting the daemon. Exits 0 on confirmed refresh, 1 on signal failure or unconfirmed after the 10s poll. |
 | `restore <ensemble>` | Restore orphaned (detached) sessions in one ensemble on this host — re-attaches a fresh adapter to every matching `detached` session. (#288) |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
@@ -36,10 +36,11 @@ agent-tempo <command> [options]
 | `version` | Print the installed version |
 | `help` | Show usage info |
 
-> **Removed commands — use the TUI instead** (since v0.27 / #288):
-> - `stop` / `restart` / `detach` / `migrate` → TUI `/destroy` · `/restart` · `/shutdown`
-> - `conduct` / `start` / `recruit` / `disband` → launch `agent-tempo` · TUI `/recruit` · `/destroy`
-> - `pause` / `resume` → TUI `/pause` · `/play`
+> **Removed commands — use the command-center board instead** (`agent-tempo command-center`; since v0.27 / #288, updated #789):
+> - `stop` / `restart` / `detach` / `migrate` → board `/destroy` · `/restart` · `/shutdown` · `/migrate`
+> - `conduct` / `start` / `recruit` / `disband` → `agent-tempo up` · board `/recruit` · `/destroy`
+> - `pause` / `resume` → board `/pause` · `/play`
+> - `tui` (#789) → run `agent-tempo` (status + hints) or `agent-tempo command-center` (the live board)
 >
 > See [github.com/vinceblank/agent-tempo/issues/285](https://github.com/vinceblank/agent-tempo/issues/285) for the full migration table.
 
@@ -90,7 +91,7 @@ Launching conductor in ensemble myband...
 
   What next?
   agent-tempo status myband   See who's active
-  Or use the TUI to recruit players (/recruit)
+  Or open the command-center board to recruit players (/recruit)
 ```
 
 If a conductor is already running in the target ensemble, `up` detects it and prompts with options: join as a player, reconnect to the existing conductor, tear down and start fresh, or cancel. This prevents two sessions from silently sharing the same Temporal workflow.

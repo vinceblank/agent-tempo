@@ -7,8 +7,12 @@
  * no TTY and a stray spawn would launch a terminal nothing can render.
  *
  * The boundary is enforced by the type system: headless callers depend on
- * `TempoClientCore`; only the TUI (and its `ensure-conductor-spawned`
- * helper) opts into the spawn surface.
+ * `TempoClientCore`; the spawn surface is opt-in.
+ *
+ * NOTE (#789): `spawnConductor` was removed with the Ink TUI (its only caller
+ * was the TUI's `ensure-conductor-spawned` helper). WithSpawn's only distinct
+ * method is now `createEnsemble` — still live (CLI `up`, command-center board).
+ * The Core-vs-WithSpawn split STAYS (WithSpawn is the universal client alias).
  *
  * See `docs/adr/0007-tempoclient-core-withspawn-split.md`.
  */
@@ -41,8 +45,9 @@ async function runTempoCli(args: string[], workDir?: string): Promise<void> {
 
 /**
  * Build a `TempoClientWithSpawn` over a configured Temporal `Client`.
- * Composes {@link createTempoClientCore} and adds the two TTY-bound
- * spawn methods. Use this for TUI-side consumers; headless callers
+ * Composes {@link createTempoClientCore} and adds the TTY-bound
+ * `createEnsemble` spawn method. Use this for spawn-capable consumers (the CLI
+ * `up` path, the command-center board's `/ensemble-up`); pure-headless callers
  * should use {@link createTempoClientCore} directly.
  *
  * `opts` (e.g. `subscribeDeps`) is forwarded to the Core factory.
@@ -61,14 +66,9 @@ export function createTempoClientWithSpawn(
         : ['up', opts.ensemble];
       await runTempoCli(args, opts.workDir);
     },
-
-    async spawnConductor(opts) {
-      // `agent-tempo up <ensemble>` is idempotent at the workflow layer —
-      // re-invoking it on a live ensemble reuses the existing conductor
-      // workflow (deterministic workflow ID). Distinct from
-      // `createEnsemble` so call sites read as "make sure the conductor
-      // terminal is running", not "create a new ensemble".
-      await runTempoCli(['up', opts.ensemble], opts.workDir);
-    },
+    // #789: `spawnConductor` removed with the Ink TUI — its only caller was the
+    // TUI's `ensure-conductor-spawned` helper (also deleted). WithSpawn's only
+    // distinct method is now `createEnsemble` (still used by the command-center
+    // board's `/ensemble-up` + the CLI `up` path).
   };
 }

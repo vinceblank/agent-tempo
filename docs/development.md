@@ -113,8 +113,10 @@ enumeration fails loud instead of passing as "clean." The existing checks
 ## Surface registry
 
 `docs/SURFACE-REGISTRY.md` is the canonical inventory of every public-facing surface:
-MCP tools, CLI commands, and TUI slash commands. Keep it in sync when adding or removing
-a surface entry.
+MCP tools and CLI commands. Keep it in sync when adding or removing a surface entry.
+(The TUI slash-command surface was removed with the Ink TUI in #789; the command-center
+board registers its operator commands at runtime via `pi.registerCommand`, which is not
+machine-checked by the drift script.)
 
 ```bash
 # Verify the registry matches source (fast, no build required):
@@ -129,7 +131,6 @@ CI enforces this via the `lint-surface-drift` job in `.github/workflows/ci.yml`.
 |---|---|
 | New MCP tool in `src/tools/` | Add row to `docs/SURFACE-REGISTRY.md` § 1 |
 | New CLI command in `src/cli.ts` | Add row to `docs/SURFACE-REGISTRY.md` § 2 |
-| New TUI slash command in `src/tui/commands.ts` | Add row to `docs/SURFACE-REGISTRY.md` § 3 |
 
 The lint script exits non-zero if any entry is missing or if a removed surface still
 appears in the registry. Run it locally before pushing to catch drift early.

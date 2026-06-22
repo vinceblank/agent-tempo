@@ -174,7 +174,7 @@ Most verbs touch only `claudeSessionWorkflow` (the player stack). The exceptions
 | `recruit`, `restart`, `migrate`, `detach`, `destroy` | `claudeSessionWorkflow` only |
 | `pause_ensemble`, `resume_ensemble` | `claudeMaestroWorkflow` (`maestroSetPaused`) |
 | `schedule`, `unschedule`, `schedules` | `claudeSchedulerWorkflow` |
-| `sendCommand` (TUI bare text) | `claudeMaestroWorkflow` (`maestroSendCommand` update) |
+| `sendCommand` (command-center bare text) | `claudeMaestroWorkflow` (`maestroSendCommand` update) |
 
 Maestros observe player state changes via periodic search attribute refresh, not via explicit notification from verbs.
 

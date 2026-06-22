@@ -260,10 +260,11 @@ export type EventIdToken = string;
  *   - `'stale'` — matches a host with `freshness === 'stale'`
  *   - `'missing'` — `preferredHost` is null OR no matching host record
  *
- * `migrateCommand` is the TUI slash-command the operator pastes into their
- * own session on the migrate target. `--yes-steal=` (NOT
- * `--confirm-steal-from-host`) is the actual flag accepted by
- * `src/tui/commands.ts:handleMigrate`. When `preferredHost` is null the
+ * `migrateCommand` is the `/migrate` slash-command the operator pastes into
+ * their own session on the migrate target (the command-center board; the Ink
+ * TUI that originally handled it was removed in #789). `--yes-steal=` (NOT
+ * `--confirm-steal-from-host`) is the actual flag the `/migrate` handler
+ * accepts. When `preferredHost` is null the
  * command targets the local host and includes the steal guard pre-filled
  * with the last-known host (or a literal `'(unknown)'` when even that is
  * missing — the operator must edit it before submit).

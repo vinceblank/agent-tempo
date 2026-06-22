@@ -4,7 +4,7 @@
  * Single source of truth consumed by:
  *   - `src/tools/hosts.ts` (MCP tool) — formatted text in `ok(...)` payload
  *   - `src/cli/commands.ts` (CLI `hosts` command) — stdout table
- *   - `src/tui/commands.ts` (TUI `/hosts` slash) — overlay content
+ *   - `src/pi/mission-control/` (command-center `/hosts` board command) — board text
  *
  * Pure: no Temporal, no I/O, no ANSI colors (the CLI can wrap lines in
  * color downstream if desired; the formatter emits plain strings so
