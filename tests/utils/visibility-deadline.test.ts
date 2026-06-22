@@ -159,13 +159,15 @@ describe('VISIBILITY_DEADLINES_MS', () => {
   // Snapshot test — adding/removing a site is a deliberate change.
   // Keep the values in sync with `src/utils/visibility-deadline.ts`'s
   // doc-comment tuning rationale.
-  it('exposes all six site keys with positive values', () => {
+  it('exposes all seven site keys with positive values', () => {
     const keys = Object.keys(VISIBILITY_DEADLINES_MS).sort();
     expect(keys).toEqual([
       'discoverEnsembles',
       'fireScheduleAll',
       'orphanQueryBoot',
       'orphanQueryCleanup',
+      // #786 — daemon boot guard's protocol-stamp scan (fail-closed).
+      'protocolGuardBoot',
       'resolveSession',
       'scanEnsembleSessions',
     ]);
