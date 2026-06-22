@@ -5,7 +5,6 @@ import {
   workflowInfo,
   allHandlersFinished,
   proxyActivities,
-  patched,
   log as workflowLog,
   upsertMemo,
 } from '@temporalio/workflow';
@@ -184,7 +183,7 @@ export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<voi
         entries = entries.filter((e) => e.name !== entry.name);
       } else if (entry.type === 'interval' && entry.interval) {
         entry.nextFireAt = new Date(Date.now() + entry.interval).toISOString();
-      } else if (patched('v0.12-cron-schedule') && entry.type === 'cron' && entry.cronExpression) {
+      } else if (entry.type === 'cron' && entry.cronExpression) {
         const nextFire = await computeNextCronFire({
           cronExpression: entry.cronExpression,
           timezone: entry.timezone,
