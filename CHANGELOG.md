@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### ⚠ Breaking changes
 
-This release breaks backward compatibility in five operator-visible ways. Each is described
-below; details and upgrade steps are in [`docs/ops/v2-cutover.md`](docs/ops/v2-cutover.md).
+This release breaks backward compatibility in five ways. Each is described below; details
+and upgrade steps are in [`docs/ops/v2-cutover.md`](docs/ops/v2-cutover.md). (#5 is an
+internal change that makes the cutover mandatory — operator-visible via the boot guard.)
 
 #### 1. Env vars: all `CLAUDE_TEMPO_*` → `AGENT_TEMPO_*`; `CLAUDE_TEMPO_DEBUG` removed (#792)
 
@@ -41,7 +42,7 @@ scripts for any remaining `CLAUDE_TEMPO_*` references and rename them.
 
 #### 2. Config `httpToken` no longer honored — only `readToken` is read (#794)
 
-The legacy `httpToken` config field (written by pre-1.0 versions) is no longer adopted
+The legacy `httpToken` config field (the pre-3e-RBAC HTTP token) is no longer adopted
 at runtime. The auth layer now reads only `readToken` (T1) and `AGENT_TEMPO_HTTP_ADMIN_TOKEN`
 (T2+T3, env-only).
 
@@ -61,7 +62,7 @@ Also removed in this change:
 The 2.0 worker removes all legacy back-compat signal/query/update tolerances that were
 keeping 1.x workflow histories replayable:
 
-- `pendingReset` query removed (superseded by the unified outbox)
+- `pendingReset` query removed (folded into the `pendingIntake` combined query — the reset now rides that query's `pendingReset` field; the pre-#750 standalone query is gone)
 - V1-era `refresh` signal removed
 - Legacy search attribute dual-read (`ClaudeTempo*` → `AgentTempo*` fallback) removed
 - Stale `hostProfiles` compat field removed from MaestroState
@@ -120,12 +121,12 @@ will correctly claim the new session.
 - `migrate-from-claude-tempo` CLI verb (#794) — 1.x home-dir migration shim, no longer needed
 - `CLAUDE_TEMPO_DEBUG` env var (#794) — benign-only log gate, no replacement
 - Legacy `httpToken` config field (#794) — superseded by `readToken` / `AGENT_TEMPO_HTTP_READ_TOKEN`
-- `pendingReset` Temporal query, V1 `refresh` signal, `ClaudeTempo*` SA dual-read (#788)
+- `pendingReset` Temporal query, V1 `refresh` signal, `ClaudeTempo*` SA dual-read, `hostProfiles` MaestroState compat field (#788)
 - All 20 `patched()` workflow determinism markers (#787)
 
 ### Deferred to 2.0.0-beta.2
 
-- **#793 — tool-family verb aliases** — aliased tool merges (coat-check ×4→1, state ×3→1, schedule ×3→1, stages ×2→1). Ruled OUT of beta.1 by architect; aliases present through beta and will be removed at GA.
+- **#793 — tool-family MCP tool merges** — NOT in beta.1. The tool families are unchanged in beta.1 — all current tools remain. In beta.2 they ship merged behind a single `action`-style tool with the old names kept as aliases; the aliases drop at GA. Ruled out of beta.1 by architect (additive/non-breaking → no reason to rush it into the cutover beta).
 
 ---
 
