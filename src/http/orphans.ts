@@ -32,9 +32,9 @@ import type { HostInfo, OrphanSummary } from '../types';
 import type { OrphanCandidate } from '../reconcile/orphans';
 
 /**
- * Render the TUI `/migrate` slash command the operator pastes into their
- * own session to recover an orphan. Wording mirrors
- * `src/tui/commands.ts:handleMigrate` exactly:
+ * Render the `/migrate` slash command the operator pastes into their own
+ * session to recover an orphan (the command-center board; the Ink TUI that
+ * originally handled it was removed in #789). Wording:
  *   - positional `<playerId> <host>`
  *   - flag form `--yes-steal=<currentHost>` (NOT `--confirm-steal-from-host`)
  *

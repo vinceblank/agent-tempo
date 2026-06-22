@@ -77,7 +77,7 @@ export AGENT_TEMPO_HTTP_ADMIN_TOKEN=<strong-secret>   # write + inner access
 agent-tempo daemon status
 ```
 
-The read token is safe to share with any human observer (TUI, dashboard, read-only integrations). The admin token grants full control — ensemble writes, inner-loop tail. Keep it out of repos; pass via env in your container/systemd override.
+The read token is safe to share with any human observer (command-center board, dashboard, read-only integrations). The admin token grants full control — ensemble writes, inner-loop tail. Keep it out of repos; pass via env in your container/systemd override.
 
 **Legacy `httpToken` upgrade path:**
 

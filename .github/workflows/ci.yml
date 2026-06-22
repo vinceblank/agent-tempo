@@ -720,7 +720,7 @@ jobs:
       matrix:
         node-version: [20, 22, 24]
     steps:
-      - run: echo "docs-only PR — TUI vitest skipped"
+      - run: echo "docs-only PR — vitest pure-logic suite skipped"
 
   test-vitest-noop:
     # (#866) Companion noop for docs-only PRs — mirrors test-vitest's matrix name

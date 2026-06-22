@@ -121,7 +121,9 @@ interface ParsedArgs {
 
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
-    command: 'tui',
+    // #789 — the TUI is deleted; a bare `agent-tempo` now resolves to the
+    // `home` command (bootstrap + status + hints), NOT a terminal UI launch.
+    command: 'home',
     positional: [],
     dir: process.cwd(),
     skipPreflight: false,
@@ -772,36 +774,31 @@ async function main() {
       break;
     }
 
-    case 'tui': {
+    case 'home': {
+      // E.8 / D2 (#789) — bare `agent-tempo`: the #289 six-step auto-provisioning
+      // bootstrap (MCP registration, Temporal reachability, daemon boot,
+      // badges + ensembles prefetch), then a status snapshot + next-step hints.
+      // One-shot; the live operator surfaces are mission-control
+      // (`command-center`, when the Pi seat is installed) and the web dashboard.
+      // `--skip-preflight` renders the degraded no-result home. The rich,
+      // unit-tested render lives in the crash-proof `home-command` module.
       const config = getConfig(overrides);
-      // If --ensemble or positional arg given, start in single-ensemble view.
-      // Otherwise, start in multi-ensemble home view.
-      const tuiEnsemble = args.ensemble || args.positional[1] || undefined;
-
-      // #289 / S7: run the auto-provisioning bootstrap before handing off
-      // to the TUI. Steps 1–6 register MCP, ensure Temporal reachability,
-      // boot the daemon, and prefetch badges + ensembles so the TUI home
-      // view renders instantly. `skipPreflight` bypass: power users can
-      // opt out if the cache / disk-probe cost ever regresses (no current
-      // way to trigger, but the flag is already on the parser).
-      let bootstrapResult;
-      if (!args.skipPreflight) {
-        const { bootstrap } = await import('./cli/startup');
-        try {
-          bootstrapResult = await bootstrap({ config });
-        } catch (err) {
-          // Bootstrap is best-effort — per-step failures degrade into
-          // `StepOutcome.status: 'failed'` and a usable result. A thrown
-          // error means something outside the step boundaries broke
-          // (e.g. cache-dir creation). Log + continue with an undefined
-          // bootstrap payload so the TUI still launches.
-          out.warn(`Bootstrap hit an unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // Dynamic import — TUI module uses ESM ink
-      const { run: runTui } = await import('./tui/index');
-      await runTui({ config, ensemble: tuiEnsemble, ...(bootstrapResult ? { bootstrap: bootstrapResult } : {}) });
+      const { runHome } = await import('./cli/home-command');
+      const { probePi, checkPiNodeFloor } = await import('./pi/probe');
+      const pkgVersion = (require('../package.json') as { version: string }).version;
+      await runHome({
+        bootstrap: args.skipPreflight
+          ? null
+          : async () => {
+              const { bootstrap } = await import('./cli/startup');
+              return bootstrap({ config });
+            },
+        // The command-center seat needs BOTH the Pi package and the Node floor
+        // (the same pair command-center-command itself enforces) — suggesting
+        // it on an old Node would dead-end the user.
+        piAvailable: probePi().available && checkPiNodeFloor().ok,
+        version: pkgVersion,
+      });
       break;
     }
 

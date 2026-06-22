@@ -54,7 +54,7 @@ A badge on the sidebar nav entry shows the total count when > 0.
    to a literal `(unknown)` placeholder — you **must** edit it to a
    real hostname before submitting, or `/migrate`'s tokenizer will
    reject the command.
-3. **Paste into a live session on the target host.** Any TUI session
+3. **Paste into a live session on the target host.** Any command-center board session
    on `<host>` will do — the slash-command needs an operator player
    identity for the steal-guard audit trail.
 4. **Watch the migration land.** The target host's daemon picks up the
@@ -72,8 +72,8 @@ landed on view-only for the first release because:
   source host into a slot they had to think about). A one-click
   dashboard button would invert that guarantee.
 - The dashboard runs in a browser session that may not match the
-  operator's TUI session. The slash-command path preserves the audit
-  identity correctly (the player executing the TUI command is the
+  operator's command-center board session. The slash-command path preserves the audit
+  identity correctly (the player executing the board command is the
   recorded invoker); a dashboard click would record the daemon's host
   identity, masking who actually decided to migrate.
 - Operators consistently report that they want orphan **visibility**
@@ -83,7 +83,7 @@ landed on view-only for the first release because:
 
 If the operator's #1 desire after a month of running the dashboard is
 a "Migrate to this host" button, we'll add it then — with the steal
-guard surfaced as a confirmation modal that mirrors the TUI's
+guard surfaced as a confirmation modal that mirrors the board's
 `--yes-steal=` payload.
 
 ## When does an orphan appear?
@@ -124,5 +124,5 @@ for the wire contract.
 ## Related
 
 - [`agent-tempo restore --all-hosts` CLI](../cli.md) — the equivalent CLI surface (#151)
-- [`/migrate` TUI slash-command](../tui.md#migrate) — the recovery action this view feeds
+- [`/migrate` command-center board command](../concepts.md) — the recovery action this view feeds (board parity landing in beta.2; CLI fallback meanwhile)
 - `src/reconcile/orphans.ts:queryOrphanedSessions` — the visibility query that powers both surfaces

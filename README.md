@@ -16,7 +16,7 @@
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
-Each session registers as a **player** in Temporal. Players discover each other with `ensemble`, send messages with `cue`, and coordinate via a **conductor** that connects to external interfaces like Discord, Telegram, or the built-in TUI.
+Each session registers as a **player** in Temporal. Players discover each other with `ensemble`, send messages with `cue`, and coordinate via a **conductor** that connects to external interfaces like Discord, Telegram, or the built-in mission-control board.
 
 📖 **[Full documentation](docs/README.md)**
 
@@ -34,7 +34,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 | 🔁 **Ensemble Lineups** | YAML configs that define a full team and recruit them all in one command |
 | ⏰ **Scheduling** | One-shot and recurring message schedules with fan-out and failure notifications |
 | 🎭 **Player Types** | Reusable agent definitions with 8 shipped types and three-tier lookup |
-| 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
+| 🖥️ **Mission-control board** | Interactive operator board (`command-center`) — live ensemble view + cue/pause/restart/destroy controls + an LLM planner |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
 | ⏸️ **Hold / Pause / Resume** | Pre-warm a full team before delivering tasks; pause and resume mid-session |
 | 🤖 **Headless adapters** | Copilot bridge, Claude API, OpenCode, Claude Code headless (`claude -p` — bills against your Claude Code subscription), and Pi AI (headless player or interactive conductor) — mix providers and headless agents in the same ensemble |
@@ -66,7 +66,7 @@ This starts Temporal, registers the MCP server, launches the daemon, and opens a
 agent-tempo status         # see who's active
 ```
 
-Or use the TUI to recruit players, or ask the conductor to `recruit` from inside Claude Code.
+Or recruit players from the command-center board, or ask the conductor to `recruit` from inside Claude Code.
 
 ### Manual setup
 
@@ -118,7 +118,7 @@ agent-tempo daemon stop
 - **Lineup** — A YAML file that defines a full team and recruits them in one step
 - **Player Type** — A reusable agent definition (`.md` with YAML frontmatter) that gives a player a named role
 
-Players in one ensemble cannot see or message players in another. Launch `agent-tempo` to open the TUI and switch between ensembles, or target a specific ensemble directly:
+Players in one ensemble cannot see or message players in another. Run `agent-tempo` for status across ensembles (or `agent-tempo command-center` for the live board), or target a specific ensemble directly:
 
 ```bash
 agent-tempo up frontend        # provision and launch conductor in "frontend"
@@ -144,7 +144,7 @@ Tools available inside Claude Code sessions connected to agent-tempo:
 ## CLI
 
 ```bash
-agent-tempo                    # launch TUI (auto-provisions on first run)
+agent-tempo                    # bootstrap + status + operator hints (auto-provisions on first run)
 agent-tempo up [ensemble]      # provision infrastructure and launch conductor
 agent-tempo down [--destroy]   # tear down infrastructure (--destroy also terminates workflows)
 agent-tempo status [ensemble]  # list active sessions
@@ -154,6 +154,7 @@ agent-tempo hosts              # list daemons polling this Temporal namespace (-
 agent-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)
 agent-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
 agent-tempo release [ensemble] # release held players (unlock + deliver tasks)
+agent-tempo command-center     # interactive operator board (aliases: cc, board)
 agent-tempo dashboard          # open the web dashboard (--pair for QR-code cross-device access)
 agent-tempo daemon <sub>       # manage the worker daemon
 agent-tempo upgrade            # update to latest
@@ -235,26 +236,31 @@ Key environment variables:
 
 📖 [Full configuration reference → docs/configuration.md](docs/configuration.md)
 
-## Terminal UI
+## Mission-control board
+
+The interactive operator surface is the **command-center board** — an interactive
+Pi session that turns one terminal into a live ensemble dashboard + operator
+controller:
 
 ```bash
-agent-tempo tui                          # multi-ensemble home screen
-agent-tempo tui --ensemble my-ensemble   # direct ensemble mode
+agent-tempo command-center                 # multi-ensemble board (aliases: cc, board)
+agent-tempo command-center my-ensemble     # scoped to one ensemble
 ```
 
-The TUI provides a chat-focused shell for managing your ensemble:
+- **Live board** — coarse ensemble view (player phases, parts, current tool, context %) over the daemon's SSE stream, plus a fine per-player tail
+- **Operator commands** — `/cue`, `/pause`, `/play`, `/go` (release held), `/restart`, `/destroy`, `/reset`, `/hosts`, `/status`, `/attachment-info`, `/recall`, `/schedule`, `/unschedule`, and more
+- **LLM planner** — `ask` / `handoff` / `recruit` / `observe_board` tools for an operator who wants to plan and delegate from the same seat
 
-- **Ensemble chat feed** — live aggregated view of conductor + player traffic; type bare text to message the conductor, `@player message` to message directly
-- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, `/go` (release held), `/pause`, `/play`, `/shutdown`, `/restore`, `/home`, and more; type `/help` for the full list
-- **Interactive overlays and wizards** — step-by-step flows for recruiting players, creating schedules, and managing ensembles
+A bare `agent-tempo` (no command) auto-provisions infrastructure, prints live
+`status`, and points you at the board + web dashboard.
 
-📖 [TUI reference → docs/tui.md](docs/tui.md)
+📖 [Concepts → docs/concepts.md](docs/concepts.md) (Command-center)
 
 ## Copilot Integration
 
 > **Experimental** — subject to breaking changes.
 
-GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`. Recruit one from the TUI:
+GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`. Recruit one from the command-center board or the conductor:
 
 ```
 /recruit copilot-1 --agent copilot
@@ -274,7 +280,7 @@ agent-tempo up --agent pi --ensemble <name>
 
 The Pi session self-bootstraps its Temporal workflow and attaches as a conductor or player. The `AGENT_TEMPO_*` environment is wired automatically. For power users, the underlying extension path is `dist/pi/extension.js` — invoke directly with `pi -e dist/pi/extension.js`.
 
-From the TUI, `/recruit-conductor` relaunches the active ensemble's conductor — set `conductor.agent: pi` in that ensemble's lineup to make it a Pi conductor.
+Set `conductor.agent: pi` in that ensemble's lineup to make it a Pi conductor.
 
 **Prerequisites:** `@earendil-works/pi-coding-agent` on Node ≥ 22.19. Recommended: `ANTHROPIC_API_KEY` (without it the session falls back to Pi's own auth/default model).
 

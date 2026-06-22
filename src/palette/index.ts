@@ -1,14 +1,13 @@
 /**
  * Pure palette-input classification + filtering helpers.
  *
- * Shared between the TUI (`src/tui/commands.ts`) and the dashboard
- * (`dashboard/src/components/chat/`) so the two surfaces' chat-input
- * autocomplete machinery stays in lockstep — same prefix detection,
- * same filtering semantics, same quote-aware tokenizer.
+ * Used by the dashboard (`dashboard/src/components/chat/`) chat-input
+ * autocomplete machinery — prefix detection, filtering semantics, and the
+ * quote-aware tokenizer.
  *
- * Extracted from `src/tui/commands.ts` in #471/#472 (dashboard chat-input
- * TUI parity bundle). The TUI re-exports every symbol from here so existing
- * callers see no behaviour change. The dashboard imports directly from
+ * Originally extracted from the former `src/tui/commands.ts` in #471/#472
+ * (dashboard ↔ TUI parity bundle); the Ink TUI was deleted in #789, so the
+ * dashboard is now the sole consumer. The dashboard imports directly from
  * `agent-tempo/palette` (Vite alias `agent-tempo` → `../src`).
  *
  * **No imports allowed.** Keep this module dependency-free so it

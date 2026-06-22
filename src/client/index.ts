@@ -7,7 +7,8 @@
  * - {@link createTempoClientCore} — pure Temporal RPC, headless-safe
  *   (daemon, MCP server, SSE event source, future SDK consumers).
  * - {@link createTempoClientWithSpawn} — the TTY-bound superset adding
- *   `createEnsemble` and `spawnConductor`. Use from the TUI/CLI only.
+ *   `createEnsemble` (the CLI `up` path + the command-center board's
+ *   `/ensemble-up`). `spawnConductor` was removed in #789 with the Ink TUI.
  *
  * `createTempoClient` is preserved as a permanent alias for
  * `createTempoClientWithSpawn` so every existing call site keeps the same
