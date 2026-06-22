@@ -5,7 +5,6 @@ import {
   workflowInfo,
   allHandlersFinished,
   proxyActivities,
-  patched,
   uuid4,
   upsertMemo,
 } from '@temporalio/workflow';
@@ -159,8 +158,6 @@ const TEMPO_BPM_WINDOW_MS = 60_000;
 // ══════════════════════════════════════════════════════════════════════════════
 
 export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
-  patched('v0.17-initial');
-
   // #786 — 2.0 cutover protocol stamp (see constants.PROTOCOL_VERSION). Memo,
   // re-upserted every run incl. CAN successors, so the daemon boot guard sees
   // every Running 2.0 maestro as stamped; a 1.x maestro never runs this → its
@@ -172,10 +169,6 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
   // costProfile field, so they resolve to the legacy 5s default and the V1
   // refresh activity — identical commands on replay.
   const cloudProfile = input.costProfile === 'cloud';
-  // T0.6 (#760) — the chat gate NEEDS a marker (unlike T0.1's V2 switch):
-  // post-#759 cloud maestros recorded chat-fetch activities on unwatched
-  // ticks, so skipping those without a marker would mismatch their replay.
-  const chatGateEnabled = patched('v1.8-t06-chat-gate');
   let refreshIntervalMs = resolveRefreshIntervalMs(input, /* observersPresent */ true);
 
   let players: MaestroPlayerInfo[] = input.players ?? [];
@@ -736,14 +729,10 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     // the maestro's cache — so an unwatched ensemble loses nothing;
     // staleness inherits the accepted T0.1 cadence-stretch contract (the
     // first watched tick re-fetches from the durable high-water marks).
-    // Gated behind its own patched marker: post-#759 cloud maestros have
-    // chat activities RECORDED on unwatched ticks, so an ungated skip
-    // would be a replay command mismatch (input-driven gating only
-    // protects pre-#748 runs — verified, contra the initial "no marker
-    // expected" estimate).
-    if (patched('v0.19-ensemble-chat')) {
+    // (2.0: was patched()-gated for 1.x replay determinism; now unconditional — #787.)
+    {
       // Unwatched cloud tick → skip; cache + high-water marks stay untouched.
-      const skipChatThisTick = chatGateEnabled && cloudProfile && !observersPresent;
+      const skipChatThisTick = cloudProfile && !observersPresent;
       if (!skipChatThisTick) {
         try {
           const chatResult = await fetchEnsembleChat({
@@ -910,7 +899,6 @@ const globalActivities = proxyActivities<
 });
 
 export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Promise<void> {
-  patched('v0.18-global-maestro');
 
   // #786 — 2.0 cutover protocol stamp (the namespace-wide global maestro is
   // stamped too, so the boot guard's scan never sees it as un-stamped). See

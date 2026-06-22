@@ -8,7 +8,6 @@ import {
   upsertMemo,
   uuid4,
   proxyActivities,
-  patched,
   log as workflowLog,
 } from '@temporalio/workflow';
 import { MEMO_KEYS } from '../utils/search-attributes';
@@ -175,15 +174,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
   // by `currentAttachment.leaseMs`.
   /**
-   * Legacy CAN-extension constant. Retained solely so sessions that ran on a
-   * pre-#249 workflow bundle replay deterministically: the `patched()` branch at
-   * the CAN-boundary extension site selects this constant on the non-patched
-   * side, matching the exact arg sequence those histories recorded. New runs
-   * (and all post-#249 CAN transitions) use `currentAttachment.leaseMs` instead
-   * — see the call site below.
-   */
-  const HEARTBEAT_INTERVAL_MS = 30_000;
-  /**
    * Default grace period for `draining → detached` transition after requestDetach. Used when a
    * `requestDetach` signal omits `deadlineMs`. Per-signal overrides are honored via the
    * `drainingDeadlineMs` state variable below (fix for #159 Gap 1a).
@@ -192,50 +182,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   /** Max duration a messageId can stay in-flight before the safety timer ejects it. */
   const PROCESSING_DEADLINE_MS = 15 * 60 * 1000;
 
-  // Version marker for v0.10 — records a patch marker in workflow history.
-  // Future workflow changes that alter the command sequence should use
-  // patched('v0.10-<change-name>') to protect in-flight sessions from
-  // non-determinism errors during rolling deploys.
-  patched('v0.10-initial');
-  patched('v0.11-check-and-set-status');
-  patched('v0.13-quality-gates');
-  patched('v0.14-worktrees');
-  patched('v0.15-blocked-detection');
-  patched('v0.18-stages');
-  patched('v0.23-hold-release');
-  patched('v0.25-attachment-lifecycle');
-  // Issue #172: kept as a replay marker for workflows that predate the
-  // simpler hold-on-startup design (v0.26). The state field + interceptor
-  // were removed in favor of baking the banner/directive into
-  // `SessionInput.messages` at workflow creation, but leaving the patched
-  // marker ensures existing replay histories that recorded this command
-  // still deserialize cleanly. Safe no-op today.
-  patched('v0.26-pending-startup-context');
-
-  // ── T0.5 SA diet (#747) — ONE marker gates the whole diet ──
-  //
-  // New runs (incl. post-deploy CAN successors — fresh executions re-record
-  // the marker) stop writing the read-only/write-only search attributes:
-  //   - AgentTempoGitRoot / AgentTempoPlayerType / AgentTempoIsConductor
-  //     migrate to the workflow MEMO (low-churn fields only — NEVER memo
-  //     counters like activityCount/lastActivityAt: memo upserts are
-  //     billable actions, that would trade query actions for upsert actions).
-  //   - AgentTempoAttachmentId is dropped outright (zero readers anywhere;
-  //     adapters correlate via the claimAttachment token).
-  // Old histories replay the recorded SA-write branch unchanged — safe,
-  // because any namespace with such histories has the legacy SAs registered.
-  // Readers go through the dual-read helpers in utils/search-attributes.ts
-  // (memo preferred, SA fallback). Filter SAs (Ensemble, PlayerId, Hostname,
-  // AttachedHost, AttachmentState) are untouched — they appear in visibility
-  // query expressions and MUST stay search attributes.
-  const saDiet = patched('v1.8-sa-diet');
-  // T0.1 (#748) — the observation-path memo extension: workDir / agentType /
-  // gitBranch join the memo so the cloud-profile maestro scan can read the
-  // full player row from visibility list results (zero per-player queries).
-  // Payload-only upsertMemo change, but gated behind its own marker per the
-  // repo's conservative determinism policy. All three pass the low-churn bar
-  // (workDir/agentType set-at-start; gitBranch via rare updateMetadata).
-  const memoObservationFields = patched('v1.8-memo-observation-fields');
+  // ── 2.0 clean-slate (#787) ──
+  // The replay-only `patched()` markers that protected in-flight 1.x sessions
+  // across rolling deploys are gone: 2.0 is a hard cutover (the #786 boot guard
+  // refuses to replay any 1.x history), so there are no pre-patch histories left
+  // to protect. The SA-diet (#747) and observation-field memo (#748) behavior is
+  // now unconditional — the new path IS the only path.
 
   /**
    * T0.5 — the memo mirror of the migrated read-only metadata fields.
@@ -248,11 +200,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     ...(input.metadata.gitRoot ? { [MEMO_KEYS.gitRoot]: input.metadata.gitRoot } : {}),
     ...(input.metadata.playerType ? { [MEMO_KEYS.playerType]: input.metadata.playerType } : {}),
     [MEMO_KEYS.isConductor]: input.metadata.isConductor === true,
-    ...(memoObservationFields ? {
-      [MEMO_KEYS.workDir]: input.metadata.workDir,
-      [MEMO_KEYS.agentType]: input.metadata.agentType || 'claude',
-      ...(input.metadata.gitBranch ? { [MEMO_KEYS.gitBranch]: input.metadata.gitBranch } : {}),
-    } : {}),
+    [MEMO_KEYS.workDir]: input.metadata.workDir,
+    [MEMO_KEYS.agentType]: input.metadata.agentType || 'claude',
+    ...(input.metadata.gitBranch ? { [MEMO_KEYS.gitBranch]: input.metadata.gitBranch } : {}),
   });
 
   // Ensure search attributes are always current — critical when reconnecting
@@ -262,16 +212,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     AgentTempoEnsemble: [input.metadata.ensemble],
     AgentTempoPlayerId: [input.metadata.playerId],
     AgentTempoHostname: [input.metadata.hostname],
-    ...(saDiet ? {} : {
-      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
-      ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
-      AgentTempoIsConductor: [input.metadata.isConductor === true],
-    }),
     // v0.25 attachment search attributes — initial values for a fresh/restored workflow.
     // Updated on every phase transition below.
     AgentTempoAttachedHost: [input.currentAttachment?.hostname ?? ''],
     AgentTempoAttachmentState: [input.phase ?? 'booting'],
-    ...(saDiet ? {} : { AgentTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''] }),
   });
 
   // #786 — 2.0 cutover protocol STAMP. Authoritative from the constant (this IS
@@ -293,9 +237,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // `memo` option so the fields are visible before the first workflow task
   // (and on standard-visibility servers whose list results may lag memo
   // upserts — see PR #747 T0.5 notes). Low-churn fields ONLY.
-  if (saDiet) {
-    upsertMemo({ ...metaMemo(), [MEMO_KEYS.part]: part });
-  }
+  upsertMemo({ ...metaMemo(), [MEMO_KEYS.part]: part });
 
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
@@ -544,7 +486,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // #399 W2 — every inbound cue counts as received traffic.
     receivedCount++;
     // Track inbound messages that expect a response (default: true for backward compat)
-    if (patched('v0.20-response-requested-blocked') && msg.responseRequested !== false) {
+    if (msg.responseRequested !== false) {
       lastInboundRRTime = workflowNow().getTime();
     }
   });
@@ -555,7 +497,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // daemon aggregate — T0.1) can read it from visibility list results
     // instead of a per-player getPart query. Low-churn by nature: part
     // changes when a player re-describes its work, not per message.
-    if (saDiet) upsertMemo({ [MEMO_KEYS.part]: newPart });
+    upsertMemo({ [MEMO_KEYS.part]: newPart });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
     lastOutboundTime = workflowNow().getTime();
@@ -628,15 +570,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       AgentTempoEnsemble: [input.metadata.ensemble],
       AgentTempoPlayerId: [input.metadata.playerId],
       AgentTempoHostname: [input.metadata.hostname],
-      ...(saDiet ? {} : {
-        ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
-        ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
-        AgentTempoIsConductor: [input.metadata.isConductor === true],
-      }),
     });
     // T0.5 — keep the memo mirror current (low-churn: metadata updates are
     // rare lifecycle events, not per-message traffic).
-    if (saDiet) upsertMemo(metaMemo());
+    upsertMemo(metaMemo());
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });
@@ -884,7 +821,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     }
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     setPhase('gone');
     // Inject a final audit message so the old adapter-completion path has something to show.
@@ -987,7 +923,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('attached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [host],
-      ...(saDiet ? {} : { AgentTempoAttachmentId: [newAttachment.attachmentId] }),
     });
     lastActivityTime = nowMs;
     activityCount++;
@@ -1093,7 +1028,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // mismatch any history that recorded the race — conservative tiebreak.
     // Evaluated lazily (the v0.26-can-lease-from-attachment single-use
     // precedent): only histories that hit forceDetach record the marker.
-    if (patched('v0.27-force-detach-recheck') && currentAttachment?.attachmentId !== reaped.attachmentId) {
+    if (currentAttachment?.attachmentId !== reaped.attachmentId) {
       workflowLog.info(
         `forceDetach: attachment changed during hard-terminate await ` +
         `(expected ${reaped.attachmentId}, now ${currentAttachment?.attachmentId ?? 'none'}) — ` +
@@ -1112,7 +1047,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('detached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     // #159 Gap 1b: wake the main loop — `phase === 'detached'` isn't in the predicate
     // and the condition would otherwise sleep on the now-stale lease-expiry deadline.
@@ -1236,7 +1170,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('detached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -1600,12 +1533,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       // live handler. Reconciled entries keep the ORIGINAL receipt time as
       // `reportedAt` and carry `reconciled: true`.
       //
-      // patched() gate: stage state itself drives no commands, but the
-      // completion/failure messages pushed here join `messages`, which
-      // participates in main-loop condition predicates whose resolution
-      // interleaves with recorded timer commands — a command-sequence
-      // dependency on replay. Conservative tiebreak per the ruling: marker.
-      if (patched('v0.27-stage-reconcile-reports')) {
+      // Stage reconciliation — fold each player's latest result/blocker report
+      // into stage status, then apply the stage's completion/failure transitions.
+      // (2.0: was patched()-gated for 1.x replay determinism; now unconditional — #787.)
+      {
         const nowMs = workflowNow().getTime();
         for (const playerEntry of entry.players) {
           // Most recent stage-relevant (result|blocker) report from this
@@ -1793,7 +1724,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       setPhase('detached');
       upsertSearchAttributes({
         AgentTempoAttachedHost: [''],
-        ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
       });
       workflowLog.warn(`lease expired for attachment ${reaped.attachmentId} (host=${reaped.hostname})`);
     }
@@ -1867,7 +1797,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       setPhase('detached');
       upsertSearchAttributes({
         AgentTempoAttachedHost: [''],
-        ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
       });
       if (reaped) {
         workflowLog.info(
@@ -2095,7 +2024,6 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
           setPhase('detached');
           upsertSearchAttributes({
             AgentTempoAttachedHost: [''],
-            ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
           });
           workflowLog.warn(
             `spawn failed for "${entry.targetName}"; rolled back attachment ${entry.attachmentId} → detached`,
@@ -2145,27 +2073,13 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       // matches what the adapter signed up for and covers at least one full heartbeat
       // interval for every adapter class.
       //
-      // The `patched()` gate keeps replay of pre-#249 workflow runs deterministic:
-      // histories that CAN'd on the old bundle recorded `extendAttachmentForCAN(…, 30_000, …)`,
-      // so replaying those runs must pick the legacy constant. New runs (and in-flight
-      // runs that CAN *after* the deploy) take the patched branch.
-      //
       // Math lives in `./attachment-math.ts` for direct unit testability (#127).
-      //
-      // #255 cleanup: the `patched()` call stays at the eager/unconditional
-      // position it was introduced in — relocating it inside the
-      // `currentAttachment ?` branch would skip marker recording on histories
-      // that hit the CAN site with a null attachment, risking replay
-      // non-determinism against those recordings. The dead-code cleanup is
-      // strictly the removal of the `?? HEARTBEAT_INTERVAL_MS` fallback that
-      // used to sit inside the ternary: on the patched branch it never fires
-      // (Attachment.leaseMs is required), and on the pre-patched branch the
-      // fallback is replaced by the bare constant — same value either way.
-      const usePatchedLease = patched('v0.26-can-lease-from-attachment');
+      // (2.0: the v0.26-can-lease-from-attachment patched() gate is gone — #787 —
+      // so CAN always extends by `currentAttachment.leaseMs` = 3 × heartbeatMs.)
       const extendedAttachment = currentAttachment
         ? extendAttachmentForCAN(
             currentAttachment,
-            usePatchedLease ? currentAttachment.leaseMs : HEARTBEAT_INTERVAL_MS,
+            currentAttachment.leaseMs,
             workflowNow().getTime(),
           )
         : undefined;
