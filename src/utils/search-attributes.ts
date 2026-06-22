@@ -129,7 +129,7 @@ export function getSearchAttrBool(
   return undefined;
 }
 
-// ── T0.5 (#747) — memo readers + dual-read (memo preferred, SA fallback) ──
+// ── T0.5 (#747) — memo readers (memo-only after the #788 legacy-SA prune) ──
 
 /** Read a memo value as a string. `undefined` when absent or non-string. */
 export function getMemoString(

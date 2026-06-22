@@ -27,6 +27,7 @@ import {
   conductorWorkflowId,
   sessionWorkflowId,
   maestroWorkflowId,
+  schedulerWorkflowId,
 } from '../src/config';
 import { PROTOCOL_VERSION } from '../src/constants';
 import { MEMO_KEYS } from '../src/utils/search-attributes';
@@ -113,14 +114,127 @@ describe('#786 up --from-upgrade — planRecreation', () => {
     expect(alice.searchAttributes.AgentTempoPlayerId).to.deep.equal(['alice']);
   });
 
-  it('does NOT seed continuity (sessionId / model / state slots) — that is the fast-follow', () => {
+  it('seeds sessionId + model continuity onto session metadata', () => {
     const specs = planRecreation(sampleSnapshot(), planOpts);
     const alice = specs.find((s) => s.workflowId === sessionWorkflowId('team', 'alice'))!;
     const input = (alice.args as unknown as [{ metadata: Record<string, unknown> }])[0];
-    expect(input.metadata.sessionId, 'sessionId must not be seeded').to.equal(undefined);
-    expect(input.metadata.model, 'model must not be seeded').to.equal(undefined);
-    // No state-slot content leaks into the spec memo.
+    expect(input.metadata.sessionId, 'sessionId must be seeded for --resume').to.equal('sess-xyz');
+    expect(input.metadata.model, 'non-default model must be seeded').to.equal('claude-opus-4-7');
+  });
+
+  it('omits sessionId / model when the player did not carry them', () => {
+    const specs = planRecreation(sampleSnapshot(), planOpts);
+    const cond = specs.find((s) => s.workflowId === conductorWorkflowId('team'))!;
+    const input = (cond.args as unknown as [{ metadata: Record<string, unknown> }])[0];
+    expect(input.metadata.sessionId).to.equal(undefined);
+    expect(input.metadata.model).to.equal(undefined);
+  });
+
+  it('seeds #334 state slots onto playerState (savedBy=owner, savedAt=freeze time)', () => {
+    const specs = planRecreation(sampleSnapshot(), planOpts);
+    const alice = specs.find((s) => s.workflowId === sessionWorkflowId('team', 'alice'))!;
+    const input = (alice.args as unknown as [{ playerState?: Record<string, { content: string; savedAt: string; savedBy: string }> }])[0];
+    expect(input.playerState, 'playerState seeded').to.not.equal(undefined);
+    expect(input.playerState!.foo).to.deep.equal({
+      content: 'bar',
+      savedAt: '2026-06-20T00:00:00.000Z',
+      savedBy: 'alice',
+    });
+    // State-slot content rides the input, never the memo.
     expect(JSON.stringify(alice.memo)).to.not.contain('bar');
+  });
+
+  it('omits playerState for a player with no state slots', () => {
+    const specs = planRecreation(sampleSnapshot(), planOpts);
+    const cond = specs.find((s) => s.workflowId === conductorWorkflowId('team'))!;
+    const input = (cond.args as unknown as [{ playerState?: unknown }])[0];
+    expect(input.playerState).to.equal(undefined);
+  });
+});
+
+function snapshotWithSchedules(): UpgradeSnapshot {
+  const snap = sampleSnapshot();
+  snap.ensembles[0].schedules = [
+    {
+      name: 'daily-standup',
+      message: 'standup time',
+      target: 'alice',
+      createdBy: 'conductor',
+      type: 'cron',
+      nextFireAt: '2026-06-21T09:00:00.000Z',
+      cronExpression: '0 9 * * 1-5',
+      timezone: 'America/New_York',
+    },
+    {
+      name: 'one-shot',
+      message: 'ping',
+      target: 'alice',
+      createdBy: 'conductor',
+      type: 'once',
+      nextFireAt: '2026-06-21T12:00:00.000Z',
+      remainingCount: 1,
+    },
+  ];
+  return snap;
+}
+
+describe('#786 up --from-upgrade — scheduler recreation', () => {
+  it('recreates the scheduler workflow seeded with captured schedules', () => {
+    const specs = planRecreation(snapshotWithSchedules(), planOpts);
+    const sched = specs.find((s) => s.workflowId === schedulerWorkflowId('team'));
+    expect(sched, 'scheduler spec exists').to.not.equal(undefined);
+    expect(sched!.workflowType).to.equal('agentSchedulerWorkflow');
+    expect(sched!.memo[MEMO_KEYS.protocol]).to.equal(PROTOCOL_VERSION);
+    const args = sched!.args as unknown as [{ ensemble: string; entries: Record<string, unknown>[] }];
+    expect(args[0].ensemble).to.equal('team');
+    expect(args[0].entries).to.have.lengthOf(2);
+  });
+
+  it('maps SnapshotSchedule → ScheduleEntry and resets firedCount', () => {
+    const specs = planRecreation(snapshotWithSchedules(), planOpts);
+    const sched = specs.find((s) => s.workflowId === schedulerWorkflowId('team'))!;
+    const args = sched.args as unknown as [{ entries: Record<string, unknown>[] }];
+    const cron = args[0].entries.find((e) => e.name === 'daily-standup')!;
+    expect(cron).to.deep.equal({
+      name: 'daily-standup',
+      message: 'standup time',
+      target: 'alice',
+      createdBy: 'conductor',
+      nextFireAt: '2026-06-21T09:00:00.000Z',
+      type: 'cron',
+      firedCount: 0,
+      cronExpression: '0 9 * * 1-5',
+      timezone: 'America/New_York',
+    });
+    const once = args[0].entries.find((e) => e.name === 'one-shot')!;
+    expect(once.remainingCount).to.equal(1);
+    expect(once.firedCount).to.equal(0);
+  });
+
+  it('does NOT recreate a scheduler when no schedules were captured', () => {
+    const specs = planRecreation(sampleSnapshot(), planOpts);
+    expect(specs.find((s) => s.workflowType === 'agentSchedulerWorkflow')).to.equal(undefined);
+    expect(specs.find((s) => s.workflowId === schedulerWorkflowId('team'))).to.equal(undefined);
+  });
+
+  it('runFromUpgrade starts the scheduler alongside the roster', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fromupg-sched-'));
+    try {
+      writeSnapshot(home, snapshotWithSchedules());
+      const starts: string[] = [];
+      const fakeClient = {
+        workflow: {
+          start: async (type: string) => { starts.push(type); },
+        },
+      } as never;
+      const res = await runFromUpgrade(fakeClient, { home, ...planOpts });
+      expect(res.ok).to.equal(true);
+      // maestro + conductor + alice + scheduler = 4
+      expect(res.workflowsCreated).to.equal(4);
+      expect(starts).to.include('agentSchedulerWorkflow');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

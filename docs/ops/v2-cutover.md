@@ -104,6 +104,21 @@ fresh `protocol-2` workflows (stamped `AgentTempoProtocol=2`), and seeds
 continuity. On success the snapshot file is archived as
 `upgrade-snapshot-v1.consumed.json`.
 
+> **Sessions come back as skeletons — re-attach with `restart`, one per player.**
+> `up --from-upgrade` recreates the durable workflows (with state slots,
+> schedules, `sessionId`, and model seeded) in the `booting` phase — no live
+> adapter is spawned. This is deliberate: a migration can span multiple hosts,
+> and auto-spawning terminals across them is surprising and hard to control.
+> Bring each player back live on your own schedule with **`restart`** (the
+> seeded `sessionId` makes it a `--resume` into the original conversation).
+>
+> ⚠ **Do NOT reach for `restore` here** — it only recovers sessions that were
+> attached and then `detached` (its orphan scan is gated to the `detached`
+> phase). The freshly-recreated migration skeletons are in `booting`, so
+> `restore` finds **zero** of them and reports "0 orphans reattached" — which
+> looks like the cutover lost everything when it did not. Use per-player
+> `restart`.
+
 > **Beta status:** `up --from-upgrade` lands in `#786`. Until that issue ships,
 > this step is not available — do not attempt the cutover until #786 is confirmed
 > merged in the beta you're testing.
