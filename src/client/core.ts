@@ -281,10 +281,10 @@ export function createTempoClientCore(
           const entry = ensembleMap.get(name) || { count: 0, hasConductor: false };
           entry.count++;
 
-          // Preferred: memo `AgentTempoIsConductor` (v1.8 SA diet) with
-          // legacy-SA fallback via the dual-read helper. Final fallback:
-          // workflow ID convention — covers the brief window after a
-          // conductor spawn before visibility propagates.
+          // Preferred: memo `AgentTempoIsConductor` (memo-only after the #788
+          // legacy-SA prune). Final fallback: workflow ID convention — covers
+          // the brief window after a conductor spawn before visibility
+          // propagates.
           const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           if (isConductorFromSA || isConductorFromId) {
@@ -474,10 +474,9 @@ export function createTempoClientCore(
         for await (const wf of listWorkflows({ query })) {
           const sa = wf.searchAttributes || {};
           const playerId = Array.isArray(sa.AgentTempoPlayerId) ? String(sa.AgentTempoPlayerId[0]) : wf.workflowId;
-          // Preferred: memo (v1.8 SA diet) with legacy-SA fallback via the
-          // dual-read helper. Final fallback: workflow ID convention —
-          // covers the brief window after a conductor spawn before
-          // visibility propagates.
+          // Preferred: memo (memo-only after the #788 legacy-SA prune). Final
+          // fallback: workflow ID convention — covers the brief window after a
+          // conductor spawn before visibility propagates.
           const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           players.push({
