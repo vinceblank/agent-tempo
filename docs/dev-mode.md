@@ -81,10 +81,10 @@ Four modes (PR-2 shipped `echo` + `scripted`; PR-3 added `silent` + `chaos`):
   vars on the daemon process (inherited by every spawned mock subprocess):
 
   ```
-  CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS=<n>     # fixed delay before each reply (ms)
-  CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE=<0..1> # probability of throwing per message (default 0.05)
-  CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE=<0..1> # probability of process.exit(1) per message (default 0.01)
-  CLAUDE_TEMPO_MOCK_CHAOS_SEED=<int>       # PRNG seed (default Date.now())
+  AGENT_TEMPO_MOCK_CHAOS_DELAY_MS=<n>     # fixed delay before each reply (ms)
+  AGENT_TEMPO_MOCK_CHAOS_FAIL_RATE=<0..1> # probability of throwing per message (default 0.05)
+  AGENT_TEMPO_MOCK_CHAOS_CRASH_RATE=<0..1> # probability of process.exit(1) per message (default 0.01)
+  AGENT_TEMPO_MOCK_CHAOS_SEED=<int>       # PRNG seed (default Date.now())
   ```
 
   Crash takes precedence over fail when both rates resolve true on the same
@@ -158,9 +158,9 @@ without re-introducing the public surface that #288 retired.
 
 All five verbs:
 
-- **Require `--dev` (or `CLAUDE_TEMPO_DEV_MODE=1`)** — production CLI
+- **Require `--dev` (or `AGENT_TEMPO_DEV_MODE=1`)** — production CLI
   treats them as unknown commands, by design.
-- **Resolve the ensemble** via `--ensemble <name>` flag → `CLAUDE_TEMPO_ENSEMBLE`
+- **Resolve the ensemble** via `--ensemble <name>` flag → `AGENT_TEMPO_ENSEMBLE`
   env var → `'default'`.
 - **Exit non-zero on Temporal connection failure** with `Cannot connect to
   Temporal at <addr>` on stderr.
@@ -233,6 +233,5 @@ detector — `selectOrphans` consults both PID files so `--dev daemon stop`
 can never SIGTERM the prod daemon (and vice versa). See ADR 0014 §5.7 for
 details and acceptance criteria.
 
-For three or more parallel environments, set `CLAUDE_TEMPO_HOME_OVERRIDE`
-to a custom path. v1 doesn't enumerate multi-profile setups; remember which
-override goes with which environment.
+For three or more parallel environments, set `AGENT_TEMPO_HOME_OVERRIDE`
+to a custom path. Remember which override goes with which environment.

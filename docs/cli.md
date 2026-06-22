@@ -40,6 +40,7 @@ agent-tempo <command> [options]
 > - `conduct` / `start` / `recruit` / `disband` → `agent-tempo up` · board `/recruit` · `/destroy`
 > - `pause` / `resume` → board `/pause` · `/play`
 > - `tui` (#789) → run `agent-tempo` (status + hints) or `agent-tempo command-center` (the live board)
+> - `migrate-from-claude-tempo` (#794) → removed post-cutover; the 1.x `~/.claude-tempo/` → `~/.agent-tempo/` home-dir shim is no longer needed after `upgrade-to-2`
 >
 > See [github.com/vinceblank/agent-tempo/issues/285](https://github.com/vinceblank/agent-tempo/issues/285) for the full migration table.
 

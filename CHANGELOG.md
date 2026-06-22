@@ -5,6 +5,131 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.1] - TBD
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@next`. Stable remains v1.7.0.
+>
+> ⚠ **Breaking changes release.** See the [1.7.0 → 2.0 Cutover Guide](docs/ops/v2-cutover.md)
+> before upgrading. The cutover is one-way — there is no automated rollback.
+
+### ⚠ Breaking changes
+
+This release breaks backward compatibility in five ways. Each is described below; details
+and upgrade steps are in [`docs/ops/v2-cutover.md`](docs/ops/v2-cutover.md). (#5 is an
+internal change that makes the cutover mandatory — operator-visible via the boot guard.)
+
+#### 1. Env vars: all `CLAUDE_TEMPO_*` → `AGENT_TEMPO_*`; `CLAUDE_TEMPO_DEBUG` removed (#792)
+
+All `CLAUDE_TEMPO_*` environment variables were renamed to `AGENT_TEMPO_*` during the
+1.x rebrand. 2.0 drops the 1.x compatibility shims that still accepted the old names —
+**only `AGENT_TEMPO_*` forms are recognized now.**
+
+`CLAUDE_TEMPO_DEBUG` is **removed with no replacement** — it only gated a benign internal
+log line and there is no `AGENT_TEMPO_DEBUG` equivalent. Remove it from your env; it is
+silently ignored in 2.0.
+
+**What to do:** audit shell profiles, `.env` files, CI configs, and reverse-proxy launch
+scripts for any remaining `CLAUDE_TEMPO_*` references and rename them.
+
+| Old name (1.x) | New name (2.0) |
+|---|---|
+| `CLAUDE_TEMPO_ENSEMBLE` | `AGENT_TEMPO_ENSEMBLE` |
+| `CLAUDE_TEMPO_CONDUCTOR` | `AGENT_TEMPO_CONDUCTOR` |
+| `CLAUDE_TEMPO_PLAYER_NAME` | `AGENT_TEMPO_PLAYER_NAME` |
+| `CLAUDE_TEMPO_DEV_MODE` | `AGENT_TEMPO_DEV_MODE` |
+| `CLAUDE_TEMPO_DEBUG` | *(removed — no replacement)* |
+| *(all others)* | Replace `CLAUDE_TEMPO_` prefix with `AGENT_TEMPO_` |
+
+#### 2. Config `httpToken` no longer honored — only `readToken` is read (#794)
+
+The legacy `httpToken` config field (the pre-3e-RBAC HTTP token) is no longer adopted
+at runtime. The auth layer now reads only `readToken` (T1) and `AGENT_TEMPO_HTTP_ADMIN_TOKEN`
+(T2+T3, env-only).
+
+> ⚠ **Operator-visible**: if you hard-coded an `httpToken` value into a reverse-proxy
+> Authorization header or a monitoring-tool config, **that token is now silently ignored.**
+> There is no lockout (the daemon auto-generates a fresh `readToken` on first 2.0 boot and
+> persists it to `~/.agent-tempo/config.json`) but any client or proxy configured with the
+> old token value will receive `401`. Update clients to read `readToken` from
+> `~/.agent-tempo/config.json` or supply `AGENT_TEMPO_HTTP_READ_TOKEN` explicitly.
+
+Also removed in this change:
+- `migrate-from-claude-tempo` CLI verb (back-compat shim for the v0.x→1.x home-dir migration — no longer relevant)
+- Legacy `claude-tempo:` host-identity prefix (only `agent-tempo:` is recognized)
+
+#### 3. Wire protocol 2.0 — legacy signals/queries/SAs pruned; cutover is mandatory (#788)
+
+The 2.0 worker removes all legacy back-compat signal/query/update tolerances that were
+keeping 1.x workflow histories replayable:
+
+- `pendingReset` query removed (folded into the `pendingIntake` combined query — the reset now rides that query's `pendingReset` field; the pre-#750 standalone query is gone)
+- V1-era `refresh` signal removed
+- Legacy search attribute dual-read (`ClaudeTempo*` → `AgentTempo*` fallback) removed
+- Stale `hostProfiles` compat field removed from MaestroState
+
+**A 2.0 worker CANNOT replay any 1.x-recorded workflow history.** All live ensembles
+must be fully cut over before the 2.0 daemon starts workers — the boot guard enforces
+this (see [§6 of the cutover guide](docs/ops/v2-cutover.md#6-boot-guard)). The `upgrade-to-2`
+verb on your 1.7.0 install is required; direct in-place upgrade is not supported.
+
+#### 4. TUI removed — operator surfaces are `command-center` and `dashboard` (#789)
+
+The Ink-based terminal TUI (`src/tui/`) is removed. The `tui` verb now routes through the
+removed-verb hint system with a migration message.
+
+**Replacement operator surfaces:**
+- **`agent-tempo command-center [ensemble]`** (aliases: `cc`, `board`) — live ensemble board + operator controls in Pi
+- **`agent-tempo dashboard`** — web dashboard (browser-based)
+- **Bare `agent-tempo`** — now runs status + bootstrap home (no TUI)
+
+#### 5. `patched()` markers stripped — 2.0 workflow code is a clean protocol-2 slate (#787)
+
+All 20 `patched()` determinism-versioning markers are removed. This is the internal change
+that makes the clean cutover mandatory (not in-place): there is no `deprecatePatch` ladder.
+The 2.0 worker is protocol-2 only.
+
+### Post-cutover re-attach: use `restart`, not `restore` (#868 / Refs #786)
+
+After `agent-tempo up --from-upgrade` recreates your ensemble, re-attach to migrated sessions
+via **per-player `restart`** — not `restore`.
+
+`restore` scans for sessions in the `detached` phase (orphaned-but-were-attached). Sessions
+created by `up --from-upgrade` start in the `booting` phase — `restore`'s orphan scan does
+not include `booting`, so it reports "0 orphans reattached" and leaves your ensemble
+apparently empty. `restart` has no phase gate for a skeleton with no current attachment and
+will correctly claim the new session.
+
+### Changed
+
+- **`agent-tempo` (bare) now shows status + bootstrap home** (#789) — the default
+  invocation no longer launches the TUI. It runs the six-step auto-provisioning bootstrap
+  (Temporal, search attributes, daemon) and then prints ensemble status and hint text.
+
+- **`up --from-upgrade` seeds continuity from the upgrade snapshot** (#786) — reads
+  `~/.agent-tempo/upgrade-snapshot-v1.json` written by `upgrade-to-2`, recreates all
+  sessions as fresh `protocol-2` workflows, and seeds `#334` state slots, schedules,
+  session IDs, and non-default model assignments. On success the snapshot is archived as
+  `upgrade-snapshot-v1.consumed.json`.
+
+- **2.0 boot guard** (#786) — the daemon boot preflight refuses to start workers if any
+  Running agent-tempo workflow lacks the `AgentTempoProtocol=2` stamp. Prevents silent
+  replay faults; prints the migration command.
+
+### Removed
+
+- Ink TUI (`src/tui/`) and `tui` CLI verb (#789) — use `command-center` or `dashboard`
+- `migrate-from-claude-tempo` CLI verb (#794) — 1.x home-dir migration shim, no longer needed
+- `CLAUDE_TEMPO_DEBUG` env var (#794) — benign-only log gate, no replacement
+- Legacy `httpToken` config field (#794) — superseded by `readToken` / `AGENT_TEMPO_HTTP_READ_TOKEN`
+- `pendingReset` Temporal query, V1 `refresh` signal, `ClaudeTempo*` SA dual-read, `hostProfiles` MaestroState compat field (#788)
+- All 20 `patched()` workflow determinism markers (#787)
+
+### Deferred to 2.0.0-beta.2
+
+- **#793 — tool-family MCP tool merges** — NOT in beta.1. The tool families are unchanged in beta.1 — all current tools remain. In beta.2 they ship merged behind a single `action`-style tool with the old names kept as aliases; the aliases drop at GA. Ruled out of beta.1 by architect (additive/non-breaking → no reason to rush it into the cutover beta).
+
+---
+
 ## [1.7.0-beta.12] - 2026-06-14
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
