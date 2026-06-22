@@ -340,10 +340,9 @@ export function createTempoClientCore(
           // agent — counting it produced confusing "(2 players)" rows on
           // a fresh ensemble with one real player. Mirrors the
           // `filterRealPlayers` rule used in StatusBar (cf6becd). Detect
-          // via the `AgentTempoPlayerType` memo (v1.8 SA diet; legacy-SA
-          // fallback via the dual-read helper), with a workflow-id-suffix
-          // fallback for the brief post-start window before visibility
-          // propagates.
+          // via the `AgentTempoPlayerType` memo (memo-only after the #788
+          // legacy-SA prune), with a workflow-id-suffix fallback for the
+          // brief post-start window before visibility propagates.
           const playerType = getPlayerType(wf);
           const isMaestroSession = playerType === 'maestro'
             || (wf.workflowId?.endsWith('-maestro') ?? false);
