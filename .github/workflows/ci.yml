@@ -512,12 +512,14 @@ jobs:
           EOF
 
   test-tui:
-    # Vitest suite (tests/tui + tests/client). Independent of Mocha, so it runs
-    # once across the Node matrix rather than per Mocha shard.
+    # TUI-only vitest suite (tests/tui/**). Independent of Mocha.
+    # Skipped on v2 because the TUI is deleted in #789 — tests/tui/ does not
+    # exist on that branch. Non-TUI vitest coverage on v2 is handled by the
+    # `test-vitest` job below (#866).
     runs-on: ubuntu-latest
     needs: [lint-test-ensemble, changes]
     # #354 + #355: skip on docs-only PRs and on push-to-main.
-    # Skip on v2 branch/PRs — TUI is deleted in #789 and vitest tests go with it.
+    # Skip on v2 branch/PRs — TUI is deleted in #789 and tests/tui/ goes with it.
     if: |
       ((github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
       || github.event_name == 'workflow_dispatch')
@@ -543,8 +545,44 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run Vitest (TUI + client)
+      - name: Run Vitest (TUI only)
         run: npm run test:tui
+
+  test-vitest:
+    # Non-TUI vitest suite — adapters, http, utils, tools, cli, config, etc.
+    # (#866) Fills the coverage gap introduced by #860: when test-tui is skipped
+    # on v2 (TUI deleted in #789), 140+ non-TUI vitest tests were ungated.
+    # This job runs on ALL branches including v2, ensuring those suites always gate.
+    runs-on: ubuntu-latest
+    needs: [lint-test-ensemble, changes]
+    # #354 + #355: skip on docs-only PRs and on push-to-main.
+    # NOTE: intentionally no v2 branch exclusion — this job must run on v2 PRs.
+    if: |
+      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    name: test-vitest (${{ matrix.node-version }})
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Vitest (non-TUI)
+        run: npm run test:vitest
 
   build-and-test-windows:
     # #150 — continuous Windows coverage for the EACCES regression on
@@ -683,6 +721,20 @@ jobs:
         node-version: [20, 22, 24]
     steps:
       - run: echo "docs-only PR — TUI vitest skipped"
+
+  test-vitest-noop:
+    # (#866) Companion noop for docs-only PRs — mirrors test-vitest's matrix name
+    # so branch protection required checks are satisfied on code-change-free PRs.
+    name: test-vitest (${{ matrix.node-version }})
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    steps:
+      - run: echo "docs-only PR — non-TUI vitest skipped"
 
   build-and-test-windows-noop:
     name: build-and-test-windows (shard-${{ matrix.shard }}, node-22)
