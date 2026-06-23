@@ -6,7 +6,7 @@
 #
 # Test strategy mirrors CI (ci.yml):
 #   - build-and-test: 2-shard × 3-node matrix (Mocha integration suite)
-#   - test-tui:       3-node matrix (Vitest pure-logic suite; name kept post-#789)
+#   - test-vitest:    3-node matrix (Vitest pure-logic suite; renamed from test-tui post-#789)
 #   - publish:        gates on both; builds, publishes to npm, creates GitHub Release
 
 name: Release
@@ -78,8 +78,8 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Rebalance when per-shard wall-clock drifts >20% between \`shard-1\` and \`shard-2\`. See \`test/README.md\`." >> "$GITHUB_STEP_SUMMARY"
 
-  test-tui:
-    # Vitest pure-logic suite (tests/) — mirrors CI's test-tui matrix exactly.
+  test-vitest:
+    # Vitest pure-logic suite (tests/) — mirrors CI's test-vitest matrix exactly.
     # Job name retained post-#789 (TUI deleted) to keep required-check names stable.
     runs-on: ubuntu-latest
     strategy:
@@ -109,7 +109,7 @@ jobs:
     # Gates on all 6 Mocha shard jobs + 3 Vitest jobs passing.
     # Builds once more (fresh artifact), then publishes to npm and creates the GitHub Release.
     runs-on: ubuntu-latest
-    needs: [build-and-test, test-tui]
+    needs: [build-and-test, test-vitest]
     permissions:
       contents: write  # needed to create GitHub Releases
 
