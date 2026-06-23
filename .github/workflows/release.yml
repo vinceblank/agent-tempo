@@ -103,7 +103,7 @@ jobs:
         run: npm run build
 
       - name: Run Vitest (pure-logic suite)
-        run: npm run test:tui
+        run: npm run test:vitest
 
   publish:
     # Gates on all 6 Mocha shard jobs + 3 Vitest jobs passing.
