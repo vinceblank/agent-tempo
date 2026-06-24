@@ -35,6 +35,7 @@ ${out.bold('Usage:')}
   agent-tempo <command> [options]
 
 ${out.bold('Commands:')}
+  ${out.cyan('home')}                     Bare landing (default): auto-provision, show status, print operator hints
   ${out.cyan('up')}                       Start infrastructure only — Temporal, daemon, MCP registration
   ${out.cyan('down')}                     Stop infrastructure; workflows stay parked for the next ${out.dim('up')}
   ${out.cyan('down --destroy [-y]')}      Terminate every workflow across every ensemble, then stop infrastructure
@@ -59,6 +60,7 @@ ${out.bold('Commands:')}
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('install-pi')}               Install the Pi extensions into Pi settings (or --project for .pi/settings.json)
   ${out.cyan('preflight')}                Run preflight checks only
+  ${out.cyan('version')}                  Print the installed version (alias: --version, -v)
   ${out.cyan('help')}                     Show this help message
 
 ${out.bold('Removed — use the command-center board')} ${out.dim('(agent-tempo command-center)')}:
