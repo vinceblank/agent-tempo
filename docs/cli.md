@@ -215,6 +215,16 @@ Requirements:
 - Daemon running (`agent-tempo daemon start`)
 - `AGENT_TEMPO_HTTP_ADMIN_TOKEN` for a **remote** daemon; loopback daemons grant full trust automatically (no token required) (#736)
 
+**Access tiers** (#791) — the board is subscription-friendly: the live view and operator controls need **no auth at all** on a local daemon, and the LLM planner runs on a Claude Pro/Max subscription with **zero API key** via in-session `/login`. The three independent tiers (not a strict ladder):
+
+| Tier | What it unlocks |
+|---|---|
+| **No auth** | board + operator controls (cue, pause, play, restart, destroy) — works out of the box on a local (loopback) daemon; no token or login required. |
+| **`/login`** | LLM planner on your Claude Pro/Max subscription — run /login inside the board to enable the planner (ask, handoff, recruit) with zero API key. |
+| **API key** | LLM planner on an API key — set ANTHROPIC_API_KEY before launch to run the planner against the Anthropic API. |
+
+The board never blocks on the planner tier: launch it with nothing configured and you get the full observe-and-control surface immediately; `/login` or an API key only adds the natural-language planner on top.
+
 Install the Pi extensions first (once per machine or per project):
 
 ```bash
