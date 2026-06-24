@@ -67,10 +67,10 @@ bootstraps a **brand-new** `agentSessionWorkflow` run under the same derived id
   workflow init **whenever the session starts in `booting`** (i.e. no
   `input.attachmentId` handoff). Clear it (`= null`) in the `claimAttachment`
   fresh-claim branch (`session.ts:921`, right where `setPhase('attached')` runs).
-- Add a `BOOTING_DEADLINE_MS` constant (propose **120_000** — generous enough for
-  a cold Claude Code launch + dev-channel dialog, tight enough to surface a real
-  hang fast; make it overridable via env for tests, mirroring existing
-  `*_DEADLINE_MS` knobs).
+- Add a `BOOTING_DEADLINE_MS` constant — **default 180_000** (architect ruling
+  OQ-3: 120s is the floor; 180s clears a cold Claude Code launch + dev-channels
+  dialog + cross-host recruit handshake). Keep it **env-overridable** (for tests
+  and tuning), mirroring existing `*_DEADLINE_MS` knobs.
 - In `nextDeadlineMs()` add:
   ```ts
   if (phase === 'booting' && bootingSince) {
@@ -80,44 +80,64 @@ bootstraps a **brand-new** `agentSessionWorkflow` run under the same derived id
 - In the main loop's deadline-expiry section (alongside the lease-expiry reap at
   `session.ts:1711-1722`), add a booting-timeout branch: if still `booting` and
   `bootingSince + BOOTING_DEADLINE_MS <= now`:
-  - `lastDetachReason = 'boot-timeout'`
-  - flip to a terminal phase (see **OQ-1** — recommend `gone`)
+  - `lastDetachReason = 'boot-timeout'` — **add `'boot-timeout'` to the
+    `DetachReason` closed union** (`types.ts:106-116`: currently `user-stop |
+    restart | heartbeat-timeout | superseded | agent-exited | spawn-failed |
+    destroy | force | reconnect-exhausted | continued-as-new`).
+  - flip to terminal **`gone`** (architect ruling OQ-1 — NOT a new `failed` enum;
+    that would be an SA/wire-drift change across every phase renderer).
+  - **write the typed close-reason MEMO** `AgentTempoCloseReason: 'boot-timeout'`
+    on this terminal completion — this is the SAME memo OQ-2's bootstrap guard
+    reads (one mechanism serves both the audit reason and the orphan tombstone).
   - **notify the recruiter**: `input.metadata.recruitedBy` is available
     (`session.ts:640` already uses it as the initial-message `from`). Post a
-    system message to the recruiter (and/or conductor) — e.g. enqueue/deliver
-    "recruit of **<name>** never attached within 120s — failed; the spawned
-    process (if any) was swept." Reuse the existing conductor-notify pattern.
+    system message to the recruiter (and/or conductor) — e.g. "recruit of
+    **<name>** never attached within 180s — failed; the spawned process (if any)
+    was swept." Reuse the existing conductor-notify pattern.
   - best-effort fire `hardTerminateAttachment` (it's a no-op if nothing launched;
     if the orphan *did* come up between spawn and timeout, the command-line
     search reaps it) before COMPLETE.
 
-#### 1b — Late-orphan re-registration guard (the harder half)
+#### 1b — Late-orphan re-registration guard (ARCHITECT-RESOLVED, OQ-2)
 
 The orphan must refuse to re-register when it finally launches. The kill path
-can't help (timing). Options, in preference order — **needs OQ-2 micro-ruling**:
+can't help (timing). The bootstrap self-guard is approved — **but it is NOT
+"cheap, no new infra."** The architect verified the machinery: `destroyUpdate`
+returns void, and a post-completion `describe()` exposes only `status.name` — so
+it **cannot** distinguish a destroy/boot-timeout close from any other close.
+Status alone is not a sufficient discriminator. The resolved mechanism is three
+parts:
 
-- **(Recommended) Bootstrap precondition + close-reason tombstone.** On
-  `destroy`/boot-timeout COMPLETE, finish the workflow with a typed result/reason
-  (e.g. `closeReason: 'destroyed'`). The recruited process's bootstrap, *before*
-  `client.workflow.start('agentSessionWorkflow', …)`, does one `describe()` on
-  the derived id; if the latest run closed with `destroyed`/`boot-timeout` within
-  a short TTL, it logs "recruit was cancelled — exiting" and `process.exit(0)`
-  instead of starting a new run. Cheap, no new infra; the only nuance is the TTL
-  window vs. a legitimate fast re-recruit of the same name.
-- **(Alt) `WorkflowIdReusePolicy`.** Start sessions with a reuse policy that
-  rejects duplicate IDs while a tombstone run is recent. Heavier; interacts with
-  the existing restart/migrate re-create flow — verify it doesn't break
-  legitimate revives.
-- **(Complementary) Parent-liveness self-exit.** Extend the existing
-  parent-death-watchdog (`utils/parent-death-watchdog.ts`, #604) so a recruited
-  child that loses its spawner (or whose spawn record was revoked) self-exits.
-  Helps the mis-route/slow-launch class (#20) but doesn't by itself stop
-  re-registration after a clean destroy — pair with the bootstrap check.
+1. **Persist a typed close-reason MEMO** on BOTH the `destroy` path and the
+   boot-timeout path: `AgentTempoCloseReason: 'destroyed' | 'boot-timeout'`. A
+   memo survives workflow completion and is readable via `describe()` (a search
+   attribute would also work, but a memo is the lighter choice and needs no SA
+   registration). This is the same memo Item 1a writes on boot-timeout.
+2. **Bootstrap precondition** at the recruited process's workflow-start site
+   (`server.ts:145` — `client.workflow.start('agentSessionWorkflow', { …,
+   workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING })`). BEFORE
+   that start: `describe()` the derived id and **self-exit (`process.exit(0)`,
+   log "recruit was cancelled — exiting") iff (NO running run) AND (the last
+   closed run's `AgentTempoCloseReason` ∈ {`destroyed`, `boot-timeout`}) within a
+   short TTL.** The **running-run × close-reason PAIR is the discriminator** —
+   neither half alone is safe.
+3. **Legit restart/migrate stay safe by construction.** Those flows create the
+   new run **tool-side first**, so the late process's `start` with `USE_EXISTING`
+   finds a RUNNING run and simply attaches to it — it never reaches the tombstone
+   branch (which requires *no* running run). This is exactly why the pair
+   discriminator is required and why a status-only check would false-positive.
 
-**Recommendation:** ship **1a + the bootstrap-precondition guard (first option)**.
-That fully closes the observed incident (loud failure + no re-registering orphan)
-with the least new machinery. Defer the reuse-policy hardening unless OQ-2 says
-otherwise.
+**Deferred:** the `WorkflowIdReusePolicy` alternative (reject-duplicate while a
+tombstone is recent) — heavier and overlaps the restart/migrate re-create flow;
+not needed given the memo + precondition pair.
+
+**Complementary (optional, not required to close #704):** extend the existing
+parent-death-watchdog (`utils/parent-death-watchdog.ts`, #604) so a recruited
+child that loses its spawner self-exits — helps the mis-route/slow-launch class
+(#20) but does not, alone, stop re-registration after a clean destroy.
+
+**Ship:** 1a + the 3-part memo/precondition guard above. Together they give a loud
+failure AND no re-registering orphan, which fully closes the observed incident.
 
 ---
 
@@ -189,25 +209,34 @@ call sites produce identical stage-state transitions before/after.
 
 ---
 
-## Open questions (architect micro-rulings)
+## Open questions — RESOLVED (architect, 2026-06-24)
 
-- **OQ-1 — terminal phase for boot-timeout.** `AttachmentPhase` (`types.ts:52-59`)
-  is `booting|attached|processing|awaiting|draining|detached|gone` — **there is
-  no `failed`**. "Flip booting→failed" therefore needs a choice:
-  - **(Recommended) reuse `gone`** + `lastDetachReason='boot-timeout'`. Zero
-    downstream blast radius — `gone` is already the terminal dormant phase every
-    consumer (dashboard, command-center glyphs, scanners, `ensemble` tool)
-    understands. The "failed" semantics ride on the detach reason + recruiter
-    notification.
-  - **(Alt) add a `failed` phase.** Operator-distinct, but it's an additive SA
-    enum change touching the `AgentTempoAttachmentState` SA and every renderer.
-    Bigger; only worth it if operators need to visually distinguish
-    boot-timeout from a normal teardown.
-- **OQ-2 — orphan-guard mechanism.** Bootstrap-precondition tombstone (rec) vs.
-  `WorkflowIdReusePolicy` vs. both. Drives 1b's scope.
-- **OQ-3 — `BOOTING_DEADLINE_MS` value.** 120s proposed. Confirm it clears the
-  worst legitimate cold-launch (Claude Code dev-channels dialog, slow host,
-  cross-host recruit handshake) without masking a real hang.
+- **OQ-1 — terminal phase for boot-timeout. ✅ RESOLVED:** reuse terminal `gone` +
+  `lastDetachReason='boot-timeout'` (add `'boot-timeout'` to the `DetachReason`
+  closed union). NOT a new `failed` enum — that would be an SA/wire-drift change
+  across every phase renderer. The boot-timeout completion writes the same
+  `AgentTempoCloseReason` memo OQ-2's guard reads. Folded into Item 1a.
+- **OQ-2 — orphan-guard mechanism. ✅ RESOLVED:** bootstrap self-guard, but with
+  the full 3-part machinery (typed close-reason memo + `describe()` precondition
+  at `server.ts:145` + running-run × close-reason pair discriminator). The
+  "cheap, no new infra" framing was struck — status-only can't discriminate a
+  destroy close. `WorkflowIdReusePolicy` alt deferred. Folded into Item 1b.
+- **OQ-3 — `BOOTING_DEADLINE_MS` value. ✅ RESOLVED:** 120s is the floor; default
+  **180s**, env-overridable. Hard requirement: the handoff path (restart/migrate
+  carrying `attachmentId`) must NOT arm the watchdog. Folded into Item 1a + the
+  test plan.
+
+## ⚠ Dependency / risk flag (OQ-3 follow-on — NOT a blocker for this brief)
+
+If a recruited spawn can **block on the interactive trust / dev-channels dialog**,
+then **no** attach deadline is safe — a genuinely-launching session that's parked
+on the dialog would read as a boot-timeout and get swept. This ties to the known
+recruit-dialog issue (`/clear` fires no session hook; dev-channels bypass — see
+the recruit-message-loss class). **Action:** confirm recruited sessions bypass the
+dialog (non-interactive / pre-accepted) before the 180s default goes live. Tracked
+as a **separate concern** — it does not block authoring/merging this spec, but eng
+should verify it during implementation (and we may need the watchdog gated behind
+"dialog-bypass confirmed" for interactive `claude-code` specifically).
 
 ## Test plan
 - **Unit (vitest, `tests/`):** `nextDeadlineMs()` returns a finite booting
@@ -223,10 +252,20 @@ call sites produce identical stage-state transitions before/after.
     watchdog.
   - Item 2 canary: `session-phase-processing.test.ts:54` stays green with the
     5-min cap removed.
-- **Orphan guard:** simulate destroy-while-booting then a late bootstrap of the
-  same derived id → bootstrap self-exits, no new run created.
-- **Drift:** update `docs/WIRE-PROTOCOL.md` only if OQ-1 adds a phase value;
-  reuse-`gone` needs no wire change.
+- **Orphan guard (the OQ-2 discriminator matrix):**
+  - destroy-while-booting → terminal close writes `AgentTempoCloseReason:
+    'destroyed'`; a late bootstrap of the same derived id sees NO running run +
+    tombstone memo within TTL → self-exits, no new run created.
+  - boot-timeout → `AgentTempoCloseReason: 'boot-timeout'` → same self-exit.
+  - **restart/migrate must NOT self-exit:** with the new run created tool-side
+    first, the late `start(USE_EXISTING)` finds a RUNNING run → attaches. Assert
+    the running-run half of the pair short-circuits the tombstone branch.
+  - TTL-expired tombstone (old closed run, legit re-recruit of same name) → does
+    NOT self-exit.
+- **Drift:** `DetachReason` gains `'boot-timeout'` — no wire-protocol signal/query
+  rename, so `docs/WIRE-PROTOCOL.md` needs no change; reuse-`gone` adds no phase
+  value. The `AgentTempoCloseReason` memo is new — note it in concepts/docs if
+  any consumer reads it beyond the bootstrap guard (currently none).
 
 ## Sequencing
 1. #886 alarm (separate, lands first/with — diagnostic net).
