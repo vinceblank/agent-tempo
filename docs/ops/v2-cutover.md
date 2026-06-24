@@ -228,8 +228,8 @@ CANNOT replay beta.1-created session workflows.**
 
 #### Why
 
-beta.2 batches several workflow-shape changes (including booting-watchdog
-deadlines and main-loop cleanup from #704) into a single replay-break. The
+beta.2 batches several workflow-shape changes (booting-watchdog deadlines from
+#704, plus the batched main-loop wake-discipline cleanup) into a single replay-break. The
 `AgentTempoProtocol` stamp is major-only — all 2.0 workflows carry `= 2`
 regardless of which beta they were created in, so the worker has no per-beta
 fencing. A beta.2 worker replaying a beta.1-recorded history encounters new
@@ -261,10 +261,15 @@ pre-release testing. It is NOT a sign that anything is wrong with your data.
    agent-tempo up [--lineup <name>]
    ```
 
-   Sessions start fresh. `#334` state slots are workflow-side state and survive
-   because they ride the `save_state` workflow memo — they are NOT lost when
-   sessions are destroyed. If you saved state before the hop, seed your new
-   sessions with `restart` + `loadFromState: true`.
+   Sessions start fresh. **A plain shutdown+up does NOT carry `#334` state into
+   the new sessions.** Slots live on each session workflow's in-memory queryable
+   state and are not automatically inherited by a new session. The prior run's
+   slots remain queryable via `fetch_state` within Temporal's history-retention
+   window, but fresh sessions start clean.
+
+   **Save anything you need before the hop.** If you want state to survive,
+   use `restart` with `loadFromState: true` instead of a plain `up` — or
+   rely on the `upgrade-to-2` snapshot path (which carries slots explicitly).
 
 #### This is NOT the 1.7.0 → 2.0 cutover
 

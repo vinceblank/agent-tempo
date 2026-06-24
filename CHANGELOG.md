@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > ⚠ **Beta.1 → beta.2 requires a drain-and-recreate.** Beta.2 batches workflow-shape
 > changes that cannot replay beta.1 histories. Drain your ensemble, upgrade, and `up`
 > again — see [§8 of the cutover guide](docs/ops/v2-cutover.md#8-beta-upgrade-notes)
-> for the three-step procedure. (`#334` state slots survive the hop.)
+> for the three-step procedure. ⚠ `#334` state slots do NOT auto-carry — save
+> anything you need before the hop.
 
 ### Added
 
@@ -25,10 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **Recruit hang + late orphan prevention (#704)** *(pending — 2 PRs)* — a
   booting-watchdog deadline (90–120 s) converts a silent indefinite `pending` hang
-  into a loud, actionable failure message to the recruiter; a companion orphan-guard
-  persists the spawn `{hostname, pid}` on workflow state at spawn time so `destroy`
-  and lease-reap can `hardTerminate` a pre-attach process, preventing the late-spawn
-  collision. Closes the root cause of observed ~9 h recruit hangs.
+  into a loud, actionable failure message to the recruiter; a bootstrap
+  re-registration self-guard (close-reason tombstone) stops the late-spawned orphan
+  process from re-registering a colliding workflow. Closes the root cause of
+  observed ~9 h recruit hangs.
 
 - **CLI help: `home` and `version` commands now documented (#879, PR #882)** — the
   two verbs were functional but absent from `agent-tempo --help` output.
