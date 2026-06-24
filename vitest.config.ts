@@ -51,6 +51,9 @@ export default defineConfig({
       // schema module; pure fs round-trip + validation guards).
       'tests/upgrade/**/*.test.ts',
     ],
+    // Scrub ambient AGENT_TEMPO_*/CLAUDE_TEMPO_* env vars before each file
+    // and restore the clean baseline after each test (#744).
+    setupFiles: ['tests/setup.ts'],
     environment: 'node',
     globals: false,
     // Keep these tests fast — no Ink, no Temporal, no I/O beyond mocks.
