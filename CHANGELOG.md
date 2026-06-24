@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.2] - TBD
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.7.0.
+>
+> ⚠ **Beta.1 → beta.2 requires a drain-and-recreate.** Beta.2 batches workflow-shape
+> changes that cannot replay beta.1 histories. Drain your ensemble, upgrade, and `up`
+> again — see [§8 of the cutover guide](docs/ops/v2-cutover.md#8-beta-upgrade-notes)
+> for the three-step procedure. (`#334` state slots survive the hop.)
+
+### Added
+
+- **Tool-family merges with aliases (#793)** *(pending)* — five MCP tool families
+  collapsed into canonical action-dispatch tools (`coat_check`, `state`, `schedule`,
+  `stage`, `gate`); all existing tool names kept as forwarding aliases through GA.
+  Reduces the MCP tool count at the canonical level; aliases drop at GA.
+
+### Fixed
+
+- **Recruit hang + late orphan prevention (#704)** *(pending — 2 PRs)* — a
+  booting-watchdog deadline (90–120 s) converts a silent indefinite `pending` hang
+  into a loud, actionable failure message to the recruiter; a companion orphan-guard
+  persists the spawn `{hostname, pid}` on workflow state at spawn time so `destroy`
+  and lease-reap can `hardTerminate` a pre-attach process, preventing the late-spawn
+  collision. Closes the root cause of observed ~9 h recruit hangs.
+
+- **CLI help: `home` and `version` commands now documented (#879, PR #882)** — the
+  two verbs were functional but absent from `agent-tempo --help` output.
+
+### Changed
+
+- **Dead pre-v1.8 memo-absence fallback removed (#874, PR #881)** — the legacy
+  code path in the outbox cloud scan that guessed session state when the v1.8 search-
+  attribute schema was absent is deleted. No operator action required; the path was
+  unreachable for any session that can survive the 2.0 protocol-2 cutover.
+
+- **Vitest env-hardening (#744)** *(pending)* — `tests/setup.ts` wired via
+  `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*` /
+  `CLAUDE_TEMPO_*` env keys around every suite, eliminating false-negative test
+  clusters caused by stale ambient vars from the invoking shell.
+
+- **Command-center access tiers (#791)** *(pending)* — details TBD when landed.
+
+### Observability
+
+- **#886** *(pending)* — details TBD when landed.
+
+---
+
 ## [2.0.0-beta.1] - 2026-06-22
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.7.0.
