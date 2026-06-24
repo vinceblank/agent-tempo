@@ -2165,6 +2165,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
             adapterId: currentAttachment.adapterId,
           };
           lastDetachReason = 'spawn-failed';
+          // #704 Item 2 — no `wakeEpoch++` needed here despite clearing
+          // `nextDeadlineMs()` inputs (currentAttachment/processingSince/draining):
+          // this rollback runs INLINE in the main-loop body (outbox dispatch), not
+          // in a signal/update handler, so the very next loop iteration recomputes
+          // `nextDeadlineMs()` before the next `condition()` wait. (The bump
+          // discipline is for HANDLERS that mutate these while the loop is parked.)
           currentAttachment = null;
           inFlightMessages.clear();
           processingSince = null;
