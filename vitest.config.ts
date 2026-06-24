@@ -64,5 +64,17 @@ export default defineConfig({
     globals: false,
     // Keep these tests fast — no Ink, no Temporal, no I/O beyond mocks.
     testTimeout: 5000,
+    // #894 — cap concurrent vitest worker threads to prevent the vite-worker
+    // spawn race where `setupFiles` URL resolution fails under heavy
+    // parallelism ("Failed to load url tests/setup.ts"). At 132+ test files,
+    // unbounded spawning overwhelms Vite's internal module transformer; a cap
+    // of 4 spreads the burst without meaningfully serialising the suite
+    // (pure-logic tests complete in <15ms each). Hits CI Linux too, not just
+    // Windows-local (#886 CI run). See also: dashboard/vitest.config.ts.
+    poolOptions: {
+      threads: {
+        maxThreads: 4,
+      },
+    },
   },
 });

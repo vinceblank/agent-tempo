@@ -31,5 +31,13 @@ export default defineConfig({
     //   - `tests-overflow/*.overflow.spec.ts` runs via `npm run test:overflow`
     //     (PR-v0 of #461 — see `dashboard/tests-overflow/README.md`)
     exclude: ['node_modules/**', 'dist/**', 'e2e/**', 'tests-overflow/**'],
+    // #894 — cap concurrent vitest worker threads to prevent the vite-worker
+    // spawn race where setupFiles URL resolution fails under heavy parallelism.
+    // Mirrors the cap in root vitest.config.ts. See also: ../vitest.config.ts.
+    poolOptions: {
+      threads: {
+        maxThreads: 4,
+      },
+    },
   },
 });
