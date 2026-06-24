@@ -10,5 +10,6 @@
     "noImplicitAny": false
   },
   "include": ["*.ts"],
-  "exclude": []
+  "comment": "enumerate-tool-names.ts imports ../src (for the surface-drift gate) and is run via `npx tsx`, never compiled to dist/scripts — excluded so its src import doesn't drag all of src under this rootDir.",
+  "exclude": ["enumerate-tool-names.ts"]
 }

@@ -222,8 +222,9 @@ researcher calls `coat_check_put` to stash the artifact on per-ensemble Maestro 
 back a ticket id, and includes it on a normal `cue` via the `attachmentTicket` field. The
 engineer sees the ticket on their `recall` row and calls `coat_check_get` to pull the body.
 
-Four MCP tools: `coat_check_put` / `coat_check_get` / `coat_check_list` / `coat_check_evict`.
-Three guarantees worth remembering:
+Four actions on the canonical `coat_check` tool: `action` = `put` / `get` / `list` /
+`evict` (#793). The legacy `coat_check_put` / `coat_check_get` / `coat_check_list` /
+`coat_check_evict` names remain as forwarding aliases. Three guarantees worth remembering:
 
 - **Bounded storage**: max 20 entries × 32 KiB content per ensemble (640 KiB aggregate). The
   21st put rejects with `CoatCheckSlotsFull` listing the oldest 3 ticket ids — caller waits
@@ -263,8 +264,9 @@ Backed by a durable `claudeSchedulerWorkflow` — survives restarts. Supports:
 - `every` — fire repeatedly on an interval
 - `cron` — fire on a cron expression with optional IANA `timezone`
 
-Cron schedules use `croner` for expression parsing and next-fire computation. Managed via
-`schedule`, `unschedule`, and `schedules` tools.
+Cron schedules use `croner` for expression parsing and next-fire computation. Managed via the
+canonical `schedule` tool with `action` = `create` (default) / `cancel` / `list` (#793); the
+legacy `unschedule` / `schedules` names remain as forwarding aliases.
 
 ---
 
@@ -281,7 +283,9 @@ for later reuse.
 ## Conductor-only features
 
 **Quality Gate** — A named checklist of criteria a conductor tracks to verify a task is
-complete. Created via `quality_gate`, evaluated via `evaluate_gate`, listed via `gates`. Each
+complete. Defined and listed via the canonical `gate` tool (`action` = `define` / `list`,
+#793; legacy `quality_gate` / `gates` remain as forwarding aliases), and evaluated via the
+separate `evaluate_gate` tool (a runtime op, deliberately not folded into `gate`). Each
 criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived
 automatically (`all passed → passed`, `any failed → failed`, else `open`). Gates are stored in
 the conductor workflow and survive `continueAsNew`.
@@ -294,8 +298,9 @@ records: player, path, branch, gitRoot, createdAt, createdBy). See
 [orchestration.md — When to use worktrees](orchestration.md#when-to-use-worktrees) for
 heuristics on when worktrees pay off vs. are overkill.
 
-**Stage** — A fan-out/fan-in tracking primitive. Created via `stage`, listed via `stages`,
-cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a
+**Stage** — A fan-out/fan-in tracking primitive. Managed via the canonical `stage` tool with
+`action` = `create` (default) / `list` / `cancel` (#793); the legacy `stages` / `cancel_stage`
+names remain as forwarding aliases. Each stage tracks a set of players; when a tracked player sends a
 `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When
 all players have reported, the conductor is notified. If `failurePolicy` is `'halt'` (default),
 a blocker from any player fails the entire stage. Stages survive `continueAsNew`.

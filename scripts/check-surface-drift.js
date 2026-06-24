@@ -21,6 +21,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -63,35 +64,49 @@ function normalizeCli(s) {
 // ── 1. MCP Tools ──────────────────────────────────────────────────────────────
 
 function extractMcpToolsFromSource() {
-  const dir = path.join(ROOT, 'src', 'tools');
-  const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.ts') && f !== 'descriptor.ts');
-
-  // #707 — refuse to run the diff off an empty enumeration. If src/tools
-  // yields zero .ts files the walk is broken (wrong path / empty checkout /
-  // a Windows `**`-glob that silently matched nothing) — failing loud here
-  // beats a misleading drift report built on an empty source set.
-  if (files.length === 0) {
+  // #793 §6 hardening — enumerate the ACTUAL registered tool names from
+  // `buildAllTempoTools()` output (via scripts/enumerate-tool-names.ts), NOT a
+  // source-regex scrape. The tool-family merge (#793) registers canonical tools
+  // plus forwarding aliases; a `name: '...', description:` regex silently
+  // under-counts any alias authored outside that exact adjacency — a #707-class
+  // "scans nothing, reports clean" hazard. Building the list is immune to
+  // authoring style: if a tool is registered, it's counted.
+  let raw;
+  try {
+    raw = execSync('npx tsx scripts/enumerate-tool-names.ts', {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    // FAIL-CLOSED — if we can't enumerate, we can't prove the surface is clean.
+    // Surface the underlying tsx/build error rather than passing as "clean".
+    const detail = (err && (err.stderr || err.message)) || String(err);
     throw new Error(
-      'check-surface-drift: enumerated 0 .ts files under src/tools — the ' +
-      'source walk is broken. Refusing to diff against an empty scan. See #707.',
+      'check-surface-drift: failed to enumerate MCP tool names via ' +
+      `scripts/enumerate-tool-names.ts. Refusing to diff against an empty scan. See #793/#707.\n${detail}`,
     );
   }
 
-  const tools = new Set();
-  for (const file of files) {
-    const src = fs.readFileSync(path.join(dir, file), 'utf8');
-    // Post-MD-B (Phase 1): each tool is a `build<X>Tool(...): TempoToolDescriptor`
-    // factory returning `{ name: '<tool>', description: ... }`. Match the
-    // descriptor's `name` field anchored by the immediately-following
-    // `description:` key — this avoids picking up unrelated `name:` properties
-    // (e.g. inside handler bodies or param schemas). Replaces the pre-MD-B
-    // `defineTool(server, 'name', …)` extraction (defineTool no longer exists).
-    for (const m of src.matchAll(/name:\s*'([^']+)',\s*description:/g)) {
-      tools.add(m[1]);
-    }
+  let names;
+  try {
+    names = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      'check-surface-drift: enumerate-tool-names.ts did not emit valid JSON. ' +
+      `Got: ${raw.slice(0, 200)}`,
+    );
   }
-  return tools;
+
+  // #707 — a check that scans nothing must never report success.
+  if (!Array.isArray(names) || names.length === 0) {
+    throw new Error(
+      'check-surface-drift: enumerated 0 MCP tools from buildAllTempoTools() — ' +
+      'the build enumeration is broken. Refusing to diff against an empty scan. See #707.',
+    );
+  }
+
+  return new Set(names);
 }
 
 // ── 2. CLI Commands ───────────────────────────────────────────────────────────
