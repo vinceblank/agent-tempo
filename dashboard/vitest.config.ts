@@ -23,7 +23,14 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: ['./tests/setup.ts'],
+    // Absolute path so this always resolves to dashboard/tests/setup.ts
+    // regardless of Vite's server root. The `agent-tempo → ../src` alias causes
+    // Vite to treat the repo root as its module-serve root; a relative
+    // './tests/setup.ts' then resolves to the ROOT's tests/setup.ts (added by
+    // #885), not this file — and that URL-based load races intermittently under
+    // worker-thread parallelism (#894). An absolute path bypasses the URL
+    // transformer entirely: Node loads the file directly, no race possible.
+    setupFiles: [fileURLToPath(new URL('./tests/setup.ts', import.meta.url))],
     css: true,
     // Exclude Playwright specs — they boot a real HTTP server + spawn
     // chromium and don't run under jsdom. Two suites:
@@ -31,5 +38,13 @@ export default defineConfig({
     //   - `tests-overflow/*.overflow.spec.ts` runs via `npm run test:overflow`
     //     (PR-v0 of #461 — see `dashboard/tests-overflow/README.md`)
     exclude: ['node_modules/**', 'dist/**', 'e2e/**', 'tests-overflow/**'],
+    // Belt-and-suspenders: cap concurrent workers too, so even if a future
+    // Vitest version reverts to URL-resolution for absolute paths, the burst
+    // doesn't recreate the race. 4 threads ≫ dashboard's small test count.
+    poolOptions: {
+      threads: {
+        maxThreads: 4,
+      },
+    },
   },
 });
