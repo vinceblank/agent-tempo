@@ -21,7 +21,6 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -64,49 +63,58 @@ function normalizeCli(s) {
 // ── 1. MCP Tools ──────────────────────────────────────────────────────────────
 
 function extractMcpToolsFromSource() {
-  // #793 §6 hardening — enumerate the ACTUAL registered tool names from
-  // `buildAllTempoTools()` output (via scripts/enumerate-tool-names.ts), NOT a
-  // source-regex scrape. The tool-family merge (#793) registers canonical tools
-  // plus forwarding aliases; a `name: '...', description:` regex silently
-  // under-counts any alias authored outside that exact adjacency — a #707-class
-  // "scans nothing, reports clean" hazard. Building the list is immune to
-  // authoring style: if a tool is registered, it's counted.
-  let raw;
-  try {
-    raw = execSync('npx tsx scripts/enumerate-tool-names.ts', {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (err) {
-    // FAIL-CLOSED — if we can't enumerate, we can't prove the surface is clean.
-    // Surface the underlying tsx/build error rather than passing as "clean".
-    const detail = (err && (err.stderr || err.message)) || String(err);
+  // DEPENDENCY-FREE source scan. The CI `lint-surface-drift` job is a
+  // lightweight, no-`node_modules` job — it runs `node scripts/check-surface-drift.js`
+  // with nothing installed — so this check must NOT import the source graph.
+  //
+  // The #793 §6 hardening briefly enumerated names from `buildAllTempoTools()`
+  // via `npx tsx scripts/enumerate-tool-names.ts`, but that needs the full
+  // dependency tree (zod / @temporalio) and died with `Cannot find module 'zod'`
+  // in the no-deps CI job — breaking the gate for every PR. Per the #793 brief's
+  // own ratified fallback ("if the import-based approach is too heavy, the
+  // literal-object rule is the mandatory interim guard"), we scrape
+  // `name: '...', description:` literals from source instead. The #793 canonical
+  // tools AND their forwarding aliases are all authored as explicit object
+  // literals with adjacent `name:`/`description:` fields precisely so this regex
+  // sees every one — keep them that way (do NOT loop-generate alias descriptors,
+  // or this scan will under-count them).
+  const dir = path.join(ROOT, 'src', 'tools');
+  const files = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.ts') && f !== 'descriptor.ts');
+
+  // #707 — refuse to diff off an empty file enumeration (broken walk / wrong
+  // path / empty checkout): a check that scans nothing must never report clean.
+  if (files.length === 0) {
     throw new Error(
-      'check-surface-drift: failed to enumerate MCP tool names via ' +
-      `scripts/enumerate-tool-names.ts. Refusing to diff against an empty scan. See #793/#707.\n${detail}`,
+      'check-surface-drift: enumerated 0 .ts files under src/tools — the ' +
+      'source walk is broken. Refusing to diff against an empty scan. See #707.',
     );
   }
 
-  let names;
-  try {
-    names = JSON.parse(raw);
-  } catch {
+  const tools = new Set();
+  for (const file of files) {
+    const src = fs.readFileSync(path.join(dir, file), 'utf8');
+    // Each tool is a `build<X>Tool(...): TempoToolDescriptor` factory returning
+    // `{ name: '<tool>', description: ... }`. Anchor on the `description:` key
+    // immediately after `name:` so unrelated `name:` props inside handler
+    // bodies or param schemas aren't picked up.
+    for (const m of src.matchAll(/name:\s*'([^']+)',\s*description:/g)) {
+      tools.add(m[1]);
+    }
+  }
+
+  // #707 (companion to the file-count guard) — a non-zero file set that yields
+  // ZERO tool names means the descriptor shape changed and the regex stopped
+  // matching. Fail loud rather than reporting a spuriously-clean empty diff.
+  if (tools.size === 0) {
     throw new Error(
-      'check-surface-drift: enumerate-tool-names.ts did not emit valid JSON. ' +
-      `Got: ${raw.slice(0, 200)}`,
+      'check-surface-drift: scanned ' + files.length + ' src/tools file(s) but ' +
+      "matched 0 tool names — the `name: '…', description:` descriptor shape " +
+      'likely changed. Refusing to diff against an empty scan. See #707.',
     );
   }
 
-  // #707 — a check that scans nothing must never report success.
-  if (!Array.isArray(names) || names.length === 0) {
-    throw new Error(
-      'check-surface-drift: enumerated 0 MCP tools from buildAllTempoTools() — ' +
-      'the build enumeration is broken. Refusing to diff against an empty scan. See #707.',
-    );
-  }
-
-  return new Set(names);
+  return tools;
 }
 
 // ── 2. CLI Commands ───────────────────────────────────────────────────────────
