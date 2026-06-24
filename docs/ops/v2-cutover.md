@@ -216,3 +216,66 @@ run `upgrade-to-2` on your 1.7.0 install, then reinstall 2.0.
 | beta.1 safety-core checklist | `docs/design/v2-beta1-checklist.md` §1 |
 | `up --from-upgrade` implementation | `#786` |
 | GA round-trip CI gate | `#796` |
+
+---
+
+## 8. Beta upgrade notes
+
+### Upgrading 2.0.0-beta.1 → 2.0.0-beta.2
+
+**beta.2 requires a drain-and-recreate of your ensemble. The beta.2 worker
+CANNOT replay beta.1-created session workflows.**
+
+#### Why
+
+beta.2 batches several workflow-shape changes (booting-watchdog deadlines from
+#704, plus the batched main-loop wake-discipline cleanup) into a single replay-break. The
+`AgentTempoProtocol` stamp is major-only — all 2.0 workflows carry `= 2`
+regardless of which beta they were created in, so the worker has no per-beta
+fencing. A beta.2 worker replaying a beta.1-recorded history encounters new
+deterministic branch points that were absent when the history was written and
+throws **TMPRL1100 (nondeterminism error)**.
+
+This matches the documented "betas may break — restart" expectation for 2.0
+pre-release testing. It is NOT a sign that anything is wrong with your data.
+
+#### What to do
+
+1. **Drain and destroy your ensemble** before upgrading:
+
+   ```bash
+   agent-tempo shutdown          # drains outboxes, then destroys
+   # or for a hard stop:
+   agent-tempo down
+   ```
+
+2. **Install beta.2:**
+
+   ```bash
+   npm install -g agent-tempo@beta
+   ```
+
+3. **Bring the ensemble back up:**
+
+   ```bash
+   agent-tempo up [--lineup <name>]
+   ```
+
+   Sessions start fresh. **A plain shutdown+up does NOT carry `#334` state into
+   the new sessions.** Slots live on each session workflow's in-memory queryable
+   state and are not automatically inherited by a new session. The prior run's
+   slots remain queryable via `fetch_state` within Temporal's history-retention
+   window, but fresh sessions start clean.
+
+   **Save anything you need before the hop.** If you want state to survive,
+   use `restart` with `loadFromState: true` instead of a plain `up` — or
+   rely on the `upgrade-to-2` snapshot path (which carries slots explicitly).
+
+#### This is NOT the 1.7.0 → 2.0 cutover
+
+The beta.1→beta.2 hop is a **simpler operation** than the full 1.7.0 → 2.0 cutover.
+You do **not** need `upgrade-to-2` here — that verb is strictly for migrating off the
+1.x workflow format to protocol-2. Beta.1 ensembles are already protocol-2; you just
+need to restart them against the updated beta.2 worker.
+
+See [§2](#2-the-three-step-round-trip) for the full 1.7.0 → 2.0 procedure.
