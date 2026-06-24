@@ -74,6 +74,19 @@ export interface AdapterDescriptor {
   blocksOnLLMTurn: boolean;
   /** Heartbeat cadence in milliseconds. Interactive: 60_000; SDK: 30_000. */
   heartbeatMs: number;
+  /**
+   * #704 — True iff the adapter can park pre-attach on a blocking launch-time
+   * dialog (the interactive `claude-code` dev-channels acknowledgment, which
+   * requires a human click). When true, the booting attach-timeout watchdog is
+   * DISARMED for this adapter: a recruit waiting on a human is not a hang the
+   * watchdog should false-kill (an operator-away false-kill is worse than the
+   * hang — see docs/design/704-is-demo-companion-brief.md). Headless adapters
+   * (no dialog) omit this / set false → the watchdog arms. The property is the
+   * contract, not the adapter name: a future interactive adapter inherits the
+   * disarm by setting it. Interactive arming returns once #890 dissolves the
+   * dialog. Optional; absent ⇒ falsy ⇒ armed.
+   */
+  canBlockOnDialog?: boolean;
 }
 
 /**
@@ -113,7 +126,11 @@ export type DetachReason =
   | 'destroy'
   | 'force'
   | 'reconnect-exhausted'
-  | 'continued-as-new';
+  | 'continued-as-new'
+  // #704 — the booting attach-timeout watchdog reaped a session that never
+  // reached `claimAttachment` within `BOOTING_DEADLINE_MS`. Terminal: the
+  // session flips to `gone` (NOT a new `failed` enum) and records this reason.
+  | 'boot-timeout';
 
 /**
  * Workflow-emitted directive to the attached adapter. Delivered via {@link AttachmentInfo}
@@ -209,6 +226,23 @@ export interface SessionMetadata {
   playerTypeDescription?: string;
   /** Player ID of who recruited this player. */
   recruitedBy?: string;
+  /**
+   * #704 — resolved at spawn time from the adapter descriptor's
+   * {@link AdapterDescriptor.canBlockOnDialog}. Threaded onto durable metadata
+   * (and carried across continueAsNew) so the session workflow can decide
+   * whether to ARM the booting attach-timeout watchdog WITHOUT importing the
+   * client-side adapter registry (workflows are sandboxed). True ⇒ interactive
+   * adapter that can park on a launch dialog ⇒ watchdog DISARMED. Absent/false
+   * ⇒ headless ⇒ ARMED.
+   */
+  canBlockOnDialog?: boolean;
+  /**
+   * #704 — optional override (ms) for the booting attach-timeout deadline,
+   * resolved from `AGENT_TEMPO_BOOTING_DEADLINE_MS` at spawn time. Workflows
+   * can't read process.env, so the override rides durable metadata. Absent ⇒
+   * the workflow's 180s default applies.
+   */
+  bootingDeadlineMs?: number;
   /** Worktree path if this session was spawned in an isolated worktree. */
   worktreePath?: string;
   /**

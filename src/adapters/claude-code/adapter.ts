@@ -47,6 +47,13 @@ export const claudeCodeDescriptor: AdapterDescriptor = {
   // Interactive class — 60s cadence per design §4.3. The base class drives the
   // heartbeat loop at this interval when the V2 lifecycle path is active.
   heartbeatMs: 60_000,
+  // #704 — the interactive spawn passes `--dangerously-load-development-channels`,
+  // which shows a BLOCKING dev-channels dialog that requires a human click and
+  // can park the session pre-attach. So the booting attach-timeout watchdog must
+  // NOT arm for this adapter (an operator-away false-kill is worse than the hang).
+  // The 6 headless adapters omit this (⇒ falsy ⇒ armed). Flip to remove once #890
+  // dissolves the dialog. See docs/design/704-is-demo-companion-brief.md §2.
+  canBlockOnDialog: true,
 };
 
 // #749: one family of backoff curves across the codebase — this poller's

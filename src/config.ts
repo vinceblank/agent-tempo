@@ -24,6 +24,20 @@ export const ENV = {
   PLAYER_TYPE: 'AGENT_TEMPO_PLAYER_TYPE',
   CLAUDE_BIN: 'AGENT_TEMPO_CLAUDE_BIN',
   /**
+   * #704 — override (ms) for the booting attach-timeout watchdog deadline. Read
+   * at spawn time (`startRecruitedSession`) and threaded onto durable metadata
+   * (`SessionMetadata.bootingDeadlineMs`) because workflows can't read env.
+   * Default 180s. For tests/tuning.
+   */
+  BOOTING_DEADLINE_MS: 'AGENT_TEMPO_BOOTING_DEADLINE_MS',
+  /**
+   * #704 — override (ms) for how long a destroyed / boot-timed-out run's
+   * close-reason tombstone is honored by the bootstrap orphan-guard
+   * (`server.ts`). A late-launching orphan within this window self-exits.
+   * Default 6h (the observed orphan spawn delay was ~100min). For tuning.
+   */
+  ORPHAN_TOMBSTONE_TTL_MS: 'AGENT_TEMPO_ORPHAN_TOMBSTONE_TTL_MS',
+  /**
    * #753 — cadence (ms) of the periodic `[agent-tempo:action-counters]` log
    * line each instrumented process emits. Default 5 minutes; `0` disables.
    */

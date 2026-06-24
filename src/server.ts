@@ -26,6 +26,7 @@ import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { actionCountingInterceptors } from './utils/action-counters';
 import { MEMO_KEYS } from './utils/search-attributes';
+import { shouldSelfExitAsOrphan } from './utils/orphan-guard';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
@@ -128,6 +129,12 @@ async function main() {
       isConductor,
       agentType: isBridgeMode ? 'copilot' : 'claude',
       adapterId,
+      // #704 — thread the adapter descriptor's dialog-blocking property onto
+      // durable metadata so the session workflow can ARM/DISARM the booting
+      // watchdog without importing the client-side registry. This self-bootstrap
+      // path is interactive `claude-code` (or the Copilot bridge), so it resolves
+      // to disarmed; recruited headless sessions arm via `startRecruitedSession`.
+      canBlockOnDialog: adapterDescriptor?.canBlockOnDialog === true,
     },
     // Issue #450 — self-bootstrap path has no resolved player type, so
     // this falls through to `'Conductor session'` for conductors and
@@ -141,6 +148,50 @@ async function main() {
       taskQueue: config.taskQueue,
     },
   };
+
+  // #704 Item 1b — late-orphan self-tombstone guard. A recruited process can
+  // launch LONG after its recruit was cancelled (slow / wedged cold start). If
+  // this derived id's latest run is CLOSED with a destroy / boot-timeout tombstone
+  // MEMO and NO newer RUNNING run exists, this process is that orphan — exit before
+  // `start(USE_EXISTING)` bootstraps a brand-new run that collides with whoever took
+  // over the worktree. The running-run × close-reason PAIR is the discriminator:
+  // every managed re-creation (recruit / restart / migrate / up) pre-creates a
+  // RUNNING run, so a legit reuse is seen as RUNNING and simply attaches — it never
+  // reaches this branch. Gated `!isConductor` (conductors are operator-driven via
+  // `up`, never a recruited orphan). A generous wall-clock TTL bounds a stale
+  // tombstone so a much-later legit manual reuse of the same name isn't blocked
+  // forever (observed orphan delay ~100min; default 6h, env-overridable).
+  if (!isConductor) {
+    const ttlMsRaw = Number(process.env[ENV.ORPHAN_TOMBSTONE_TTL_MS]);
+    const orphanTombstoneTtlMs =
+      Number.isFinite(ttlMsRaw) && ttlMsRaw > 0 ? ttlMsRaw : 6 * 60 * 60 * 1000;
+    try {
+      const desc = await client.workflow.getHandle(workflowId).describe();
+      const closeReason = (desc.memo as Record<string, unknown> | undefined)?.[
+        MEMO_KEYS.closeReason
+      ];
+      const orphan = shouldSelfExitAsOrphan(
+        {
+          statusName: desc.status.name,
+          closeReason,
+          closeTimeMs: desc.closeTime ? desc.closeTime.getTime() : 0,
+        },
+        orphanTombstoneTtlMs,
+        Date.now(),
+      );
+      if (orphan) {
+        log(
+          `recruit was cancelled (close-reason: ${closeReason}) — exiting to avoid ` +
+          `re-registering an orphan session for ${workflowId}`,
+        );
+        process.exit(0);
+      }
+    } catch {
+      // No prior run (NotFound) → first-ever start for this id → proceed. Any other
+      // describe() failure is non-fatal: the guard is a best-effort backstop, not a
+      // correctness gate — fall through and let the start proceed.
+    }
+  }
 
   const startedHandle = await client.workflow.start('agentSessionWorkflow', {
     workflowId,
