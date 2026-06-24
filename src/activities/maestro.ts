@@ -152,6 +152,9 @@ export function createMaestroActivities(
     // tempo bucket can diff across refreshes.
     activityCount: s.activityCount,
     lastActivityAt: s.lastActivityAt,
+    // #886 slice 2 — carry the degraded flag through to the wire so the
+    // dashboard/board can render an uncertain row instead of dropping it.
+    ...(s.degraded ? { degraded: true } : {}),
   });
 
   // #753 — attribute every Temporal call made by these activities (however

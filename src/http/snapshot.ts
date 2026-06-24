@@ -160,6 +160,9 @@ export function toPlayerSummaryV1(
     ...(wireMeta?.coarse?.currentTool !== undefined ? { currentTool: wireMeta.coarse.currentTool } : {}),
     ...(wireMeta?.coarse?.contextTokens !== undefined ? { contextTokens: wireMeta.coarse.contextTokens } : {}),
     ...(wireMeta?.coarse?.contextPercent !== undefined ? { contextPercent: wireMeta.coarse.contextPercent } : {}),
+    // #886 slice 2 — carry the degraded/uncertain flag onto the wire so the
+    // dashboard/board can badge the player instead of dropping it (anti-flap).
+    ...(p.degraded ? { degraded: true } : {}),
   };
 }
 

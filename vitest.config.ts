@@ -50,6 +50,12 @@ export default defineConfig({
       // #785 — upgrade-to-2 snapshot schema + persistence (Temporal-free
       // schema module; pure fs round-trip + validation guards).
       'tests/upgrade/**/*.test.ts',
+      // #886 slice 1 — nondeterminism alarm (classifier, counter/snapshot,
+      // logger wrapper, singleton; Temporal-value-free, pure logic).
+      'tests/observability/**/*.test.ts',
+      // #886 slice 2 — scanEnsembleSessionsCloud degraded-row behaviour
+      // (getter module mocked to force the extraction-failure branch; no worker).
+      'tests/activities/**/*.test.ts',
     ],
     // Scrub ambient AGENT_TEMPO_*/CLAUDE_TEMPO_* env vars before each file
     // and restore the clean baseline after each test (#744).

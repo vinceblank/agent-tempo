@@ -212,6 +212,12 @@ interface PlayerSummaryV1 {
   // round-trip; the maestro hub already populates these fields).
   activityCount?: number;
   lastActivityAt?: string;     // ISO
+  // #886 slice 2 — true when the observation scan could only produce a
+  // DEGRADED row (the workflow was listed but its metadata extraction
+  // failed). Identity (playerId) is preserved; non-identity fields are
+  // best-effort blanks. Render an "uncertain" badge instead of dropping the
+  // player — the row's presence prevents roster flapping (contra #777).
+  degraded?: boolean;
 }
 ```
 
