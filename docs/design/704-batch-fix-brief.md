@@ -258,28 +258,24 @@ non-interactive and never show the dialog — the watchdog is safe for them toda
 ### Required mitigation — see the companion spec
 
 The full interactive-gating design is **`docs/design/704-is-demo-companion-brief.md`**
-(architect-ratified). Summary of the ratified approach (it **rejected** the
-earlier IS_DEMO-default idea):
+(architect re-ruled 2026-06-24). The detection-by-key idea was **dropped** — the
+de-risk dig found channels REQUIRE OAuth (API key "explicitly unsupported for
+Channels"), so key-presence can't be a safe-arm condition. Final approach:
 
-1. **Detection-not-injection:** arm interactive `claude-code` only when
-   `ANTHROPIC_API_KEY` is **already** in the spawn env (key auth ⇒ no dialog).
-   Do NOT force-inject a key (re-routes billing off the subscription).
-2. **Structural adapter gating:** gate on a descriptor property
-   (`canBlockOnDialog`), not an `agentType` check. Arm headless now.
-3. **OAuth-no-key residual stays DISARMED** until the strategic channel-plugin
-   fix (#890) dissolves the dialog. `IS_DEMO` only as a guarded,
-   time-boxed, disarmed-by-default stopgap if eng deems it urgent.
-4. **Precondition eng confirms first:** is the dialog OAuth-no-key-specific or
-   unconditional? (`troubleshooting.md:267` vs the de-risk note disagree.)
+1. **Interactive `claude-code` is DISARMED (no watchdog) until #890** — a recruit
+   parked on the dev-channels dialog is waiting on a human; an operator-away
+   false-kill is worse than the hang. No detection predicate.
+2. **Structural adapter gating:** gate on the descriptor property
+   `canBlockOnDialog`, not an `agentType` check. **Arm headless NOW**; interactive
+   disarmed until #890. Future interactive adapters inherit by setting the flag.
+3. **`IS_DEMO` is DE-SCOPED** — with interactive never armed there's no false-kill
+   to prevent, so no bypass/smoke-check/version-monitor is needed (the
+   supply-chain risk is eliminated, not guarded).
+4. **#890** (approved-channel plugin → dialog dissolved) is the right fix for the
+   dialog-park hang; a post-#890 interactive watchdog catches non-dialog hangs.
 
-**Net:** the watchdog ships clean — headless armed immediately, interactive gated.
-This **gates arming the watchdog for interactive `claude-code`** and lands in
-lockstep with the batch.
-
-> Not independently re-confirmed this pass: whether the dialog is
-> once-per-machine vs. per-recruit. Immaterial to the verdict — even
-> once-per-machine false-kills the first autonomous recruit after any
-> install/upgrade, which is the #704 hazard exactly.
+**Net:** the watchdog ships clean — headless armed immediately via the structural
+gate, interactive deliberately deferred to #890. Lands in lockstep with the batch.
 
 ## Test plan
 - **Unit (vitest, `tests/`):** `nextDeadlineMs()` returns a finite booting
