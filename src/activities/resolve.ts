@@ -215,13 +215,13 @@ export interface EnsembleSessionInfo {
  *   - The visibility query is **ensemble-scoped** via the `AgentTempoEnsemble`
  *     filter SA — no more cluster-wide list + per-session `getMetadata`
  *     pre-filtering (the unfiltered scan was the dominant idle-burn driver).
- *   - For v1.8+ runs (memo-complete: `AgentTempoWorkDir` present), the entire
- *     player row is read from the list result (SAs + memo) — **zero**
- *     per-player queries except the BPM `getActivityState` query, which is
- *     intentionally kept per the architect's ruling (deriving BPM from phase
- *     transitions would change the metric's meaning).
- *   - Pre-v1.8 runs (no observation memo) fall back to the legacy per-player
- *     `getMetadata` + `getPart` queries — cost shrinks as old runs cycle out.
+ *   - The entire player row is read from the list result (SAs + memo) —
+ *     **zero** per-player queries except the BPM `getActivityState` query,
+ *     which is intentionally kept per the architect's ruling (deriving BPM
+ *     from phase transitions would change the metric's meaning). Every 2.0
+ *     session seeds the observation memo at workflow start (T0.5 #747 /
+ *     #757), so `AgentTempoWorkDir` is always present; the pre-v1.8 memo-
+ *     absent per-player `getMetadata`/`getPart` fallback was removed in #874.
  *
  * Staleness: SA/memo reads are eventually consistent (tens of seconds worst
  * case under backlog) — acceptable for the observation path per the design
@@ -244,53 +244,36 @@ export async function scanEnsembleSessionsCloud(
       'scanEnsembleSessionsCloud',
     )) {
       try {
-        const handle = client.workflow.getHandle(workflow.workflowId);
         const phase = getAttachmentPhase(workflow);
         const playerId =
           getSearchAttrString(workflow, 'AgentTempoPlayerId') ?? workflow.workflowId;
         const hostname = getSearchAttrString(workflow, 'AgentTempoHostname') ?? '';
 
-        // v1.8-memo-observation-fields runs carry workDir on the memo — use
-        // its presence as the "memo-complete row" discriminator.
-        const workDir = getMemoString(workflow, MEMO_KEYS.workDir);
-        let row: Omit<EnsembleSessionInfo, 'workflowId' | 'activityCount' | 'lastActivityAt' | 'phase'>;
-        if (workDir !== undefined) {
-          row = {
-            playerId,
-            part: getPart(workflow) ?? '',
-            hostname,
-            workDir,
-            gitRoot: getWorkflowMetaString(workflow, MEMO_KEYS.gitRoot),
-            gitBranch: getMemoString(workflow, MEMO_KEYS.gitBranch),
-            isConductor: getIsConductor(workflow)
-              ?? (workflow.workflowId?.endsWith('-conductor') ?? false),
-            agentType: getMemoString(workflow, MEMO_KEYS.agentType) || 'claude',
-            playerType: getPlayerType(workflow),
-          };
-        } else {
-          // Legacy run (pre-v1.8 memo) — per-player query fallback, bounded
-          // (#433). Same two queries the legacy scan used.
-          const metadata = await queryHandleWithTimeout<SessionMetadata>(handle, 'getMetadata');
-          const part = await queryHandleWithTimeout<string>(handle, 'getPart');
-          row = {
-            playerId: metadata.playerId,
-            part,
-            hostname: metadata.hostname,
-            workDir: metadata.workDir,
-            gitRoot: metadata.gitRoot,
-            gitBranch: metadata.gitBranch,
-            isConductor: metadata.isConductor,
-            agentType: metadata.agentType || 'claude',
-            playerType: metadata.playerType,
-          };
-        }
+        // Every 2.0 session seeds the observation memo at workflow start
+        // (T0.5 #747 / #757), so the entire player row is read straight from
+        // the visibility list result — SAs + memo, zero per-player queries
+        // (the parallel BPM `getActivityState` query below aside). The
+        // pre-v1.8 memo-absent `getMetadata`/`getPart` fallback was removed
+        // in #874 (dead under the 2.0 clean cutover).
+        const row: Omit<EnsembleSessionInfo, 'workflowId' | 'activityCount' | 'lastActivityAt' | 'phase'> = {
+          playerId,
+          part: getPart(workflow) ?? '',
+          hostname,
+          workDir: getMemoString(workflow, MEMO_KEYS.workDir) ?? '',
+          gitRoot: getWorkflowMetaString(workflow, MEMO_KEYS.gitRoot),
+          gitBranch: getMemoString(workflow, MEMO_KEYS.gitBranch),
+          isConductor: getIsConductor(workflow)
+            ?? (workflow.workflowId?.endsWith('-conductor') ?? false),
+          agentType: getMemoString(workflow, MEMO_KEYS.agentType) || 'claude',
+          playerType: getPlayerType(workflow),
+        };
 
         // BPM fields filled in below — kept out of the enumeration loop so
         // per-player query latency can't eat the visibility deadline.
         sessions.push({ workflowId: workflow.workflowId, ...row, phase });
       } catch {
-        // Workflow may have just completed, or a legacy-fallback query timed
-        // out (#433) — skip this row; the next tick fills it in.
+        // Workflow may have just completed (its memo/SA row vanished mid-scan)
+        // — skip this row; the next tick fills it in.
       }
     }
   } catch (err) {
