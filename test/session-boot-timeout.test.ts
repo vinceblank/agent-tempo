@@ -109,21 +109,27 @@ describe('session boot-timeout watchdog (#704 Item 1a/1b)', function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const playerId = `boot-claimed-${Date.now()}`;
+      // Generous deadline so the awaited claim round-trip comfortably wins the
+      // race on a contended runner (#777: the budget must dominate the awaited
+      // server-side path — a sticky miss can stall an update up to ~10s). The
+      // claim still lands long before this, then we wait PAST it to prove no trip.
+      const CLAIM_TEST_DEADLINE_MS = 2_500;
       const handle = await startSession({
         metadata: playerMetadata({
           playerId,
           canBlockOnDialog: false,
-          bootingDeadlineMs: SHORT_DEADLINE_MS,
+          bootingDeadlineMs: CLAIM_TEST_DEADLINE_MS,
         }),
       });
 
-      // Claim immediately — this clears `bootingSince`.
+      // Claim immediately — this clears `bootingSince`. `executeUpdate` is awaited,
+      // so on return the claim is committed (and the watchdog disarmed).
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
         args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
 
       // Wait well past the booting deadline; the claimed session must remain.
-      await skipTime(WAIT_PAST_DEADLINE_MS);
+      await skipTime(CLAIM_TEST_DEADLINE_MS + 800);
 
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
       expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
