@@ -226,17 +226,60 @@ call sites produce identical stage-state transitions before/after.
   carrying `attachmentId`) must NOT arm the watchdog. Folded into Item 1a + the
   test plan.
 
-## ⚠ Dependency / risk flag (OQ-3 follow-on — NOT a blocker for this brief)
+## ⚠ Dependency / risk — RESOLVED (dev-channels-dialog de-risk pass, 2026-06-24)
 
-If a recruited spawn can **block on the interactive trust / dev-channels dialog**,
-then **no** attach deadline is safe — a genuinely-launching session that's parked
-on the dialog would read as a boot-timeout and get swept. This ties to the known
-recruit-dialog issue (`/clear` fires no session hook; dev-channels bypass — see
-the recruit-message-loss class). **Action:** confirm recruited sessions bypass the
-dialog (non-interactive / pre-accepted) before the 180s default goes live. Tracked
-as a **separate concern** — it does not block authoring/merging this spec, but eng
-should verify it during implementation (and we may need the watchdog gated behind
-"dialog-bypass confirmed" for interactive `claude-code` specifically).
+**Verdict: the 180s watchdog is NOT safe as-is for the interactive `claude-code`
+adapter under OAuth (Claude Max/Pro) auth.** It IS safe for every headless adapter.
+Confirmed in code:
+
+- The interactive recruit spawn (`activities/outbox.ts:833-835`) passes
+  `--dangerously-skip-permissions --dangerously-load-development-channels
+  server:agent-tempo`. `--dangerously-skip-permissions` clears the **trust /
+  permission** prompt, but **NOT** the dev-channels acknowledgment dialog.
+- Per prior research (memory `research_claude_code_prompts.md` + issue #18,
+  closed): `--dangerously-load-development-channels` shows a **blocking** dialog
+  **when OAuth tokens are present** (subscription login). It loads silently only
+  when `ANTHROPIC_API_KEY` is set instead.
+- The spawn env (`outbox.ts:841-847`) sets **neither `IS_DEMO` nor a forced
+  `ANTHROPIC_API_KEY`** — and `IS_DEMO` appears **nowhere in `src/`**. So under a
+  Claude Max/Pro login with no API key, a recruited interactive session **parks on
+  the dialog until a human clicks**, never reaching `claimAttachment`.
+
+**Why this is the worst case for #704 specifically:** the incident that filed
+#704 was an **autonomous run with the operator away**. That's exactly when nobody
+clicks the dialog — so the watchdog would false-kill a *legitimately launching*
+recruit. Killing a real recruit is strictly worse than the indefinite hang the
+watchdog is meant to fix.
+
+**Scope:** interactive `claude-code` only. Headless adapters
+(`claude-code-headless` via `-p`, `claude-api`, `copilot`, `opencode`, `pi`) are
+non-interactive and never show the dialog — the watchdog is safe for them today.
+
+### Required mitigation — see the companion spec
+
+The full interactive-gating design is **`docs/design/704-is-demo-companion-brief.md`**
+(architect-ratified). Summary of the ratified approach (it **rejected** the
+earlier IS_DEMO-default idea):
+
+1. **Detection-not-injection:** arm interactive `claude-code` only when
+   `ANTHROPIC_API_KEY` is **already** in the spawn env (key auth ⇒ no dialog).
+   Do NOT force-inject a key (re-routes billing off the subscription).
+2. **Structural adapter gating:** gate on a descriptor property
+   (`canBlockOnDialog`), not an `agentType` check. Arm headless now.
+3. **OAuth-no-key residual stays DISARMED** until the strategic channel-plugin
+   fix (#890) dissolves the dialog. `IS_DEMO` only as a guarded,
+   time-boxed, disarmed-by-default stopgap if eng deems it urgent.
+4. **Precondition eng confirms first:** is the dialog OAuth-no-key-specific or
+   unconditional? (`troubleshooting.md:267` vs the de-risk note disagree.)
+
+**Net:** the watchdog ships clean — headless armed immediately, interactive gated.
+This **gates arming the watchdog for interactive `claude-code`** and lands in
+lockstep with the batch.
+
+> Not independently re-confirmed this pass: whether the dialog is
+> once-per-machine vs. per-recruit. Immaterial to the verdict — even
+> once-per-machine false-kills the first autonomous recruit after any
+> install/upgrade, which is the #704 hazard exactly.
 
 ## Test plan
 - **Unit (vitest, `tests/`):** `nextDeadlineMs()` returns a finite booting
