@@ -49,7 +49,9 @@ const STUB_OPTS: RegisterAllTempoToolsOpts = {
 };
 
 const CONDUCTOR_ONLY = [
-  'quality_gate', 'evaluate_gate', 'gates', 'worktree', 'stage', 'stages', 'cancel_stage',
+  // #793 — `gate` is the canonical conductor-only tool; `quality_gate`/`gates`
+  // are its forwarding aliases (also conductor-only).
+  'gate', 'quality_gate', 'evaluate_gate', 'gates', 'worktree', 'stage', 'stages', 'cancel_stage',
 ];
 
 /** Capture (name → zod param shape) from the MCP renderer via a fake server. */

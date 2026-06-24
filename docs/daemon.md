@@ -35,6 +35,30 @@ memory: rss=128mb heapUsed=64 heapTotal=80 external=4 arrayBuffers=1
 
 Pre-#336 daemons return `n/a` for memory fields — `daemon stats` handles this gracefully.
 
+### Nondeterminism alarm (#886)
+
+The daemon installs a process-global nondeterminism alarm before its Temporal
+workers start. It wraps the Temporal Runtime logger and watches for
+nondeterminism / determinism-violation records (e.g. a 2.0 worker replaying a
+1.x-recorded history, or a workflow-code/bundle skew — the incident class
+Temporal codes as `TMPRL1100`). On each hit it:
+
+- **Promotes** a prominent, greppable line to `~/.agent-tempo/daemon.log`:
+  ```
+  [agent-tempo:ALARM] nondeterminism #N — workflowType=… runId=… <message snippet>
+  ```
+  (The #801 incident produced 57 workflow-task failures in 3 minutes with *zero*
+  operator signal — this NAMES the flap the instant it starts.)
+- **Surfaces** a rolling snapshot on `GET /v1/health` under `nondeterminism`:
+  ```jsonc
+  "nondeterminism": {
+    "count": 3,                       // total hits since boot (0 = healthy)
+    "firstSeenAt": "…", "lastSeenAt": "…",
+    "recent": [{ "at": "…", "detail": "…" }]   // capped, newest last
+  }
+  ```
+  External monitors and the dashboard can poll this without scraping logs.
+
 ## How It Works
 
 - On first use, any agent-tempo command calls `startDaemon()` and waits up to 10 seconds for it to confirm startup (by writing `~/.agent-tempo/daemon.pid`)

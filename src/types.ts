@@ -968,6 +968,14 @@ export interface MaestroPlayerInfo {
    * surfaces that want to show "last active 12s ago" per player.
    */
   lastActivityAt?: string;
+  /**
+   * #886 slice 2 — `true` when this row came from a DEGRADED observation scan
+   * (the workflow was listed but its metadata extraction failed, so non-identity
+   * fields are best-effort blanks). Surfaces to the dashboard/board so the
+   * player renders as "uncertain" rather than vanishing — preventing roster
+   * flapping (contra #777). Absent / `false` on healthy rows.
+   */
+  degraded?: boolean;
 }
 
 /** A message relayed through the global Maestro for dashboard visibility. */

@@ -82,6 +82,10 @@ import {
   handleSseRequest,
 } from './sse-handler';
 import type { HealthV1 } from './event-types';
+// #886 slice 1 — surface the daemon nondeterminism alarm on /v1/health. The
+// alarm core is Temporal-VALUE-free, so this import doesn't pull the worker
+// runtime into the HTTP layer.
+import { getGlobalNondeterminismAlarm } from '../observability/nondeterminism-alarm';
 
 const log = (...args: unknown[]) =>
   console.error(`[agent-tempo:http ${new Date().toISOString()}]`, ...args);
@@ -865,6 +869,12 @@ function handleHealth(res: http.ServerResponse, ctx: HandleContext): void {
       external: mem.external,
       arrayBuffers: mem.arrayBuffers,
     },
+    // #886 slice 1 — nondeterminism alarm snapshot (present when the daemon
+    // installed the alarm; `count > 0` signals an observed flap since boot).
+    ...(() => {
+      const snap = getGlobalNondeterminismAlarm()?.snapshot();
+      return snap ? { nondeterminism: snap } : {};
+    })(),
   };
   // Best-effort ensemble count — soft-fail to 0 rather than 500ing on a
   // healthcheck. `/v1/health` MUST stay reachable even when Temporal is

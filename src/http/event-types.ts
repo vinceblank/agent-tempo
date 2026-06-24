@@ -56,6 +56,27 @@ export interface HealthV1 {
    * semantics. Optional so legacy clients ignoring the field don't break.
    */
   memory?: MemoryUsageV1;
+  /**
+   * #886 slice 1 — daemon-side nondeterminism alarm state. Present when the
+   * daemon installed the alarm (always, in 2.0+); a non-zero `count` means a
+   * nondeterminism / determinism-violation flap was observed since boot (e.g.
+   * a 2.0 worker replaying a 1.x history, or a code/bundle skew). Lets external
+   * monitors and the dashboard poll the alarm without scraping `daemon.log`.
+   * Optional so pre-#886 clients (and non-daemon health responders) ignore it.
+   */
+  nondeterminism?: NondeterminismAlarmV1;
+}
+
+/** #886 — `/v1/health` shape of the nondeterminism alarm snapshot. */
+export interface NondeterminismAlarmV1 {
+  /** Total nondeterminism records seen since daemon boot (0 = healthy). */
+  count: number;
+  /** ISO timestamp of the first hit; absent when `count === 0`. */
+  firstSeenAt?: string;
+  /** ISO timestamp of the most recent hit; absent when `count === 0`. */
+  lastSeenAt?: string;
+  /** Most-recent samples (capped, newest last) — `{ at, detail }`. */
+  recent: Array<{ at: string; detail: string }>;
 }
 
 /** Snapshot of `process.memoryUsage()` at request time. All values in bytes. */
@@ -220,6 +241,16 @@ export interface PlayerSummaryV1 {
   contextTokens?: number;
   /** 3c Tier-1 coarse — context usage as a percentage of the model window. Additive. */
   contextPercent?: number;
+  /**
+   * #886 slice 2 — `true` when the daemon's observation scan could only produce
+   * a DEGRADED row for this player: the session workflow was listed but its
+   * metadata extraction failed, so the non-identity fields (part/workDir/phase/…)
+   * are best-effort blanks. Lets the dashboard/board render an "uncertain" badge
+   * instead of dropping the player, which would read as a departure and cause
+   * roster flapping (contra #777). Additive + optional per the §6 stability rule;
+   * absent on every healthy row.
+   */
+  degraded?: boolean;
 }
 
 // ── §5. SSE framing — event-id token format ─────────────────────────────

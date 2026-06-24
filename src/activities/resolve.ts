@@ -205,6 +205,17 @@ export interface EnsembleSessionInfo {
    * session. Undefined when the session predates W2 or the query failed.
    */
   lastActivityAt?: string;
+  /**
+   * #886 slice 2 — `true` when this row was produced from a DEGRADED scan:
+   * the visibility list returned the workflow, but extracting its observation
+   * fields threw, so the rich metadata (part/workDir/hostname/…) is a
+   * best-effort blank rather than authoritative. The row's IDENTITY
+   * (`workflowId` + best-effort `playerId`) is preserved so the player stays
+   * in the roster marked uncertain — instead of being silently dropped, which
+   * reads as "player absent" and causes roster flapping (contra #777). Absent
+   * / `false` on every healthy row.
+   */
+  degraded?: boolean;
 }
 
 /**
@@ -271,9 +282,40 @@ export async function scanEnsembleSessionsCloud(
         // BPM fields filled in below — kept out of the enumeration loop so
         // per-player query latency can't eat the visibility deadline.
         sessions.push({ workflowId: workflow.workflowId, ...row, phase });
-      } catch {
-        // Workflow may have just completed (its memo/SA row vanished mid-scan)
-        // — skip this row; the next tick fills it in.
+      } catch (rowErr) {
+        // #886 slice 2 — observation extraction threw for this workflow. The
+        // OLD behaviour silently dropped the row, which makes a transient
+        // failure read as "player absent" → roster flapping (contra #777). The
+        // workflow IS in the visibility list, so the player exists; emit a
+        // DEGRADED row that preserves identity (workflowId + best-effort
+        // playerId) and flags `degraded: true`, instead of dropping it.
+        //
+        // playerId is salvaged in its own guard so a throwing getter can't
+        // escape to the outer (visibility-timeout-only) catch and fail the
+        // whole scan; it falls back to the workflowId. Identity preservation
+        // is the point — a row keyed on the real playerId avoids the
+        // remove+add churn that dropping (or re-keying on workflowId) causes.
+        let salvagedPlayerId = workflow.workflowId;
+        try {
+          salvagedPlayerId =
+            getSearchAttrString(workflow, 'AgentTempoPlayerId') ?? workflow.workflowId;
+        } catch {
+          /* keep workflowId */
+        }
+        sessions.push({
+          workflowId: workflow.workflowId,
+          playerId: salvagedPlayerId,
+          part: '',
+          hostname: '',
+          workDir: '',
+          isConductor: workflow.workflowId.endsWith('-conductor'),
+          agentType: 'claude',
+          degraded: true,
+        });
+        log(
+          `scanEnsembleSessionsCloud: degraded row for ${workflow.workflowId} ` +
+          `(observation extraction failed: ${rowErr instanceof Error ? rowErr.message : String(rowErr)})`,
+        );
       }
     }
   } catch (err) {

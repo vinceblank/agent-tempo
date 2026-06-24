@@ -38,6 +38,12 @@ import { InnerLoopRegistry } from './http/inner-loop';
 import { DoorbellRegistry } from './http/doorbell';
 import { IngestTokenRegistry } from './http/ingest-registry';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
+import { Runtime, DefaultLogger } from '@temporalio/worker';
+import {
+  NondeterminismAlarm,
+  wrapLoggerWithAlarm,
+  setGlobalNondeterminismAlarm,
+} from './observability/nondeterminism-alarm';
 import { actionCountingInterceptors } from './utils/action-counters';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
@@ -1047,6 +1053,36 @@ async function main() {
   // close race so a stray retry timer can't kill the long-lived daemon. See
   // src/utils/grpc-shutdown-guard.ts.
   installGrpcShutdownGuard();
+
+  // #886 slice 1 — install the nondeterminism alarm BEFORE any Worker.create.
+  // Wraps Temporal's Runtime logger so a nondeterminism / determinism-violation
+  // flap (the #801 incident: 57 workflow-task failures in 3min with ZERO
+  // operator signal) is NAMED instantly — a prominent `[agent-tempo:ALARM]`
+  // line with a running count — and surfaced on `GET /v1/health`
+  // (`HealthV1.nondeterminism`). Runtime.install must precede worker creation
+  // and can only run once per process; both hold here (daemon entry point).
+  {
+    const alarm = new NondeterminismAlarm({
+      onHit: (count, sample) => {
+        // Prominent + greppable (`ALARM`), distinct from normal daemon chatter.
+        log(`[agent-tempo:ALARM] nondeterminism #${count} — ${sample.detail}`);
+      },
+    });
+    setGlobalNondeterminismAlarm(alarm);
+    try {
+      // Match the SDK default logger level ('INFO') so verbosity is unchanged;
+      // the wrapper only ADDS alarm detection on WARN/ERROR records.
+      Runtime.install({ logger: wrapLoggerWithAlarm(new DefaultLogger('INFO'), alarm) });
+    } catch (err) {
+      // Runtime.install throws if a Runtime already exists this process. Non-
+      // fatal: the alarm singleton still backs /v1/health; we just couldn't
+      // intercept Core logs. (Shouldn't happen — this is the daemon entry.)
+      log(
+        'nondeterminism alarm: Runtime.install skipped (runtime already initialized):',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   // ADR 0014 §5.4 / gate 4 — dev daemon log self-identifies. Banner fires
   // first so it lands at the top of `~/.agent-tempo-dev/daemon.log` for
