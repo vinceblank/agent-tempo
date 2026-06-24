@@ -5,52 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.0.0-beta.2] - TBD
+## [2.0.0-beta.2] - 2026-06-24
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.7.0.
 >
 > ⚠ **Beta.1 → beta.2 requires a drain-and-recreate.** Beta.2 batches workflow-shape
-> changes that cannot replay beta.1 histories. Drain your ensemble, upgrade, and `up`
-> again — see [§8 of the cutover guide](docs/ops/v2-cutover.md#8-beta-upgrade-notes)
-> for the three-step procedure. ⚠ `#334` state slots do NOT auto-carry — save
-> anything you need before the hop.
+> changes (booting-watchdog + wake-discipline) that cannot replay beta.1 histories.
+> Drain your ensemble, upgrade, and `up` again — see
+> [§8 of the cutover guide](docs/ops/v2-cutover.md#8-beta-upgrade-notes) for the
+> three-step procedure. ⚠ `#334` state slots do NOT auto-carry — save anything you
+> need before the hop.
 
 ### Added
 
-- **Tool-family merges with aliases (#793)** *(pending)* — five MCP tool families
-  collapsed into canonical action-dispatch tools (`coat_check`, `state`, `schedule`,
-  `stage`, `gate`); all existing tool names kept as forwarding aliases through GA.
-  Reduces the MCP tool count at the canonical level; aliases drop at GA.
+- **Tool-family merges with aliases (#793, PR #888)** — five MCP tool families
+  collapsed into canonical multi-action tools; all 13 legacy per-action names kept
+  as forwarding aliases through GA (alias-not-remove invariant):
+
+  | Canonical tool | Actions | Note |
+  |---|---|---|
+  | `coat_check` | `put` · `get` · `list` · `evict` | new name |
+  | `state` | `save` · `fetch` · `clear` | new name |
+  | `gate` | `define` · `list` | new name; `evaluate_gate` stays separate |
+  | `schedule` | `create` · `cancel` · `list` | reused name; defaults to `create` |
+  | `stage` | `create` · `list` · `cancel` | reused name; defaults to `create` |
+
+  Aliases carry ``DEPRECATED — use `<canonical>` with action="<x>"`` descriptions.
+  Alias drop (the net tool-count reduction) lands at GA, not in the beta.
 
 ### Fixed
 
-- **Recruit hang + late orphan prevention (#704)** *(pending — 2 PRs)* — a
-  booting-watchdog deadline (90–120 s) converts a silent indefinite `pending` hang
-  into a loud, actionable failure message to the recruiter; a bootstrap
-  re-registration self-guard (close-reason tombstone) stops the late-spawned orphan
-  process from re-registering a colliding workflow. Closes the root cause of
-  observed ~9 h recruit hangs.
+- **Recruit hang + late-orphan prevention (#704, PR #898)** — closes the root cause
+  of observed ~9 h recruit hangs and the late-spawn collision:
 
-- **CLI help: `home` and `version` commands now documented (#879, PR #882)** — the
-  two verbs were functional but absent from `agent-tempo --help` output.
+  - **Booting-watchdog** — a session that never reaches `claimAttachment` within
+    `BOOTING_DEADLINE_MS` (default 180 s) flips to terminal `gone`, sweeps any
+    orphan process, and notifies the recruiter with an actionable failure message
+    instead of hanging indefinitely. Armed **only for recruited** headless sessions.
+    Non-recruit booting sessions are never armed — **from-upgrade skeletons**
+    (awaiting manual re-attach, so their seeded sessionId/playerState is never
+    swept), the conductor, and plain `up`. Interactive `claude-code` stays disarmed
+    pending #890; restart/migrate handoffs are never armed.
+
+  - **Late-orphan re-registration guard** — `destroy` and boot-timeout stamp a
+    typed `AgentTempoCloseReason` memo (`'destroyed'` | `'boot-timeout'`). The
+    bootstrap precondition in `server.ts` checks this tombstone and self-exits any
+    late-spawned process that would collide with a destroyed or timed-out workflow.
+
+  - **Wake-discipline cleanup** — the dispatch-loop deadline math (`wakeEpoch++`)
+    is tightened; the obsolete 5-min cap is replaced by a 30-min `BACKSTOP_MS`
+    defense-in-depth with a loud WARN breadcrumb if it ever fires.
+
+  See [§8 of the cutover guide](docs/ops/v2-cutover.md#8-beta-upgrade-notes) —
+  these are the workflow-shape changes that make the beta.1→beta.2 drain-and-recreate
+  necessary.
+
+- **TMPRL1100 nondeterminism alarm + degraded-flag on observation drops (#886)** —
+  two reliability-observability slices motivated by the #801 incident (57 worker
+  failures in 3 minutes, zero operator signal):
+
+  - **Nondeterminism alarm** — the daemon installs a wording-tolerant classifier
+    around Temporal's logger that promotes every nondeterminism / TMPRL1100 record
+    to a prominent, greppable `[agent-tempo:ALARM] nondeterminism #N — …` line and
+    counts them. The rolling count is surfaced on `GET /v1/health`
+    (`HealthV1.nondeterminism`) so monitors can poll without scraping logs.
+
+  - **Degraded-flag on observation drops** — `scanEnsembleSessionsCloud` previously
+    dropped a row silently when extraction threw, making a transient failure read as
+    "player absent" (#777 violation). It now emits a `degraded: true` row that
+    preserves identity (workflowId + best-effort playerId) and threads the flag
+    through `MaestroPlayerInfo` → `PlayerSummaryV1` so the dashboard and board can
+    badge the player as uncertain instead of it vanishing.
+
+- **CLI help: `home` and `version` commands documented (#879, PR #882)** — the two
+  verbs were functional but absent from `agent-tempo --help` output.
 
 ### Changed
 
+- **Command-center: three access tiers surfaced (#791, PR #884)** — the launch
+  banner now prints the three access tiers up front: (1) No auth = board +
+  operator controls; (2) `/login` = LLM planner on your Claude Pro/Max
+  subscription (zero API key); (3) API key = planner on the key. The
+  missing-API-key message is downgraded from a warning to an informational
+  `/login` pointer — a missing key is a fully-supported state, not a degraded
+  fallback. A drift test enforces identical wording between the banner and
+  `docs/cli.md`.
+
+- **Vitest env-hardening (#744, PR #885)** — `tests/setup.ts` wired via
+  `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*`/`CLAUDE_TEMPO_*`
+  keys around every suite, eliminating false-negative test clusters from stale ambient
+  vars in the invoking shell.
+
 - **Dead pre-v1.8 memo-absence fallback removed (#874, PR #881)** — the legacy
-  code path in the outbox cloud scan that guessed session state when the v1.8 search-
-  attribute schema was absent is deleted. No operator action required; the path was
+  code path in the outbox cloud scan that guessed session state when the v1.8 SA
+  schema was absent is deleted. No operator action required; the path was
   unreachable for any session that can survive the 2.0 protocol-2 cutover.
 
-- **Vitest env-hardening (#744)** — `tests/setup.ts` wired via
-  `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*` /
-  `CLAUDE_TEMPO_*` env keys around every suite, eliminating false-negative test
-  clusters caused by stale ambient vars from the invoking shell.
+### Internal
 
-- **Command-center access tiers (#791)** — details TBD (description incoming).
+- **CI: surface-drift check made dependency-free (#895)** — unblocks the
+  no-deps lint job.
 
-### Observability
+- **Vitest: `maxThreads=4` cap added (#894, PR #900)** — prevents a
+  `setupFiles` URL-load race under CI parallelism.
 
-- **#886** *(pending)* — details TBD when landed.
+### Known issues / Deferred to beta.3 or GA
+
+- **#890** — `claude-code` interactive-adapter booting watchdog. The dev-channels
+  dialog (`claude` on first launch) can block `claimAttachment` legitimately for
+  minutes; the watchdog is DISARMED for interactive `claude-code` until #890 ships
+  a channel-plugin that dissolves the dialog and allows the watchdog to arm safely.
+
+- **#893, #897, #899** — follow-up items tracked separately.
 
 ---
 
