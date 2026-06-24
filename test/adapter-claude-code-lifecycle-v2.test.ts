@@ -51,7 +51,12 @@ async function waitForPhase(
   let last: AttachmentInfo | undefined;
   while (Date.now() < deadline) {
     last = await handle.query(attachmentInfoQuery);
-    if (last.phase === expected) return last;
+    // #704 Item 2: the §2.2 idle-refinement may lift a just-claimed idle session
+    // attached → awaiting before this poll observes it. Treat `awaiting` as
+    // satisfying an `attached` wait — both are attached-with-lease states.
+    if (last.phase === expected || (expected === 'attached' && last.phase === 'awaiting')) {
+      return last;
+    }
     // 150ms tick (was 50ms) — defensive against slow CI runners. Same 5s
     // budget; the bump just lowers the polling pressure when this hook
     // runs alongside the heaviest test in the suite (#383 P3.2).
@@ -170,14 +175,17 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
         await pollWithTimeout(
           async () => {
             const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
-            return info.phase === 'attached' && info.currentAttachment?.hostname === 'host-other';
+            // #704 Item 2: accept the idle attached→awaiting refinement.
+            return (info.phase === 'attached' || info.phase === 'awaiting') && info.currentAttachment?.hostname === 'host-other';
           },
           5000,
         );
 
         // Phase still reflects host-other's attachment, not ours.
         const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
-        expect(info.phase).to.equal('attached');
+        // #704 Item 2: host-other's idle claim may have refined to awaiting; the
+        // hostname guard below proves the lease is still theirs.
+        expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
         expect(info.currentAttachment?.hostname).to.equal('host-other');
 
         // Our adapter never ran its delivery poll — send a message and confirm

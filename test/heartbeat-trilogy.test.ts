@@ -133,7 +133,9 @@ describe('heartbeat trilogy (#249)', function () {
             // 400ms heartbeat + some jitter → 2s is plenty for the first few.
             await waitForAttachmentInfo(
               handle,
-              (i) => i.phase === 'attached' && !!i.currentAttachment,
+              // #704 Item 2: accept the idle attached→awaiting refinement; the
+              // currentAttachment guard still proves the lease is held.
+              (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
               5000,
               'initial attached',
             );
@@ -182,7 +184,9 @@ describe('heartbeat trilogy (#249)', function () {
           try {
             await waitForAttachmentInfo(
               handle,
-              (i) => i.phase === 'attached' && !!i.currentAttachment,
+              // #704 Item 2: accept the idle attached→awaiting refinement; the
+              // currentAttachment guard still proves the lease is held.
+              (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
               5000,
               'initial attached',
             );

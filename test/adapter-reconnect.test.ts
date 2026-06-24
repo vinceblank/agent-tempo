@@ -185,7 +185,7 @@ describe('adapter reconnect (#201)', function () {
           // 1. Initial claim lands.
           const attached = await waitForAttachmentInfo(
             handle,
-            (i) => i.phase === 'attached' && !!i.currentAttachment,
+            (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
             5000,
             'initial attached',
           );
@@ -208,7 +208,8 @@ describe('adapter reconnect (#201)', function () {
           const reattached = await waitForAttachmentInfo(
             handle,
             (i) =>
-              i.phase === 'attached' &&
+              // #704 Item 2: idle reconnect may already be `awaiting` — both valid.
+              (i.phase === 'attached' || i.phase === 'awaiting') &&
               !!i.currentAttachment &&
               i.currentAttachment.attachmentId !== firstAttachmentId,
             10_000,
@@ -268,7 +269,9 @@ describe('adapter reconnect (#201)', function () {
           // Initial claim succeeds (budgetMs only affects the reconnect loop).
           await waitForAttachmentInfo(
             handle,
-            (i) => i.phase === 'attached',
+            // #704 Item 2: accept the idle attached→awaiting refinement; keep the
+            // live-lease guard so this still proves we hold an attachment.
+            (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
             5000,
             'initial attached',
           );
@@ -318,7 +321,9 @@ describe('adapter reconnect (#201)', function () {
           // Initial claim
           await waitForAttachmentInfo(
             handle,
-            (i) => i.phase === 'attached',
+            // #704 Item 2: accept the idle attached→awaiting refinement; keep the
+            // live-lease guard so this still proves we hold an attachment.
+            (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
             5000,
             'initial attached',
           );
@@ -399,7 +404,7 @@ describe('adapter reconnect (#201)', function () {
           //    so we can confirm the successor differs after CAN.
           const firstAttached = await waitForAttachmentInfo(
             handle,
-            (i) => i.phase === 'attached' && !!i.currentAttachment,
+            (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
             5000,
             'initial attached',
           );
@@ -501,7 +506,9 @@ describe('adapter reconnect (#201)', function () {
         try {
           await waitForAttachmentInfo(
             handle,
-            (i) => i.phase === 'attached',
+            // #704 Item 2: accept the idle attached→awaiting refinement; keep the
+            // live-lease guard so this still proves we hold an attachment.
+            (i) => (i.phase === 'attached' || i.phase === 'awaiting') && !!i.currentAttachment,
             5000,
             'initial attached',
           );

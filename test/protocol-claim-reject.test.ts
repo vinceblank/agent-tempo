@@ -100,7 +100,9 @@ describe('#786 claimAttachment protocol handshake', function () {
       });
       expect(token.attachmentId).to.be.a('string');
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
-      expect(info.phase).to.equal('attached');
+      // #704 Item 2: idle claim may refine attached → awaiting; the token above
+      // already proves the claim was accepted.
+      expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
     });

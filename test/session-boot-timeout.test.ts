@@ -21,6 +21,7 @@ import {
   setupSharedEnv,
   teardownTestEnv,
   withWorker,
+  withWorkerAndRecruitActivities,
   startSession,
   playerMetadata,
   skipTime,
@@ -46,16 +47,20 @@ describe('session boot-timeout watchdog (#704 Item 1a/1b)', function () {
     await teardownTestEnv();
   });
 
-  it('ARMED headless session that never attaches → gone + boot-timeout reason + tombstone memo', async function () {
+  it('ARMED headless RECRUIT that never attaches → gone + boot-timeout reason + tombstone memo', async function () {
     this.timeout(15_000);
-    await withWorker(async () => {
+    // Recruit-activities worker: the boot-timeout branch fires the best-effort
+    // recruiter-notify (deliverCue) + the host-queue hardTerminate sweep, both
+    // registered here. The cue to a nonexistent recruiter fast-fails (non-retryable,
+    // caught) — the watchdog still completes the terminal flip.
+    await withWorkerAndRecruitActivities(async () => {
       const playerId = `boot-armed-${Date.now()}`;
       const handle = await startSession({
         metadata: playerMetadata({
           playerId,
-          // Headless adapter, fresh boot ⇒ armed. `canBlockOnDialog: false` is the
-          // resolved descriptor value (omitting it is equivalent / also armed).
+          // Headless adapter (canBlockOnDialog false) + a recruiter present ⇒ ARMED.
           canBlockOnDialog: false,
+          recruitedBy: 'test-recruiter',
           bootingDeadlineMs: SHORT_DEADLINE_MS,
         }),
       });
@@ -85,7 +90,9 @@ describe('session boot-timeout watchdog (#704 Item 1a/1b)', function () {
       const handle = await startSession({
         metadata: playerMetadata({
           playerId,
-          // Interactive claude-code can park on the dev-channels dialog ⇒ disarmed.
+          // A RECRUIT (recruiter present) so the ONLY disarm reason under test is
+          // canBlockOnDialog: interactive claude-code can park on the dev-channels dialog.
+          recruitedBy: 'test-recruiter',
           canBlockOnDialog: true,
           bootingDeadlineMs: SHORT_DEADLINE_MS,
         }),
@@ -105,6 +112,33 @@ describe('session boot-timeout watchdog (#704 Item 1a/1b)', function () {
     });
   });
 
+  it('a NON-RECRUIT skeleton (no recruitedBy) is NOT armed — locks the from-upgrade #786 fix', async function () {
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const playerId = `boot-skeleton-${Date.now()}`;
+      // Mirrors a from-upgrade (#786) re-attach skeleton: headless adapter family
+      // (canBlockOnDialog false) but NO recruiter — it awaits a MANUAL restart, not a
+      // spawn. The watchdog must not sweep it (that would destroy seeded continuity).
+      const handle = await startSession({
+        metadata: playerMetadata({
+          playerId,
+          canBlockOnDialog: false,
+          // recruitedBy intentionally omitted → not a recruit → disarmed.
+          bootingDeadlineMs: SHORT_DEADLINE_MS,
+        }),
+      });
+
+      await skipTime(WAIT_PAST_DEADLINE_MS);
+
+      const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase, 'non-recruit skeleton stays booting (not swept)').to.equal('booting');
+      expect(await handle.query(isDestroyedQuery)).to.equal(false);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
   it('a session that CLAIMS before the deadline disarms the watchdog (never trips)', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
@@ -118,6 +152,7 @@ describe('session boot-timeout watchdog (#704 Item 1a/1b)', function () {
         metadata: playerMetadata({
           playerId,
           canBlockOnDialog: false,
+          recruitedBy: 'test-recruiter',
           bootingDeadlineMs: CLAIM_TEST_DEADLINE_MS,
         }),
       });

@@ -125,7 +125,9 @@ describe('T0.5 SA diet (#747) — memo migration', function () {
         args: [{ host: 'test-host', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       const info = await handle.query(attachmentInfoQuery);
-      expect(info.phase).to.equal('attached');
+      // #704 Item 2: idle claim may refine attached → awaiting (orthogonal to the
+      // search-attribute assertions below, which are what this test is about).
+      expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
 
       const desc = await handle.describe();
       const sa = (desc.searchAttributes ?? {}) as Record<string, unknown>;

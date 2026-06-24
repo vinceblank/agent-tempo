@@ -341,30 +341,41 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // A session that starts FRESH in `booting` (no attachment handoff) and never
   // reaches `claimAttachment` within `BOOTING_DEADLINE_MS` is a failed recruit:
   // the adapter never launched, wedged on a launch dialog, or crashed pre-attach.
-  // We ARM a deadline only when BOTH hold:
+  // We ARM a deadline only when ALL THREE hold:
   //   1. `startedFresh` — no handoff. A restart/migrate carries `currentAttachment`
   //      (and a non-`booting` phase), so its successor must NEVER arm — it already
   //      has an adapter contract. Detached/other CAN successors are likewise skipped.
-  //   2. `canBlockOnDialog !== true` — the adapter can't park on a blocking
+  //   2. `recruitedBy` present — this is an actual RECRUIT (a spawn is coming and is
+  //      expected to attach). The watchdog is a failed-recruit detector — it even
+  //      notifies `recruitedBy` ("recruit of <name> never attached"). Skeletons created
+  //      WITHOUT a recruiter intentionally sit in `booting` awaiting a manual attach and
+  //      must NOT be swept: from-upgrade re-attach skeletons (#786 — the designed
+  //      await-per-player-restart behavior), conductor/`up`, manual self-bootstrap. A
+  //      positive allowlist ("arm only real recruits") rather than a per-skeleton-path
+  //      blocklist, so future adapterless-skeleton paths inherit the safe default.
+  //   3. `canBlockOnDialog !== true` — the adapter can't park on a blocking
   //      launch-time dialog. Interactive `claude-code` (dev-channels dialog) sets
   //      this true and is DISARMED until #890 dissolves the dialog: an operator-away
   //      false-kill of a legitimately-waiting recruit is worse than the hang.
   // The structural `canBlockOnDialog` (resolved from the adapter descriptor at
   // spawn, threaded via metadata) is the contract — NOT an `agentType` hardcode.
   const startedFresh = !input.currentAttachment && (input.phase === undefined || input.phase === 'booting');
-  const armBootingWatchdog = startedFresh && input.metadata.canBlockOnDialog !== true;
+  const armBootingWatchdog =
+    startedFresh && !!input.metadata.recruitedBy && input.metadata.canBlockOnDialog !== true;
   /**
    * ISO timestamp of when this run entered `booting`, or `null` when the watchdog
-   * is disarmed (handoff / interactive / already attached). Cleared on the first
-   * successful fresh claim. Only non-null ⟹ armed, so `nextDeadlineMs()` and the
-   * main-loop reap can gate on `bootingSince !== null` alone.
+   * is disarmed (handoff / non-recruit skeleton / interactive / already attached).
+   * Cleared on the first successful fresh claim. Only non-null ⟹ armed, so
+   * `nextDeadlineMs()` and the main-loop reap can gate on `bootingSince !== null` alone.
    */
   let bootingSince: string | null = armBootingWatchdog ? workflowNow().toISOString() : null;
-  if (startedFresh && input.metadata.canBlockOnDialog === true) {
+  if (startedFresh && input.metadata.recruitedBy && input.metadata.canBlockOnDialog === true) {
     // Visibility for the known, bounded gap (companion brief §1): interactive
-    // claude-code keeps today's indefinite-`booting` behavior until #890.
+    // claude-code RECRUITS keep today's indefinite-`booting` behavior until #890.
+    // (Non-recruit skeletons are disarmed for a different reason — no recruiter —
+    // and don't log this #890 notice.)
     workflowLog.info(
-      'booting watchdog DISARMED for interactive claude-code (canBlockOnDialog) — pending #890',
+      'booting watchdog DISARMED for interactive claude-code recruit (canBlockOnDialog) — pending #890',
     );
   }
 
