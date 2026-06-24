@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   | `schedule` | `create` · `cancel` · `list` | reused name; defaults to `create` |
   | `stage` | `create` · `list` · `cancel` | reused name; defaults to `create` |
 
-  Aliases carry `DEPRECATED: use <canonical> with action=<x>` descriptions.
+  Aliases carry ``DEPRECATED — use `<canonical>` with action="<x>"`` descriptions.
   Alias drop (the net tool-count reduction) lands at GA, not in the beta.
 
 ### Fixed
@@ -41,9 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - **Booting-watchdog** — a session that never reaches `claimAttachment` within
     `BOOTING_DEADLINE_MS` (default 180 s) flips to terminal `gone`, sweeps any
     orphan process, and notifies the recruiter with an actionable failure message
-    instead of hanging indefinitely. Headless adapters are armed; interactive
-    `claude-code` stays disarmed pending #890 (dev-channels dialog). Handoffs
-    (restart/migrate with a current attachment) are never armed.
+    instead of hanging indefinitely. Armed **only for recruited** headless sessions.
+    Non-recruit booting sessions are never armed — **from-upgrade skeletons**
+    (awaiting manual re-attach, so their seeded sessionId/playerState is never
+    swept), the conductor, and plain `up`. Interactive `claude-code` stays disarmed
+    pending #890; restart/migrate handoffs are never armed.
 
   - **Late-orphan re-registration guard** — `destroy` and boot-timeout stamp a
     typed `AgentTempoCloseReason` memo (`'destroyed'` | `'boot-timeout'`). The
@@ -90,9 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `docs/cli.md`.
 
 - **Vitest env-hardening (#744, PR #885)** — `tests/setup.ts` wired via
-  `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*` /
-  `CLAUDE_TEMPO_*` env keys around every suite, eliminating false-negative test
-  clusters from stale ambient vars in the invoking shell.
+  `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*`/`CLAUDE_TEMPO_*`
+  keys around every suite, eliminating false-negative test clusters from stale ambient
+  vars in the invoking shell.
 
 - **Dead pre-v1.8 memo-absence fallback removed (#874, PR #881)** — the legacy
   code path in the outbox cloud scan that guessed session state when the v1.8 SA
