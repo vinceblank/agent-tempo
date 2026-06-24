@@ -180,6 +180,32 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   const DEFAULT_DRAINING_DEADLINE_MS = 5_000;
   /** Max duration a messageId can stay in-flight before the safety timer ejects it. */
   const PROCESSING_DEADLINE_MS = 15 * 60 * 1000;
+  /**
+   * #704 — max duration a session may sit in `booting` (no attachment claimed)
+   * before the watchdog fails the recruit. Default 180s (architect OQ-3: 120s
+   * floor; 180s clears a cold launch + cross-host recruit handshake). Workflows
+   * can't read process.env, so an operator/test override rides durable metadata
+   * (`bootingDeadlineMs`, sourced from `AGENT_TEMPO_BOOTING_DEADLINE_MS` at
+   * spawn). Only ARMED for headless adapters on a fresh (non-handoff) boot —
+   * see `armBootingWatchdog` below.
+   */
+  const BOOTING_DEADLINE_MS =
+    typeof input.metadata.bootingDeadlineMs === 'number' && input.metadata.bootingDeadlineMs > 0
+      ? input.metadata.bootingDeadlineMs
+      : 180_000;
+  /**
+   * #704 Item 2 — generous main-loop wake backstop (architect-ruled FINAL).
+   * Every deadline-mutating handler now bumps `wakeEpoch`, so in steady state
+   * the loop wakes on exactly `nextDeadlineMs()`. This backstop is defense-in-
+   * depth for a FUTURE handler that mutates wake-relevant state but forgets the
+   * bump: the loop still re-evaluates at least every `BACKSTOP_MS` instead of
+   * sleeping forever (we deliberately do NOT add an `Infinity → no-timer` branch
+   * — a silent indefinite sleep is the exact failure class #704 exists to kill).
+   * A fallback-cap wake that finds actionable state emits a loud WARN (below) so
+   * a missed bump is detectable, not masked. 30min is large enough that it never
+   * fires in correct steady state yet bounds any regression.
+   */
+  const BACKSTOP_MS = 30 * 60 * 1000;
 
   // ── 2.0 clean-slate (#787) ──
   // The replay-only `patched()` markers that protected in-flight 1.x sessions
@@ -311,6 +337,48 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   /** ISO timestamp of when the workflow most recently entered `detached`. */
   let detachedSince: string | null = null;
 
+  // ── #704 — Booting attach-timeout watchdog ──
+  // A session that starts FRESH in `booting` (no attachment handoff) and never
+  // reaches `claimAttachment` within `BOOTING_DEADLINE_MS` is a failed recruit:
+  // the adapter never launched, wedged on a launch dialog, or crashed pre-attach.
+  // We ARM a deadline only when ALL THREE hold:
+  //   1. `startedFresh` — no handoff. A restart/migrate carries `currentAttachment`
+  //      (and a non-`booting` phase), so its successor must NEVER arm — it already
+  //      has an adapter contract. Detached/other CAN successors are likewise skipped.
+  //   2. `recruitedBy` present — this is an actual RECRUIT (a spawn is coming and is
+  //      expected to attach). The watchdog is a failed-recruit detector — it even
+  //      notifies `recruitedBy` ("recruit of <name> never attached"). Skeletons created
+  //      WITHOUT a recruiter intentionally sit in `booting` awaiting a manual attach and
+  //      must NOT be swept: from-upgrade re-attach skeletons (#786 — the designed
+  //      await-per-player-restart behavior), conductor/`up`, manual self-bootstrap. A
+  //      positive allowlist ("arm only real recruits") rather than a per-skeleton-path
+  //      blocklist, so future adapterless-skeleton paths inherit the safe default.
+  //   3. `canBlockOnDialog !== true` — the adapter can't park on a blocking
+  //      launch-time dialog. Interactive `claude-code` (dev-channels dialog) sets
+  //      this true and is DISARMED until #890 dissolves the dialog: an operator-away
+  //      false-kill of a legitimately-waiting recruit is worse than the hang.
+  // The structural `canBlockOnDialog` (resolved from the adapter descriptor at
+  // spawn, threaded via metadata) is the contract — NOT an `agentType` hardcode.
+  const startedFresh = !input.currentAttachment && (input.phase === undefined || input.phase === 'booting');
+  const armBootingWatchdog =
+    startedFresh && !!input.metadata.recruitedBy && input.metadata.canBlockOnDialog !== true;
+  /**
+   * ISO timestamp of when this run entered `booting`, or `null` when the watchdog
+   * is disarmed (handoff / non-recruit skeleton / interactive / already attached).
+   * Cleared on the first successful fresh claim. Only non-null ⟹ armed, so
+   * `nextDeadlineMs()` and the main-loop reap can gate on `bootingSince !== null` alone.
+   */
+  let bootingSince: string | null = armBootingWatchdog ? workflowNow().toISOString() : null;
+  if (startedFresh && input.metadata.recruitedBy && input.metadata.canBlockOnDialog === true) {
+    // Visibility for the known, bounded gap (companion brief §1): interactive
+    // claude-code RECRUITS keep today's indefinite-`booting` behavior until #890.
+    // (Non-recruit skeletons are disarmed for a different reason — no recruiter —
+    // and don't log this #890 notice.)
+    workflowLog.info(
+      'booting watchdog DISARMED for interactive claude-code recruit (canBlockOnDialog) — pending #890',
+    );
+  }
+
   // ── Processing Lifecycle State (fixes #99) ──
   // Tracks messages currently being processed by a blocking adapter. While non-empty,
   // stale detection is suppressed AND the phase refines to `processing`.
@@ -395,6 +463,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   function nextDeadlineMs(): number {
     const nowMs = workflowNow().getTime();
     const candidates: number[] = [];
+    // #704 — booting attach-timeout. `bootingSince` is non-null only while the
+    // watchdog is armed AND the session is still booting (cleared on fresh claim).
+    if (phase === 'booting' && bootingSince) {
+      candidates.push(new Date(bootingSince).getTime() + BOOTING_DEADLINE_MS);
+    }
     if (currentAttachment) {
       candidates.push(new Date(currentAttachment.expiresAt).getTime());
     }
@@ -674,6 +747,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       processingSince = workflowNow().toISOString();
       // Phase refinement: if we're attached (or awaiting), move to `processing`.
       if (phase === 'attached' || phase === 'awaiting') setPhase('processing');
+      // #704 Item 2 — setting `processingSince` adds a new `PROCESSING_DEADLINE_MS`
+      // deadline; bump `wakeEpoch` so the main loop arms it immediately rather than
+      // relying on the backstop cap (the historical reason for the 5-min cap).
+      wakeEpoch++;
     }
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -716,6 +793,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         );
         setPhase(outboxIdle ? 'awaiting' : 'attached');
       }
+      // #704 Item 2 — clearing `processingSince` removes the processing deadline;
+      // bump `wakeEpoch` so the main loop re-evaluates (and dispatches any pending
+      // outbox) immediately rather than waiting on the backstop cap.
+      wakeEpoch++;
     }
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -820,6 +901,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
     });
+    // #704 Item 1b — stamp the typed close-reason MEMO on this terminal
+    // completion. The bootstrap orphan-guard (`server.ts`) reads it via
+    // `describe().memo` to self-tombstone a late-launching orphan process whose
+    // run was destroyed and never recreated (no running run + this reason).
+    upsertMemo({ [MEMO_KEYS.closeReason]: 'destroyed' });
     setPhase('gone');
     // Inject a final audit message so the old adapter-completion path has something to show.
     messages.push({
@@ -831,6 +917,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
+    // #704 Item 2 — `destroyRequested` (set above) is in the main-loop predicate,
+    // but bump `wakeEpoch` too so a loop asleep on a far deadline wakes promptly
+    // to run the terminal exit path.
+    wakeEpoch++;
   });
 
   setHandler(isDestroyedQuery, () => destroyed || destroyRequested);
@@ -884,6 +974,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       currentAttachment.leaseMs = leaseMs;
       lastActivityTime = nowMs;
       activityCount++;
+      // #704 Item 2 — this mutates `expiresAt` (a `nextDeadlineMs()` input); bump
+      // `wakeEpoch` so the main loop re-evaluates the new lease deadline instead
+      // of relying on the backstop cap.
+      wakeEpoch++;
       return attachmentTokenFrom(currentAttachment, leaseMs);
     }
 
@@ -918,12 +1012,19 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     drainingSince = null;
     drainingDeadlineMs = null;
     detachedSince = null;
+    // #704 Item 1a — first successful claim: disarm the booting watchdog so
+    // `nextDeadlineMs()` drops the booting deadline (the lease deadline takes over).
+    bootingSince = null;
     setPhase('attached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [host],
     });
     lastActivityTime = nowMs;
     activityCount++;
+    // #704 Item 2 — a fresh claim moves a `booting`/`detached` session to a
+    // finite lease deadline (often from `+Infinity`); bump `wakeEpoch` so the
+    // main loop picks up the new deadline immediately.
+    wakeEpoch++;
     return attachmentTokenFrom(newAttachment, leaseMs);
   }, {
     validator: ({ host, leaseMs, protocolVersion }) => {
@@ -1655,56 +1756,44 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // timer would leave the workflow in `draining` until that old timer fired.
     const epochAtWait = wakeEpoch;
     const deadlineMs = nextDeadlineMs();
-    // NOTE: This 5-min fallback wake is LOAD-BEARING despite an old "PR-C shim"
-    // framing that surfaced in researcher's tier-2 cleanup audit (2026-04-26).
-    // While #175 removed the legacy stale/blocked detection block this originally
-    // fed (see ~§1527 below), the wake itself remains essential as the loop's
-    // periodic re-evaluation tick for state changes from handlers that mutate
-    // `nextDeadlineMs()` inputs WITHOUT bumping `wakeEpoch`:
-    //
-    //   - `claimAttachmentUpdate` (renewal + fresh paths) — sets
-    //     `currentAttachment.expiresAt` → new lease-expiry deadline
-    //   - `processingStartUpdate` — sets `processingSince` → new
-    //     `PROCESSING_DEADLINE_MS` deadline
-    //   - `processingEndUpdate` — clears `processingSince` → cancels processing
-    //     deadline
-    //   - `destroyUpdate` (async hard-terminate-then-flip path)
-    //
-    // Without the fallback wake, a workflow waiting in `condition(predicate)` on
-    // an `Infinity` deadline (booting / detached, no draining, no processing)
-    // never re-evaluates `nextDeadlineMs()` after one of these handlers fires —
-    // the freshly-set lease-expiry timer is never picked up, lease expiry is
-    // never reaped, and the workflow stalls until external state forces the
-    // predicate true. Smoking-gun test that fails without the fallback:
-    // `test/session-phase-processing.test.ts:54` "attached -> processing ->
-    // awaiting via processingStart/End (#117 fix)" — times out at 10s because
-    // the loop never makes progress after `processingStart` lands on a fresh
-    // claim.
-    //
-    // Removing this fallback safely is a "main-loop wake-discipline cleanup"
-    // separate from the audit's framing — adds `wakeEpoch++` to each affected
-    // handler, gates with `patched()` markers for replay-determinism (live
-    // workflow histories already recorded the existing `Timer 5min` events),
-    // and adds a regression test covering the handler-induced-deadline pickup.
-    // Estimated 4–6 handler edits + tests, separate dedicated PR. See the
-    // 2026-04-26 forensics for the full mechanism walkthrough — link from this
-    // file's PR history.
-    //
-    // Until that cleanup happens, DO NOT remove this fallback. The
-    // `Math.min(deadlineMs, 5 * 60 * 1000)` cap is part of the same mechanism:
-    // it ensures every deadline (even hour-long lease-expiry timers) is
-    // re-evaluated at least every 5 min so handler-induced deadline shortenings
-    // can't be missed.
-    const conditionPromise = condition(
+    // #704 Item 2 — wake discipline. Every handler that mutates a `nextDeadlineMs()`
+    // input now bumps `wakeEpoch` (claim renew+fresh, processingStart/End, the
+    // draining/detach paths, destroy), so in steady state the loop wakes on exactly
+    // `nextDeadlineMs()`. `BACKSTOP_MS` is defense-in-depth for a FUTURE handler that
+    // mutates wake-relevant state but forgets the bump: the loop still re-evaluates
+    // at least every 30 min instead of sleeping forever. We deliberately keep the
+    // backstop even when `deadlineMs === Infinity` (idle booting-disarmed / detached)
+    // — a silent indefinite sleep is the exact failure class #704 exists to kill, so
+    // there is NO `Infinity → no-timer` branch. A backstop wake that finds actionable
+    // state emits a loud WARN below so a missed bump is detectable, not masked.
+    // Canary: `test/session-phase-processing.test.ts` ("attached → processing →
+    // awaiting via processingStart/End") fails if a deadline-mutating handler drops
+    // its bump.
+    const wokeByPredicate = await condition(
       () =>
         destroyRequested ||
         canDispatch() ||
         hasPendingStop() ||
         phase === 'gone' ||
         wakeEpoch !== epochAtWait,
-      deadlineMs === Number.POSITIVE_INFINITY ? '5 minutes' : Math.min(deadlineMs, 5 * 60 * 1000),
+      Math.min(deadlineMs, BACKSTOP_MS),
     );
-    await conditionPromise;
+
+    // #704 Item 2 — missed-bump breadcrumb. If we woke on the backstop cap (NOT the
+    // predicate) yet a deadline is already overdue or the predicate is now actionable,
+    // a handler likely mutated wake-relevant state without bumping `wakeEpoch`.
+    // Surface it loudly instead of letting the backstop silently mask the regression.
+    if (!wokeByPredicate) {
+      const overdue = nextDeadlineMs() <= 0;
+      const actionable =
+        destroyRequested || canDispatch() || hasPendingStop() || phase === 'gone';
+      if (overdue || actionable) {
+        workflowLog.warn(
+          `main-loop woke via fallback backstop with actionable state — possible missed ` +
+          `wakeEpoch bump (phase=${phase}, overdue=${overdue}, actionable=${actionable})`,
+        );
+      }
+    }
 
     if (destroyRequested) break;
 
@@ -1724,6 +1813,80 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         AgentTempoAttachedHost: [''],
       });
       workflowLog.warn(`lease expired for attachment ${reaped.attachmentId} (host=${reaped.hostname})`);
+    }
+
+    // ── §9.5.a2: booting attach-timeout (#704). ──
+    // A fresh, armed session that never reached `claimAttachment` within
+    // `BOOTING_DEADLINE_MS` is a failed recruit (adapter never launched / wedged /
+    // crashed pre-attach). Fail it LOUDLY: sweep any orphan process, notify the
+    // recruiter, stamp the close-reason tombstone MEMO, and COMPLETE terminal
+    // `gone`. `bootingSince !== null` ⟹ the watchdog is armed (headless adapter on
+    // a fresh, non-handoff boot). The bootstrap orphan-guard backstops the case
+    // where the swept process (or a never-swept one) re-launches later.
+    if (
+      phase === 'booting' &&
+      bootingSince !== null &&
+      workflowNow().getTime() - new Date(bootingSince).getTime() >= BOOTING_DEADLINE_MS
+    ) {
+      lastDetachReason = 'boot-timeout';
+      workflowLog.warn(
+        `boot-timeout: session never attached within ${Math.round(BOOTING_DEADLINE_MS / 1000)}s — failing recruit`,
+      );
+      // Best-effort orphan sweep. At the deadline the spawned process usually
+      // EXISTS (still booting), so this command-line kill is MORE likely to land
+      // than the destroy-time sweep. No-op if nothing launched.
+      const killHost = preferredHost ?? input.metadata.hostname;
+      if (killHost) {
+        try {
+          const killResult = await getHardTerminateProxyForDestroy(killHost)({
+            ensemble: input.metadata.ensemble,
+            playerName: input.metadata.playerId,
+            agent: (input.metadata.agentType ?? 'claude') as AgentType,
+            workDir: input.metadata.workDir,
+          });
+          workflowLog.info(
+            `boot-timeout hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+            `killedPids=[${killResult.killedPids.join(',')}]`,
+          );
+        } catch (err) {
+          workflowLog.warn(
+            `boot-timeout hard-terminate failed on ${killHost} (best-effort): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      // Notify the recruiter (if any) — reuses the outbox `deliverCue` activity.
+      const recruiter = input.metadata.recruitedBy;
+      if (recruiter) {
+        try {
+          await deliverCue({
+            ensemble: input.metadata.ensemble,
+            fromPlayerId: input.metadata.playerId,
+            targetPlayerId: recruiter,
+            message:
+              `Recruit of "${input.metadata.playerId}" never attached within ` +
+              `${Math.round(BOOTING_DEADLINE_MS / 1000)}s — failed; the spawned process (if any) was swept.`,
+          });
+        } catch (err) {
+          workflowLog.warn(
+            `boot-timeout recruiter-notify failed (best-effort): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      // Tombstone MEMO (shared with the orphan-guard) + terminal `gone`.
+      upsertMemo({ [MEMO_KEYS.closeReason]: 'boot-timeout' });
+      lastAdapterMeta = lastAdapterMeta ?? {
+        hostname: killHost ?? input.metadata.hostname,
+        adapterId: '',
+      };
+      bootingSince = null;
+      setPhase('gone');
+      upsertSearchAttributes({ AgentTempoAttachedHost: [''] });
+      // Route through the terminal exit path (mirrors `destroy`): isDestroyed
+      // queries read true, then the loop breaks to COMPLETE.
+      destroyRequested = true;
+      break;
     }
 
     // ── §9.5.b: processingDeadline — force exit from `processing` if a messageId is wedged. ──
@@ -2013,6 +2176,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
             adapterId: currentAttachment.adapterId,
           };
           lastDetachReason = 'spawn-failed';
+          // #704 Item 2 — no `wakeEpoch++` needed here despite clearing
+          // `nextDeadlineMs()` inputs (currentAttachment/processingSince/draining):
+          // this rollback runs INLINE in the main-loop body (outbox dispatch), not
+          // in a signal/update handler, so the very next loop iteration recomputes
+          // `nextDeadlineMs()` before the next `condition()` wait. (The bump
+          // discipline is for HANDLERS that mutate these while the loop is parked.)
           currentAttachment = null;
           inFlightMessages.clear();
           processingSince = null;

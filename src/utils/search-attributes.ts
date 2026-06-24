@@ -73,6 +73,15 @@ export const MEMO_KEYS = {
   // Memo, not a search attribute: avoids a 6th Keyword (the #747 SA-diet keeps
   // us at 5/10) and needs no operator registration. See constants.PROTOCOL_VERSION.
   protocol: 'AgentTempoProtocol',
+  // #704 — typed terminal close-reason stamped on a workflow's memo when it
+  // COMPLETEs via `destroy` (`'destroyed'`) or the booting attach-timeout
+  // watchdog (`'boot-timeout'`). Survives completion and is readable via
+  // `describe().memo`. The bootstrap orphan-guard (`server.ts`) reads it to
+  // self-tombstone a late-launching orphan process whose run was cancelled,
+  // discriminated by the running-run × close-reason PAIR. A string memo (not a
+  // search attribute): avoids a 6th Keyword (the #747 SA-diet keeps us at 5/10)
+  // and needs no operator registration.
+  closeReason: 'AgentTempoCloseReason',
 } as const;
 
 /**

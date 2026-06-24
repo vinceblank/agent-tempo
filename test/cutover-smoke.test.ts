@@ -323,11 +323,14 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         expect(token, 'claimAttachment returned a token').to.exist;
         expect(token.attachmentId, 'token has attachmentId').to.be.a('string');
 
-        // Phase should now be 'attached' (booting → attached after successful claim).
+        // Phase should now be attached-with-lease after the claim. #704 Item 2: an
+        // idle claim may refine attached → awaiting immediately (both valid — the
+        // token assertion above already proves the claim succeeded).
         const postClaimInfo = await soloistWf.query(attachmentInfoQuery);
-        expect(postClaimInfo.phase, 'phase booting → attached after claimAttachment').to.equal(
-          'attached',
-        );
+        expect(
+          postClaimInfo.phase,
+          'phase booting → attached|awaiting after claimAttachment',
+        ).to.be.oneOf(['attached', 'awaiting']);
 
         // ── Cue non-redelivery: confirm soloist inbox is empty (cues not replayed) ──
         // Undelivered cues are captured for OPERATOR REVIEW only, never redelivered.

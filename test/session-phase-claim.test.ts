@@ -71,7 +71,12 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       expect(token.runId).to.be.a('string');
       expect(token.leaseMs).to.equal(30_000);
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
-      expect(info.phase).to.equal('attached');
+      // #704 Item 2: the fresh-claim wakeEpoch bump makes the main loop run
+      // immediately, so the §2.2 idle-refinement may have already lifted an idle
+      // claimed session attached → awaiting. Both are valid attached-with-lease
+      // states (currentAttachment present); assert that invariant, not the
+      // pre-#704 timing artifact. (Mirrors the existing note at ~line 300.)
+      expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
       expect(info.currentAttachment?.hostname).to.equal('host-A');
       expect(info.currentAttachment?.adapterClass).to.equal('interactive');
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
@@ -154,7 +159,9 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
         args: [{ host: 'host-B', protocolVersion: PROTOCOL_VERSION, adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
       });
       info = await handle.query(attachmentInfoQuery);
-      expect(info.phase).to.equal('attached');
+      // #704 Item 2: idle re-claim may refine attached → awaiting immediately
+      // (both valid; currentAttachment asserted on the next line).
+      expect(info.phase).to.be.oneOf(['attached', 'awaiting']);
       expect(info.currentAttachment?.attachmentId).to.equal(t2.attachmentId);
       expect(info.currentAttachment?.hostname).to.equal('host-B');
 

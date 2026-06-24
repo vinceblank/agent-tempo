@@ -525,6 +525,19 @@ export function createOutboxActivities(
             // session workflow and dispatch path can resolve the adapter descriptor
             // from the registry without falling back to the legacy agentType field.
             adapterId: registry.resolveFromAgentType(agent),
+            // #704 — resolve the adapter descriptor's dialog-blocking property at
+            // spawn time and thread it onto durable metadata so the session workflow
+            // can ARM/DISARM the booting watchdog structurally (no agentType
+            // hardcode). Headless adapters omit it ⇒ falsy ⇒ ARMED; interactive
+            // `claude-code` sets it true ⇒ disarmed until #890.
+            canBlockOnDialog:
+              registry.get(registry.resolveFromAgentType(agent))?.canBlockOnDialog === true,
+            // #704 — optional env override for the booting deadline (workflows
+            // can't read env). Only set when a valid positive integer is provided.
+            ...(() => {
+              const ms = Number(process.env[ENV.BOOTING_DEADLINE_MS]);
+              return Number.isFinite(ms) && ms > 0 ? { bootingDeadlineMs: ms } : {};
+            })(),
             sessionId,
             // #131 / #449 Phase C — persist the claude-api / opencode model
             // on durable metadata so restart can recover the original choice
