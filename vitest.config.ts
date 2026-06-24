@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath, URL } from 'node:url';
 
 /**
  * Vitest configuration for pure-logic unit tests.
@@ -59,7 +60,12 @@ export default defineConfig({
     ],
     // Scrub ambient AGENT_TEMPO_*/CLAUDE_TEMPO_* env vars before each file
     // and restore the clean baseline after each test (#744).
-    setupFiles: ['tests/setup.ts'],
+    // Absolute path bypasses Vite's URL transformer for the setup file so the
+    // vite-worker spawn race ("Failed to load url tests/setup.ts") can't hit it.
+    // A relative string goes through the Vite module server which fails
+    // intermittently under heavy parallelism (#894). Belt-and-suspenders with
+    // poolOptions.threads.maxThreads below.
+    setupFiles: [fileURLToPath(new URL('./tests/setup.ts', import.meta.url))],
     environment: 'node',
     globals: false,
     // Keep these tests fast — no Ink, no Temporal, no I/O beyond mocks.
