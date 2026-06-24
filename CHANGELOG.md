@@ -40,12 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   attribute schema was absent is deleted. No operator action required; the path was
   unreachable for any session that can survive the 2.0 protocol-2 cutover.
 
-- **Vitest env-hardening (#744)** *(pending)* — `tests/setup.ts` wired via
+- **Vitest env-hardening (#744)** — `tests/setup.ts` wired via
   `vitest.config.ts::setupFiles` strips and restores all `AGENT_TEMPO_*` /
   `CLAUDE_TEMPO_*` env keys around every suite, eliminating false-negative test
   clusters caused by stale ambient vars from the invoking shell.
 
-- **Command-center access tiers (#791)** *(pending)* — details TBD when landed.
+- **Command-center access tiers (#791)** — details TBD (description incoming).
 
 ### Observability
 
