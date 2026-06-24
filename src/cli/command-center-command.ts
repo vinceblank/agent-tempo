@@ -19,6 +19,7 @@ import { CliOverrides, ENV, getConfig, isDevMode } from '../config';
 import { buildPiCommandCenterSpawn, launchInTerminal } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
 import { arePiExtensionsRegistered, installPiExtensions } from '../pi/install';
+import { commandCenterAccessTierLines } from '../constants';
 import * as out from './output';
 
 export interface CommandCenterArgs extends CliOverrides {
@@ -71,6 +72,14 @@ export async function commandCenterCommand(args: CommandCenterArgs): Promise<voi
     }
   }
 
+  // #791 — surface the three access tiers up front so the subscription-friendly
+  // posture is discoverable: the board + operator controls need NO auth on a
+  // local daemon; only the LLM planner needs a Claude subscription (`/login`,
+  // zero API key) or an API key. Wording is the single source of truth in
+  // constants.ts (mirrored into docs/cli.md, drift-guarded).
+  out.log(out.dim('  Access tiers (the board works with no auth — only the LLM planner needs a key/login):'));
+  for (const line of commandCenterAccessTierLines()) out.log(out.dim(line));
+
   // Admin (T3) token — mission-control's operator write/gate surface reads it.
   // #54: a LOCAL (loopback) daemon grants full trust tokenless, so a tokenless
   // board is fully functional locally; only a REMOTE / 0.0.0.0 daemon requires the
@@ -85,9 +94,16 @@ export async function commandCenterCommand(args: CommandCenterArgs): Promise<voi
       ),
     );
   }
+  // #791 — NOT a warning: a missing API key is an expected, fully-supported
+  // state. The board + operator controls work regardless; point at the `/login`
+  // zero-API-key planner path (Claude Pro/Max OAuth) rather than implying a
+  // degraded fallback.
   if (!process.env.ANTHROPIC_API_KEY) {
-    out.warn(
-      'ANTHROPIC_API_KEY is not set — the Pi command-center will fall back to Pi\'s own auth/default model.',
+    out.log(
+      out.dim(
+        '  ANTHROPIC_API_KEY not set — the board + operator controls still work. ' +
+        'Run /login inside the board to enable the LLM planner on your Claude subscription (zero API key).',
+      ),
     );
   }
 

@@ -93,3 +93,52 @@ export function ensembleReadyDirective(name: string, playerCount: number): strin
     'If the user has not spoken yet, wait silently.',
   ].join('\n');
 }
+
+/** One command-center access tier — its short label + the source-of-truth wording. */
+export interface CommandCenterAccessTier {
+  /** Short label shown at the head of the line (e.g. `No auth`, `/login`, `API key`). */
+  label: string;
+  /** Tier wording — mirrored VERBATIM into docs/cli.md (drift-guarded). */
+  description: string;
+}
+
+/**
+ * #791 — command-center access tiers. THE SINGLE SOURCE OF TRUTH for the three
+ * access levels the `command-center` board offers, shared between the launch
+ * banner (`src/cli/command-center-command.ts`) and `docs/cli.md`.
+ *
+ * The tiers are independent, NOT a strict ladder: tier 1 (board + operator
+ * controls) needs NO auth on a local loopback daemon; tiers 2/3 only add the
+ * LLM PLANNER (ask / handoff / recruit), which needs either a Claude
+ * subscription via in-session `/login` (zero API key) or an `ANTHROPIC_API_KEY`.
+ *
+ * `tests/cli/command-center-access-tiers.test.ts` asserts the banner renders
+ * every tier AND that `docs/cli.md` carries each tier's label + description
+ * verbatim — so the launch text and the docs can never drift.
+ */
+export const COMMAND_CENTER_ACCESS_TIERS: readonly CommandCenterAccessTier[] = [
+  {
+    label: 'No auth',
+    description:
+      'board + operator controls (cue, pause, play, restart, destroy) — works out of the box on a local (loopback) daemon; no token or login required.',
+  },
+  {
+    label: '/login',
+    description:
+      'LLM planner on your Claude Pro/Max subscription — run /login inside the board to enable the planner (ask, handoff, recruit) with zero API key.',
+  },
+  {
+    label: 'API key',
+    description:
+      'LLM planner on an API key — set ANTHROPIC_API_KEY before launch to run the planner against the Anthropic API.',
+  },
+];
+
+/**
+ * Render {@link COMMAND_CENTER_ACCESS_TIERS} as plain indented `  • label — description`
+ * lines for the `command-center` launch banner. One string per tier; the caller
+ * styles them and prints a heading. Runtime-free, so it stays importable anywhere.
+ */
+export function commandCenterAccessTierLines(): string[] {
+  return COMMAND_CENTER_ACCESS_TIERS.map((t) => `  • ${t.label} — ${t.description}`);
+}
