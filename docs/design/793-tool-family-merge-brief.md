@@ -283,7 +283,10 @@ interface TempoToolDescriptor {
 - [ ] `evaluate_gate` unchanged and still separate.
 - [ ] `schedule` / `stage` callers omitting `action` still hit `create` (backward-compat).
 - [ ] Per-action runtime guards throw friendly errors on missing required fields.
-- [ ] `docs/SURFACE-REGISTRY.md` updated; `scripts/check-surface-drift.js` green (and hardened per §6).
+- [ ] `docs/SURFACE-REGISTRY.md` updated; `scripts/check-surface-drift.js` green.
+- [ ] **#707 hardening folded into the #793 PR** — drift check enumerates names from `buildAllTempoTools()`
+      output (not source regex) + asserts a non-zero tool count, so the new canonicals+aliases cannot silently
+      escape the drift gate (per §6). Ratified fold-in for this PR.
 - [ ] `docs/WIRE-PROTOCOL.md` NOT touched (confirm in PR body).
 - [ ] Canonical-dispatch + alias-parity tests in both `test/` and `tests/`; `npm run check:all` green.
 - [ ] No old tool name removed (alias-not-remove invariant holds).
