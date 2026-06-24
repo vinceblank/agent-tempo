@@ -5,11 +5,20 @@ import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
 import { resolveSession } from './resolve';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
+import { firstMissing } from './action-guard';
+import { buildUnscheduleTool } from './unschedule';
+import { buildSchedulesTool } from './schedules';
 import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:schedule]', ...args);
 
-export function buildScheduleTool(
+/**
+ * Internal create-only descriptor (the legacy bare-`schedule` behaviour). Its
+ * `.handler` is reused verbatim by the canonical {@link buildScheduleTool}
+ * dispatch under `action="create"`. Not exported — the canonical tool is the
+ * public surface.
+ */
+function buildScheduleCreateTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
@@ -172,4 +181,96 @@ export function buildScheduleTool(
       }
     },
   };
+}
+
+/**
+ * Canonical `schedule` tool (#793 merge) — **reused** name, so `action` defaults
+ * to `'create'` for backward-compat (existing callers omit `action` → the legacy
+ * bare-`schedule` create behaviour). Actions: `create | cancel | list`.
+ *
+ * The rich one-of timing validation lives in the create handler (reused
+ * verbatim); `cancel` reuses `unschedule`, `list` reuses `schedules`. The legacy
+ * `unschedule` / `schedules` names stay registered as forwarding aliases
+ * ({@link buildScheduleAliasTools}); there is no alias for `create` — the bare
+ * `schedule` IS create.
+ */
+export function buildScheduleTool(
+  client: Client,
+  config: Config,
+  getPlayerId: () => string,
+): TempoToolDescriptor {
+  const create = buildScheduleCreateTool(client, config, getPlayerId);
+  const cancel = buildUnscheduleTool(client, config);
+  const list = buildSchedulesTool(client, config);
+
+  return {
+    name: 'schedule',
+    description:
+      'Schedule messages to players (one-shot, delay, recurring, or cron). ' +
+      'action="create" (default) schedules a message (name+message+target + one timing of at/delay/every/cron); ' +
+      'action="cancel" removes a named schedule; ' +
+      'action="list" shows all active schedules.',
+    params: {
+      action: z.enum(['create', 'cancel', 'list']).optional().describe('Which schedule operation to perform (defaults to "create" when omitted)'),
+      // create:
+      name: z.string().max(SCHEDULE_NAME_MAX).optional().describe('create/cancel: unique name for this schedule'),
+      message: z.string().max(SCHEDULE_MESSAGE_MAX).optional().describe('create: the message to deliver'),
+      target: z.string().max(PLAYER_NAME_MAX).optional().describe('create: player to deliver to ("self" = this session)'),
+      at: z.string().optional().describe('create: ISO datetime for one-shot delivery'),
+      delay: z.string().optional().describe('create: duration until first delivery (e.g. "10m", "2h", "1d")'),
+      every: z.string().optional().describe('create: recurring interval (e.g. "5m", "1h")'),
+      cron: z.string().max(CRON_EXPRESSION_MAX).optional().describe('create: cron expression. Mutually exclusive with at/delay/every.'),
+      timezone: z.string().optional().describe('create: IANA timezone for cron evaluation (default UTC). Only with cron.'),
+      until: z.string().optional().describe('create: ISO datetime — stop recurring after this time'),
+      count: z.number().optional().describe('create: max number of deliveries for recurring schedules'),
+    },
+    handler: async (args) => {
+      const action = (args.action as 'create' | 'cancel' | 'list' | undefined) ?? 'create';
+      switch (action) {
+        case 'create': {
+          const m = firstMissing(args, ['name', 'message', 'target']);
+          if (m) return fail(`schedule action="create" requires "${m}".`);
+          return create.handler(args);
+        }
+        case 'cancel': {
+          const m = firstMissing(args, ['name']);
+          if (m) return fail(`schedule action="cancel" requires "${m}".`);
+          return cancel.handler(args);
+        }
+        case 'list':
+          return list.handler(args);
+        default:
+          return fail(`Unknown schedule action: ${String(action)}. Expected create | cancel | list.`);
+      }
+    },
+  };
+}
+
+/**
+ * Legacy forwarding aliases — `unschedule` → cancel, `schedules` → list. Each
+ * keeps its exact original schema + handler; description gains a deprecation
+ * note. No alias for `create` — the bare `schedule` IS create. Explicit object
+ * literals (see #793 brief §6 drift note).
+ */
+export function buildScheduleAliasTools(
+  client: Client,
+  config: Config,
+): TempoToolDescriptor[] {
+  const cancel = buildUnscheduleTool(client, config);
+  const list = buildSchedulesTool(client, config);
+
+  return [
+    {
+      name: 'unschedule',
+      description: 'DEPRECATED — use `schedule` with action="cancel". ' + cancel.description,
+      params: cancel.params,
+      handler: cancel.handler,
+    },
+    {
+      name: 'schedules',
+      description: 'DEPRECATED — use `schedule` with action="list". ' + list.description,
+      params: list.params,
+      handler: list.handler,
+    },
+  ];
 }

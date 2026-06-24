@@ -28,9 +28,8 @@ import { buildListenTool } from './tools/listen';
 import { buildRecruitTool } from './tools/recruit';
 import { buildReportTool } from './tools/report';
 import { buildSetNameTool } from './tools/set-name';
-import { buildScheduleTool } from './tools/schedule';
-import { buildUnscheduleTool } from './tools/unschedule';
-import { buildSchedulesTool } from './tools/schedules';
+// #793 — canonical `schedule` (action create|cancel|list) + unschedule/schedules aliases.
+import { buildScheduleTool, buildScheduleAliasTools } from './tools/schedule';
 import { buildSaveLineupTool } from './tools/save-lineup';
 import { buildLoadLineupTool } from './tools/load-lineup';
 import { buildAgentTypesTool } from './tools/agent-types';
@@ -42,13 +41,13 @@ import { buildPauseTool } from './tools/pause';
 import { buildPlayTool } from './tools/play';
 import { buildShutdownTool } from './tools/shutdown';
 import { buildRestoreTool } from './tools/restore';
-import { buildQualityGateTool } from './tools/quality-gate';
+// #793 — canonical `gate` (action define|list) + quality_gate/gates aliases.
+// `evaluate_gate` stays a SEPARATE tool (partial merge — runtime op, not CRUD).
+import { buildGateTool, buildGateAliasTools } from './tools/gate';
 import { buildEvaluateGateTool } from './tools/evaluate-gate';
-import { buildGatesTool } from './tools/gates';
 import { buildWorktreeTool } from './tools/worktree';
-import { buildStageTool } from './tools/stage';
-import { buildStagesTool } from './tools/stages';
-import { buildCancelStageTool } from './tools/cancel-stage';
+// #793 — canonical `stage` (action create|list|cancel) + stages/cancel_stage aliases.
+import { buildStageTool, buildStageAliasTools } from './tools/stage';
 import { buildRestartTool } from './tools/restart';
 import { buildDestroyTool } from './tools/destroy';
 import { buildResetTool } from './tools/reset';
@@ -56,15 +55,12 @@ import { buildMigrateTool } from './tools/migrate';
 import { buildAttachmentInfoTool } from './tools/attachment-info';
 import { buildHostsTool } from './tools/hosts';
 import { buildSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
-// #334 PR-1 — player saveable state (save_state / fetch_state / clear_state).
-import { buildSaveStateTool } from './tools/save-state';
-import { buildFetchStateTool } from './tools/fetch-state';
-import { buildClearStateTool } from './tools/clear-state';
-// #318 — ensemble-shared coat-check (put / get / list / evict).
-import { buildCoatCheckPutTool } from './tools/coat-check-put';
-import { buildCoatCheckGetTool } from './tools/coat-check-get';
-import { buildCoatCheckListTool } from './tools/coat-check-list';
-import { buildCoatCheckEvictTool } from './tools/coat-check-evict';
+// #334 PR-1 / #793 — canonical `state` (action save|fetch|clear) + save_state/
+// fetch_state/clear_state aliases.
+import { buildStateTool, buildStateAliasTools } from './tools/state';
+// #318 / #793 — canonical `coat_check` (action put|get|list|evict) +
+// coat_check_put/get/list/evict aliases.
+import { buildCoatCheckTool, buildCoatCheckAliasTools } from './tools/coat-check';
 import { buildRespondTool } from './tools/respond';
 
 /**
@@ -122,9 +118,10 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildListenTool(handle),
     buildRecruitTool(client, config, getPlayerId, handle, ownAgentType, defaultAgentSource),
     buildReportTool(handle),
+    // #793 — canonical `schedule` (action defaults to "create") + legacy
+    // unschedule/schedules forwarding aliases.
     buildScheduleTool(client, config, getPlayerId),
-    buildUnscheduleTool(client, config),
-    buildSchedulesTool(client, config),
+    ...buildScheduleAliasTools(client, config),
     buildSaveLineupTool(client, config, getPlayerId, isConductor),
     buildLoadLineupTool(client, config, getPlayerId, ownAgentType, handle, setPlayerId, isConductor),
     buildAgentTypesTool(),
@@ -143,17 +140,16 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildAttachmentInfoTool(client, config),
     buildHostsTool(client, config),
     buildSetEnsembleDescriptionTool(client, config),
-    // #334 PR-1 — owner-write / peer-read player saveable state.
-    buildSaveStateTool(handle, getPlayerId),
-    buildFetchStateTool(client, config, handle, getPlayerId),
-    buildClearStateTool(handle),
-    // #318 — ensemble-shared coat-check (put/get/list/evict). Any player can put;
-    // any player can get/list; owner-or-conductor can evict. Audit identity is
-    // set at the tool layer via getPlayerId() — no playerId arg on any schema.
-    buildCoatCheckPutTool(client, config, getPlayerId),
-    buildCoatCheckGetTool(client, config, getPlayerId),
-    buildCoatCheckListTool(client, config),
-    buildCoatCheckEvictTool(client, config, getPlayerId),
+    // #334 PR-1 / #793 — canonical `state` (owner-write / peer-read) + legacy
+    // save_state/fetch_state/clear_state forwarding aliases.
+    buildStateTool(client, config, handle, getPlayerId),
+    ...buildStateAliasTools(client, config, handle, getPlayerId),
+    // #318 / #793 — canonical `coat_check` (put/get/list/evict) + legacy
+    // coat_check_* forwarding aliases. Any player can put/get/list;
+    // owner-or-conductor can evict. Audit identity is set at the tool layer via
+    // getPlayerId() — no playerId arg on any schema.
+    buildCoatCheckTool(client, config, getPlayerId),
+    ...buildCoatCheckAliasTools(client, config, getPlayerId),
     // #700 P2 — answer a planner's correlated `[Q <id>]` question (writes the
     // maestro Q&A mailbox directly; from = getPlayerId(), no spoofable arg).
     buildRespondTool(client, config, getPlayerId),
@@ -161,13 +157,15 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
 
   if (isConductor) {
     tools.push(
-      buildQualityGateTool(handle, getPlayerId),
+      // #793 — canonical `gate` (define|list) + quality_gate/gates aliases.
+      // `evaluate_gate` stays a separate tool (partial-merge boundary).
+      buildGateTool(handle, getPlayerId),
       buildEvaluateGateTool(handle, getPlayerId),
-      buildGatesTool(handle),
+      ...buildGateAliasTools(handle, getPlayerId),
       buildWorktreeTool(client, config, handle, getPlayerId),
+      // #793 — canonical `stage` (create|list|cancel) + stages/cancel_stage aliases.
       buildStageTool(handle, getPlayerId),
-      buildStagesTool(handle),
-      buildCancelStageTool(handle),
+      ...buildStageAliasTools(handle),
     );
   }
 

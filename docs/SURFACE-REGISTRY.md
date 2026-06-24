@@ -23,30 +23,36 @@ source files below rather than grepping multiple directories.
 
 Source: `src/tools/*.ts` — each file exports a `build<X>Tool(...): TempoToolDescriptor` factory returning `{ name, description, params, handler }`. MCP registration is performed by `renderToMcp` in `src/tools/descriptor.ts` (MD-B, Phase 1); the former `defineTool` / `helpers.ts` wrapper was retired.
 
+`scripts/check-surface-drift.js` enumerates the names below from the ACTUAL `buildAllTempoTools()` output (via `scripts/enumerate-tool-names.ts`), not a source-regex scrape, and fails loud on a zero count (#793 §6 / #707). So canonical tools and their forwarding aliases cannot silently escape the drift gate.
+
+**#793 tool-family merge (beta.2):** 5 canonical multi-action tools (`coat_check`, `state`, `schedule`, `stage`, `gate`) each take an `action` enum. The old per-action names remain registered as **forwarding aliases** (marked `DEPRECATED` below) with their exact original schemas — the alias-not-remove invariant. Alias removal is a future GA event, not beta.2.
+
 | Tool name | Source file | Description |
 |-----------|-------------|-------------|
 | `agent_types` | `agent-types.ts` | List available player types that can be used when recruiting |
 | `attachment_info` | `attachment-info.ts` | Query attachment lifecycle state — phase, holder, lease expiry, in-flight count |
 | `broadcast` | `broadcast.ts` | Send a message to all active players; optional type filter |
-| `cancel_stage` | `cancel-stage.ts` | Cancel an active pipeline stage (conductor only) |
-| `clear_state` | `clear-state.ts` | Clear one of your saved-state slots (owner-only; idempotent) |
-| `coat_check_evict` | `coat-check-evict.ts` | Evict a coat-check entry before TTL expires (owner-or-conductor) |
-| `coat_check_get` | `coat-check-get.ts` | Redeem a coat-check ticket and pull the stashed content; null when missing/expired/evicted |
-| `coat_check_list` | `coat-check-list.ts` | List coat-check entry headers in this ensemble; optional putBy / prefix / unfetchedOnly filters |
-| `coat_check_put` | `coat-check-put.ts` | Stash content (≤32 KiB) on per-ensemble Maestro state and return a ticket for later redemption |
+| `cancel_stage` | `stage.ts` | DEPRECATED (alias of `stage` action="cancel") — Cancel an active pipeline stage (conductor only) |
+| `clear_state` | `clear-state.ts` | DEPRECATED (alias of `state` action="clear") — Clear one of your saved-state slots (owner-only; idempotent) |
+| `coat_check` | `coat-check.ts` | Canonical coat-check tool (#793). `action` = put \| get \| list \| evict. Stash/redeem/survey/evict ensemble-shared transient content |
+| `coat_check_evict` | `coat-check.ts` | DEPRECATED (alias of `coat_check` action="evict") — Evict a coat-check entry before TTL expires (owner-or-conductor) |
+| `coat_check_get` | `coat-check.ts` | DEPRECATED (alias of `coat_check` action="get") — Redeem a coat-check ticket and pull the stashed content; null when missing/expired/evicted |
+| `coat_check_list` | `coat-check.ts` | DEPRECATED (alias of `coat_check` action="list") — List coat-check entry headers in this ensemble; optional putBy / prefix / unfetchedOnly filters |
+| `coat_check_put` | `coat-check.ts` | DEPRECATED (alias of `coat_check` action="put") — Stash content (≤32 KiB) on per-ensemble Maestro state and return a ticket for later redemption |
 | `cue` | `cue.ts` | Send a message to another session by player name via Temporal signal |
 | `destroy` | `destroy.ts` | Terminate a session workflow or the entire ensemble (irreversible) |
 | `ensemble` | `ensemble.ts` | Discover active sessions — player IDs, descriptions, metadata |
 | `evaluate_gate` | `evaluate-gate.ts` | Mark quality gate criteria as passed or failed (conductor only) |
-| `fetch_state` | `fetch-state.ts` | Read a saved-state slot for yourself or a peer (defaults to your own `main` slot) |
-| `gates` | `gates.ts` | List quality gates and their status (conductor only) |
+| `fetch_state` | `state.ts` | DEPRECATED (alias of `state` action="fetch") — Read a saved-state slot for yourself or a peer (defaults to your own `main` slot) |
+| `gate` | `gate.ts` | Canonical quality-gate tool (#793, partial). `action` = define \| list. `evaluate_gate` stays separate. Conductor only |
+| `gates` | `gate.ts` | DEPRECATED (alias of `gate` action="list") — List quality gates and their status (conductor only) |
 | `hosts` | `hosts.ts` | Show daemons polling this Temporal namespace with advertised capabilities |
 | `listen` | `listen.ts` | Manually check for pending messages from other sessions |
 | `load_lineup` | `load-lineup.ts` | Load an ensemble lineup — recruit players and create schedules |
 | `migrate` | `migrate.ts` | Move a session to a different host (sugar for `restart` with required `host`) |
 | `pause` | `pause.ts` | Pause all sessions — locks outbox dispatch and pauses the scheduler |
 | `play` | `play.ts` | Resume a paused ensemble — unlocks dispatch and resumes the scheduler |
-| `quality_gate` | `quality-gate.ts` | Define or replace a quality gate for a task (conductor only) |
+| `quality_gate` | `gate.ts` | DEPRECATED (alias of `gate` action="define") — Define or replace a quality gate for a task (conductor only) |
 | `recall` | `recall.ts` | Read your own message history with limit/offset/preview/filter options |
 | `recruit` | `recruit.ts` | Start a new named session in a directory |
 | `release` | `release.ts` | Release held sessions — unlock outboxes and deliver deferred task messages |
@@ -56,16 +62,17 @@ Source: `src/tools/*.ts` — each file exports a `build<X>Tool(...): TempoToolDe
 | `restore` | `restore.ts` | Revive ensemble after `shutdown` — reattach orphans, unpause maestro + scheduler |
 | `respond` | `respond.ts` | Answer a planner's correlated `[Q <id>]` question — parks the answer on the maestro Q&A mailbox for the inbox-less command center (#700) |
 | `save_lineup` | `save-lineup.ts` | Save current ensemble state as a YAML lineup (conductor only) |
-| `save_state` | `save-state.ts` | Save curated state for yourself into a named slot — peers can read it via `fetch_state` |
-| `schedule` | `schedule.ts` | Schedule a message to a player: one-shot, recurring, delay, or cron |
-| `schedules` | `schedules.ts` | List all active schedules in this ensemble |
+| `save_state` | `state.ts` | DEPRECATED (alias of `state` action="save") — Save curated state for yourself into a named slot — peers can read it via `state` action="fetch" |
+| `schedule` | `schedule.ts` | Canonical schedule tool (#793). `action` = create (default) \| cancel \| list. Schedule a message: one-shot, recurring, delay, or cron |
+| `schedules` | `schedule.ts` | DEPRECATED (alias of `schedule` action="list") — List all active schedules in this ensemble |
 | `set_ensemble_description` | `set-ensemble-description.ts` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard |
 | `set_name` | `set-name.ts` | Set a human-readable name for this session |
 | `set_part` | `set-part.ts` | Update your description of what you are currently working on |
 | `shutdown` | `shutdown.ts` | Graceful ensemble teardown — detach adapters, pause maestro + scheduler |
-| `stage` | `stage.ts` | Create a pipeline stage tracking N players (conductor only) |
-| `stages` | `stages.ts` | List all pipeline stages and per-player report status (conductor only) |
-| `unschedule` | `unschedule.ts` | Remove a named schedule immediately |
+| `stage` | `stage.ts` | Canonical pipeline-stage tool (#793). `action` = create (default) \| list \| cancel. Track N players (conductor only) |
+| `stages` | `stage.ts` | DEPRECATED (alias of `stage` action="list") — List all pipeline stages and per-player report status (conductor only) |
+| `state` | `state.ts` | Canonical player saveable-state tool (#793). `action` = save \| fetch \| clear. Owner-write / self-or-peer read; survives restart |
+| `unschedule` | `schedule.ts` | DEPRECATED (alias of `schedule` action="cancel") — Remove a named schedule immediately |
 | `who_am_i` | `who-am-i.ts` | Get your identity, role, player type, and session details |
 | `worktree` | `worktree.ts` | Manage git worktrees for player isolation (conductor only) |
 
