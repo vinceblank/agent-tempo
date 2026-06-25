@@ -32,6 +32,7 @@ agent-tempo <command> [options]
 | `install-pi` | Install agent-tempo's Pi extensions (player + command-center) into Pi's settings.json. Idempotent; prunes stale/old-version paths on re-run. Use `--project` for per-directory installation. (#700, #738) |
 | `scenarios <sub>` | **Dev mode only.** Browse the shipped scenario library (`list`, `show <name>`). Requires `--dev`. See [dev-mode.md](dev-mode.md). |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
+| `upgrade-to-2` | **1.7.0 → 2.0 cutover verb.** Six-phase drain-and-destroy protocol: preflight → pause → drain → snapshot → destroy → done. Writes `~/.agent-tempo/upgrade-snapshot-v1.json`; resumable after interruption. Flags: `--dry-run` (inspect without pausing), `--force-drain` (proceed with non-empty outboxes), `--yes` / `-y` (skip confirm). Run on 1.7.0 **before** installing 2.0; then `agent-tempo up --from-upgrade` on 2.0 to restore the ensemble. See [ops/v2-cutover.md](ops/v2-cutover.md). (#785) |
 | `version` | Print the installed version |
 | `help` | Show usage info |
 
