@@ -322,6 +322,162 @@ describe('wire-protocol drift detector (§17.9)', function () {
   });
 });
 
+// ── Memo-key drift detector (#899) ──────────────────────────────────────────
+
+/**
+ * Extract all wire-stable memo key string values from the `MEMO_KEYS` object
+ * in `src/utils/search-attributes.ts`.
+ *
+ * Uses a regex scan rather than ts-morph AST — MEMO_KEYS values are plain
+ * string literals in a flat object literal, not `defineSignal/Query/Update`
+ * call arguments. The scan is scoped to the MEMO_KEYS block so incidental
+ * quoted strings in comments or other code can't sneak in.
+ *
+ * Hard rules (#707): throws if the block is not found (never silently returns
+ * an empty set). The test below additionally asserts a non-zero count so a
+ * future regex regression fails loud.
+ */
+function extractMemoKeysFromSource(filePath: string): string[] {
+  const text = fs.readFileSync(filePath, 'utf-8');
+
+  // Match the entire `export const MEMO_KEYS = { ... } as const` block.
+  // The lazy [\s\S]*? stops at the first `}`, which is the object close —
+  // safe because MEMO_KEYS has no nested structures.
+  const blockMatch = /export\s+const\s+MEMO_KEYS\s*=\s*\{([\s\S]*?)\}\s*as\s+const/.exec(text);
+  if (!blockMatch) {
+    throw new Error(`MEMO_KEYS object not found in ${filePath}. Was the file renamed or restructured?`);
+  }
+
+  const block = blockMatch[1];
+  const results: string[] = [];
+
+  // Extract string values: any `key: 'SomeValue'` or `key: "SomeValue"` line.
+  // Accepts both quote styles so a future double-quoted value can't become a
+  // silent gap (the current codebase uses single quotes; belt-and-suspenders).
+  const valueRe = /:\s*['"]([^'"]+)['"]/g;
+  let m: RegExpExecArray | null;
+  while ((m = valueRe.exec(block)) !== null) {
+    results.push(m[1]);
+  }
+
+  return results;
+}
+
+/**
+ * Extract documented memo keys from the `### Workflow memo` subsection of
+ * `docs/WIRE-PROTOCOL.md`.
+ *
+ * Locates the subsection by splitting the document at `##` section boundaries
+ * (to find `## Search Attributes`) and then at `###` subsection boundaries
+ * (to find `### Workflow memo`). Extracts backtick-quoted names from
+ * first-column table cells using the same ROW_RE used by the signals scanner.
+ *
+ * Hard rules (#707): throws if either the section or the subsection is absent.
+ * The test below additionally asserts a non-zero count so a doc-parse
+ * regression fails loud.
+ */
+function extractMemoKeysFromDocs(docPath: string): string[] {
+  const text = fs.readFileSync(docPath, 'utf-8');
+
+  // Split into top-level `##` sections and find the Search Attributes one.
+  const sections = text.split(/^(?=## )/m);
+  const saSection = sections.find((s) => /^## Search Attributes/.test(s));
+  if (!saSection) {
+    throw new Error(
+      `"## Search Attributes" section not found in ${docPath}. ` +
+      `Add SECTION_TO_KIND entry if the section was renamed.`,
+    );
+  }
+
+  // Split the Search Attributes section into `###` subsections.
+  const subsections = saSection.split(/^(?=### )/m);
+  const memoSubsection = subsections.find((s) => /^### Workflow memo/.test(s));
+  if (!memoSubsection) {
+    throw new Error(
+      `"### Workflow memo" subsection not found inside "## Search Attributes" in ${docPath}. ` +
+      `Create the subsection or update this extractor if it was restructured.`,
+    );
+  }
+
+  // Extract backtick-quoted identifiers from table first-column cells.
+  // Reuses the same ROW_RE shape as the signals scanner.
+  const results: string[] = [];
+  const ROW_RE = /^\|\s*`([A-Za-z_][A-Za-z0-9_]*)`\s*\|/gm;
+  let match: RegExpExecArray | null;
+  while ((match = ROW_RE.exec(memoSubsection)) !== null) {
+    results.push(match[1]);
+  }
+
+  return results;
+}
+
+describe('wire-protocol memo-key drift detector (#899)', function () {
+  // Same repoRoot derivation as the signals detector above.
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const saFile = path.join(repoRoot, 'src', 'utils', 'search-attributes.ts');
+  const docsFile = path.join(repoRoot, 'docs', 'WIRE-PROTOCOL.md');
+
+  let sourceKeys: string[];
+  let docsKeys: string[];
+
+  before(function () {
+    if (!fs.existsSync(saFile)) {
+      throw new Error(`Expected search-attributes.ts not found: ${saFile}`);
+    }
+    if (!fs.existsSync(docsFile)) {
+      throw new Error(`WIRE-PROTOCOL.md not found: ${docsFile}`);
+    }
+    sourceKeys = extractMemoKeysFromSource(saFile);
+    docsKeys = extractMemoKeysFromDocs(docsFile);
+  });
+
+  it('MEMO_KEYS scanner finds a plausible number of memo keys (#707: scan-nothing guard)', function () {
+    // As of v2.0 there are 9 keys; the threshold is conservative so minor
+    // additions don't need a test update, but a regex regression that returns
+    // zero fails immediately.
+    expect(sourceKeys.length).to.be.gte(5,
+      `MEMO_KEYS scanner found only ${sourceKeys.length} keys; expected >= 5. ` +
+      `Verify the regex extraction from src/utils/search-attributes.ts.`,
+    );
+  });
+
+  it('memo doc parser finds a plausible number of documented keys (#707: scan-nothing guard)', function () {
+    expect(docsKeys.length).to.be.gte(5,
+      `Memo doc parser found only ${docsKeys.length} keys; expected >= 5. ` +
+      `Check that "### Workflow memo" subsection exists and has table rows in docs/WIRE-PROTOCOL.md.`,
+    );
+  });
+
+  it('every MEMO_KEYS entry is documented in the WIRE-PROTOCOL.md memo table', function () {
+    const docsSet = new Set(docsKeys);
+    const undocumented = sourceKeys.filter((k) => !docsSet.has(k));
+
+    if (undocumented.length > 0) {
+      throw new Error(
+        `\n${undocumented.length} memo key(s) present in MEMO_KEYS but missing from ` +
+        `the "### Workflow memo" table in docs/WIRE-PROTOCOL.md:\n` +
+        undocumented.map((k) => `  - ${k}`).join('\n') + '\n\n' +
+        `Add a row for each key (name, type, description). ` +
+        `Memo keys are wire-stable — renaming or removing one is a breaking change.`,
+      );
+    }
+  });
+
+  it('every memo key in WIRE-PROTOCOL.md exists in MEMO_KEYS (no stale docs)', function () {
+    const sourceSet = new Set(sourceKeys);
+    const stale = docsKeys.filter((k) => !sourceSet.has(k));
+
+    if (stale.length > 0) {
+      throw new Error(
+        `\n${stale.length} memo key(s) documented in docs/WIRE-PROTOCOL.md but absent from MEMO_KEYS:\n` +
+        stale.map((k) => `  - ${k}`).join('\n') + '\n\n' +
+        `Either remove the stale rows from the memo table or add the keys to MEMO_KEYS ` +
+        `in src/utils/search-attributes.ts.`,
+      );
+    }
+  });
+});
+
 describe('kindFromSectionHeader — #239 allowlist', function () {
   // Independent hardcoded expectations per acceptance criterion "test asserting
   // each of the 18 current section names classifies correctly." A bug in
