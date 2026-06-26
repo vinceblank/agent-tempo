@@ -524,6 +524,17 @@ export interface SessionInput {
    * See `src/utils/validation.ts` for size + slot-count caps.
    */
   playerState?: Record<string, PlayerStateEntry>;
+  /**
+   * #910 — bounded FIFO of `deliveryId`s (originating outbox entry ids) already
+   * applied by this receiver, for at-least-once delivery dedup on
+   * `receiveMessage` / `playerReport`. Constant-size (capped in the workflow, see
+   * `SEEN_DELIVERY_IDS_CAP`) so it adds negligible history growth across
+   * continue-as-new. Carried forward only when non-empty (same idiom as
+   * `playerState`). A redelivery whose id was evicted past the cap can slip a
+   * dup through — the cap is sized above (max in-flight + CAN window); see the
+   * documented bound in docs/WIRE-PROTOCOL.md.
+   */
+  seenDeliveryIds?: string[];
 }
 
 export interface Message {

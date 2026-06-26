@@ -159,6 +159,12 @@ export interface DeliverCueInput {
    * attachment.
    */
   attachmentTicket?: string;
+  /**
+   * #910: the originating outbox entry's stable `id`, threaded to the target's
+   * `receiveMessage` signal as `deliveryId` for at-least-once dedup. `undefined`
+   * for un-threaded/legacy callers (no dedup).
+   */
+  deliveryId?: string;
 }
 
 export interface DeliverReportInput {
@@ -166,6 +172,8 @@ export interface DeliverReportInput {
   fromPlayerId: string;
   text: string;
   reportType: 'result' | 'blocker' | 'question' | 'update';
+  /** #910: outbox entry id for at-least-once dedup on the conductor receiver. */
+  deliveryId?: string;
 }
 
 export interface TerminateSessionInput {
@@ -415,7 +423,7 @@ export function createOutboxActivities(
   // outbox dispatch plane.
   return tagActionSource('outbox', {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
-      const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId, attachmentTicket } = input;
+      const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId, attachmentTicket, deliveryId } = input;
       try {
         const handle = await resolveSession(client, ensemble, targetPlayerId);
         if (!handle) {
@@ -424,11 +432,15 @@ export function createOutboxActivities(
         // #357 + #318: thread broadcastId / attachmentTicket onto the
         // receiver's `receiveMessage` signal payload. Both fields are
         // additive optionals — direct cues omit one or both.
+        // #910: thread deliveryId (the outbox entry id) so the receiver can drop
+        // a redelivery — this activity runs at-least-once (CAN/crash mid-dispatch,
+        // or a retry after the signal already applied server-side).
         await handle.signal('receiveMessage', {
           from: fromPlayerId,
           text: message,
           ...(broadcastId !== undefined ? { broadcastId } : {}),
           ...(attachmentTicket !== undefined ? { attachmentTicket } : {}),
+          ...(deliveryId !== undefined ? { deliveryId } : {}),
         });
         // T1.1 — the signal above has landed durably in history; ring the
         // doorbell so a connected adapter polls now instead of at its
@@ -444,12 +456,18 @@ export function createOutboxActivities(
     },
 
     async deliverReport(input: DeliverReportInput): Promise<OutboxActivityResult> {
-      const { ensemble, fromPlayerId, text, reportType } = input;
+      const { ensemble, fromPlayerId, text, reportType, deliveryId } = input;
       try {
         const conductorId = conductorWorkflowId(ensemble);
         const handle = client.workflow.getHandle(conductorId);
         await handle.describe(); // throws if conductor workflow is not running
-        await handle.signal('playerReport', { playerId: fromPlayerId, text, type: reportType });
+        // #910: thread deliveryId for at-least-once dedup on the conductor receiver.
+        await handle.signal('playerReport', {
+          playerId: fromPlayerId,
+          text,
+          type: reportType,
+          ...(deliveryId !== undefined ? { deliveryId } : {}),
+        });
         return { success: true };
       } catch (err) {
         // #236: describe() / signal() hitting a transient RPC error now retries;
@@ -1078,7 +1096,7 @@ export function createOutboxActivities(
               // Best-effort; force path handles it below.
             }
           }
-          // NOTE (#809 follow-up — DEFERRED, separate issue): this graceful detach is
+          // NOTE (#914 — DEFERRED follow-up of #809): this graceful detach is
           // fire-and-forget — we signal `requestDetach` then re-query the phase exactly
           // ONCE here, with no wait/poll for `draining → detached`. So a non-force restart
           // of an active session always observes `draining` and bails to "use force=true"
@@ -1086,7 +1104,7 @@ export function createOutboxActivities(
           // draining floor in session.ts removes the indefinite-wedge SYMPTOM regardless,
           // but the right UX fix here is a bounded poll for `detached`/`booting` (then
           // escalate to forceDetach) instead of a single immediate re-query. Tracked
-          // separately to keep the #809 PR scoped to the workflow-side floor.
+          // separately as #914 to keep the #809 PR scoped to the workflow-side floor.
           const info2 = await handle.query(attachmentInfoQuery) as AttachmentInfo;
           if (info2.phase !== 'detached' && info2.phase !== 'booting') {
             if (!force) {

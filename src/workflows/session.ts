@@ -284,6 +284,34 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   const outbox: OutboxEntry[] = input.outbox ?? [];
+
+  // ── #910 — at-least-once delivery dedup ──
+  // Outbox dispatch delivers `cue`/`report` at-least-once: a continueAsNew (or
+  // worker crash) landing in the window AFTER the delivery signal applies
+  // server-side but BEFORE the entry's `delivered` status commits to history
+  // re-drives the entry on the successor run; an activity retry (transient RPC
+  // after a successful server-side signal) fires a second signal within a run.
+  // Either way the receiver would apply the same cue/report twice. We dedup on
+  // the originating outbox entry `id` (minted in `submitOutboxUpdate`, stable
+  // across CAN), threaded to the receiver as `deliveryId`. The seen-set is a
+  // BOUNDED FIFO (NOT a growing Set) — constant-size across CAN, so it adds
+  // negligible history. A redelivery delayed past the cap evicts its id and can
+  // slip a dup through; the cap is sized well above (max in-flight + CAN window).
+  const SEEN_DELIVERY_IDS_CAP = 512;
+  const seenDeliveryIds: string[] = input.seenDeliveryIds ?? [];
+  /**
+   * Record a `deliveryId` and report whether it is NEW (caller should apply) vs a
+   * duplicate that must be dropped. `undefined` (un-threaded / legacy caller) is
+   * always NEW — no dedup key, preserves pre-#910 behavior. Deterministic (pure
+   * array ops on replay-restored state).
+   */
+  function recordDelivery(deliveryId: string | undefined): boolean {
+    if (deliveryId === undefined) return true;
+    if (seenDeliveryIds.includes(deliveryId)) return false;
+    seenDeliveryIds.push(deliveryId);
+    if (seenDeliveryIds.length > SEEN_DELIVERY_IDS_CAP) seenDeliveryIds.shift();
+    return true;
+  }
   // D14 — pending context-reset flag, polled + acked by the Pi extension. Single
   // slot, latest-wins; survives continue-as-new until the extension acks it.
   let pendingReset: PendingReset | null = input.pendingReset ?? null;
@@ -563,6 +591,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // ── Player Signal Handlers ──
 
   setHandler(receiveMessageSignal, (msg) => {
+    // #910 — at-least-once dedup: a redelivered cue (same originating outbox
+    // entry id) is a true no-op — skip the append AND the counter/activity
+    // bumps below so a CAN/crash mid-dispatch or activity retry can't
+    // double-apply. Un-threaded callers (no deliveryId) are never deduped.
+    if (!recordDelivery(msg.deliveryId)) return;
     messages.push({
       id: uuid4(),
       from: msg.from,
@@ -1423,6 +1456,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     });
 
     setHandler(playerReportSignal, (report) => {
+      // #910 — at-least-once dedup: drop a redelivered report (same outbox entry
+      // id) before any side effect (reportHistory, the self-message, stage
+      // transitions below). Un-threaded callers are never deduped.
+      if (!recordDelivery(report.deliveryId)) return;
       reportHistory.push({
         ...report,
         timestamp: workflowNow().toISOString(),
@@ -2050,6 +2087,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // #318: thread coat-check ticket so the target can pull the
               // full content body via `coat_check_get`.
               ...(entry.attachmentTicket !== undefined ? { attachmentTicket: entry.attachmentTicket } : {}),
+              // #910: the outbox entry id is the at-least-once dedup key — the
+              // target drops a redelivery (CAN-redrive / activity retry).
+              deliveryId: entry.id,
             });
             break;
           case 'report':
@@ -2058,6 +2098,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               fromPlayerId: input.metadata.playerId,
               text: entry.text,
               reportType: entry.reportType,
+              // #910: dedup key for at-least-once delivery to the conductor.
+              deliveryId: entry.id,
             });
             break;
           case 'stop':
@@ -2341,6 +2383,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         // Empty maps are omitted from the CAN payload to keep the wire
         // small for the common no-state case (same idiom as currentAttachment).
         ...(Object.keys(playerState).length > 0 ? { playerState } : {}),
+        // #910 — carry the at-least-once dedup ring forward (omit when empty;
+        // bounded so it stays constant-size across CAN).
+        ...(seenDeliveryIds.length > 0 ? { seenDeliveryIds } : {}),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }
