@@ -60,6 +60,7 @@ import {
   setPausedSignal,
   pausedQuery,
   submitOutboxUpdate,
+  receiveMessageSignal,
 } from '../src/workflows/signals';
 import { addScheduleSignal, getSchedulesQuery } from '../src/workflows/scheduler-signals';
 import type { ScheduleEntry } from '../src/types';
@@ -306,6 +307,10 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const seededEntry = schedEntries.find((s) => s.name === SCHEDULE_NAME);
         expect(seededEntry, 'schedule seeded in recreated scheduler').to.exist;
         expect(seededEntry!.cronExpression).to.equal(SCHEDULE_CRON);
+        // F1 (architect): verify timezone survives the full capture→recreate path.
+        // Phase B proves timezone lands in the snapshot; Phase C (here) proves it
+        // carries through from-upgrade into the live scheduler workflow.
+        expect(seededEntry!.timezone, 'timezone preserved through from-upgrade recreation').to.equal(SCHEDULE_TZ);
         expect(seededEntry!.target).to.equal(SOLOIST_PLAYER_ID);
         // firedCount must be reset — carrying it forward would misreport delivery history.
         expect(seededEntry!.firedCount, 'firedCount reset to 0').to.equal(0);
@@ -565,6 +570,15 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
           args: [{ type: 'cue', targetPlayerId: 'peer', message: 'this will straggle' }],
         });
 
+        // F2 (architect): plant a REAL inbox cue on `peer` so both channels are
+        // populated simultaneously. This proves neither leaks into the other:
+        // undeliveredCues (inbox) holds this message; forceDrainedStragglers (outbox)
+        // holds the stuck dispatch above — the two must stay separate.
+        await peerSession.signal(receiveMessageSignal, {
+          from: 'conductor-test',
+          text: 'inbox cue for peer — not a straggler',
+        });
+
         await waitForVisibility(ensemble);
 
         // ── Phase B: upgrade with --force-drain (proceeds past the stuck outbox) ──
@@ -586,6 +600,16 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const straggler = ens.forceDrainedStragglers!.find((s) => s.playerId === 'stuck');
         expect(straggler, 'stuck player straggler captured').to.exist;
         expect(straggler!.entryType, 'straggler entry type=cue').to.equal('cue');
+
+        // F2: inbox cue captured in peer.undeliveredMessages (distinct channel).
+        const peerSnap = ens.players.find((p) => p.playerId === 'peer')!;
+        expect(peerSnap.undeliveredMessages, 'inbox cue captured for peer').to.have.lengthOf(1);
+        expect(peerSnap.undeliveredMessages[0].text, 'inbox cue text').to.equal(
+          'inbox cue for peer — not a straggler',
+        );
+        // Stuck player: outbox straggler only, no inbox messages.
+        const stuckSnap = ens.players.find((p) => p.playerId === 'stuck')!;
+        expect(stuckSnap.undeliveredMessages, 'stuck has no inbox messages').to.have.lengthOf(0);
 
         // 1.x sessions destroyed by upgrade engine.
         await stuckSession.result();
@@ -629,11 +653,33 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // KEY DISTINCTION: outbox stragglers ≠ inbox undelivered cues.
         // fromResult.undeliveredCues pulls from player.undeliveredMessages (inbox);
         // forceDrainedStragglers tracks stuck OUTBOX dispatch — a separate operator concern.
-        // No inbox cues were sent to stuck/peer in this fixture, so the array is empty.
+        // With both channels populated, each must hold only its own entries.
+
+        // Inbox channel: exactly the one real cue sent to peer's inbox.
         expect(
           fromResult.undeliveredCues,
-          'fromResult.undeliveredCues is inbox-only, not outbox stragglers',
-        ).to.have.lengthOf(0);
+          'inbox cue surfaces in undeliveredCues',
+        ).to.have.lengthOf(1);
+        expect(fromResult.undeliveredCues[0].playerId, 'inbox cue belongs to peer').to.equal('peer');
+        expect(fromResult.undeliveredCues[0].text, 'inbox cue text preserved').to.equal(
+          'inbox cue for peer — not a straggler',
+        );
+        // Outbox straggler does NOT leak into undeliveredCues.
+        expect(
+          fromResult.undeliveredCues.some((c) => c.playerId === 'stuck'),
+          'outbox straggler absent from undeliveredCues (inbox-only contract)',
+        ).to.be.false;
+
+        // Outbox channel: straggler in consumed snapshot, inbox cue absent from it.
+        const consumedPeer = consumedEns.players?.find((p: { playerId: string }) => p.playerId === 'peer');
+        // The consumed snapshot preserves players; inbox cues live there, not in forceDrainedStragglers.
+        expect(
+          consumedEns.forceDrainedStragglers!.find(
+            (s: { playerId: string }) => s.playerId === 'peer',
+          ),
+          'inbox cue NOT treated as an outbox straggler in consumed snapshot',
+        ).to.equal(undefined);
+        void consumedPeer; // surfaced only for operator review; not re-injected by from-upgrade
       });
     },
   );
