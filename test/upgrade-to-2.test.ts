@@ -39,7 +39,7 @@ import {
   submitOutboxUpdate,
   destroyUpdate,
 } from '../src/workflows/signals';
-import { addScheduleSignal } from '../src/workflows/scheduler-signals';
+import { addScheduleSignal, getSchedulesQuery } from '../src/workflows/scheduler-signals';
 import type { ScheduleEntry } from '../src/types';
 import {
   runUpgradeToV2,
@@ -47,6 +47,7 @@ import {
   type UpgradeDeps,
 } from '../src/upgrade/phase-engine';
 import { readSnapshot } from '../src/upgrade/snapshot-v1';
+import { runFromUpgrade } from '../src/upgrade/from-upgrade';
 
 const SILENT = (..._args: unknown[]): void => {};
 
@@ -326,6 +327,139 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       } finally {
         await gm.terminate('test cleanup').catch(() => {});
       }
+    });
+  });
+
+  it('schedule capture: once + interval types round-trip through snapshot → recreated scheduler', async function () {
+    this.timeout(90_000);
+    const ensemble = `${getTestEnsemble()}-sched-types`;
+
+    await withWorkerAndRecruitActivities(async () => {
+      // A conductor session is required for the ensemble to be visible to the
+      // enumerateEnsembleNames scan that drives the upgrade preflight.
+      const conductor = await startSession({ metadata: conductorMetadata({ ensemble }) });
+
+      const scheduler = await getClient().workflow.start('agentSchedulerWorkflow', {
+        workflowId: schedulerWorkflowId(ensemble),
+        taskQueue: TASK_QUEUE,
+        args: [{ ensemble, entries: [] }],
+      });
+
+      // Set nextFireAt 1 hour ahead so neither schedule fires during the test.
+      const nextHour = new Date(Date.now() + 3_600_000).toISOString();
+
+      // Once schedule: fires exactly once (remainingCount=1).
+      const onceEntry: ScheduleEntry = {
+        name: 'one-shot-ping',
+        message: 'ping once',
+        target: 'conductor',
+        createdBy: 'operator',
+        type: 'once',
+        nextFireAt: nextHour,
+        remainingCount: 1,
+        firedCount: 0,
+      };
+      await scheduler.signal(addScheduleSignal, onceEntry);
+
+      // Interval schedule: repeating at a fixed millisecond cadence.
+      // firedCount=2 is intentional — the snapshot drops firedCount (it is a
+      // runtime accumulator, not durable intent) and from-upgrade always resets
+      // it to 0. This assertion proves the reset is correct.
+      const intervalEntry: ScheduleEntry = {
+        name: 'hourly-check',
+        message: 'check in',
+        target: 'conductor',
+        createdBy: 'operator',
+        type: 'interval',
+        nextFireAt: nextHour,
+        interval: 3_600_000, // 1 hour in ms
+        firedCount: 2,
+      };
+      await scheduler.signal(addScheduleSignal, intervalEntry);
+
+      await waitForVisibility(ensemble);
+
+      // ── Phase B: full upgrade ──
+      const result = await runUpgradeToV2(deps(), {
+        yes: true,
+        drainTimeoutMs: 3_000,
+        drainPollIntervalMs: 50,
+      });
+      expect(result.status).to.equal('done');
+
+      // ── Snapshot fidelity: type + type-specific fields captured correctly ──
+      const snap = readSnapshot(home)!;
+      const ens = snap.ensembles.find((e) => e.name === ensemble)!;
+
+      const onceSched = ens.schedules.find((s) => s.name === 'one-shot-ping')!;
+      expect(onceSched, 'once schedule captured').to.exist;
+      expect(onceSched.type, 'type=once captured').to.equal('once');
+      expect(onceSched.remainingCount, 'remainingCount=1 captured').to.equal(1);
+      // firedCount is intentionally NOT in SnapshotSchedule (runtime accumulator,
+      // not durable intent). The field must be absent from the captured shape.
+      expect(
+        (onceSched as unknown as Record<string, unknown>).firedCount,
+        'firedCount absent from SnapshotSchedule (not captured)',
+      ).to.equal(undefined);
+      expect(onceSched.interval, 'interval absent on once schedule').to.equal(undefined);
+      expect(onceSched.cronExpression, 'cronExpression absent on once schedule').to.equal(undefined);
+
+      const intervalSched = ens.schedules.find((s) => s.name === 'hourly-check')!;
+      expect(intervalSched, 'interval schedule captured').to.exist;
+      expect(intervalSched.type, 'type=interval captured').to.equal('interval');
+      expect(intervalSched.interval, 'interval=3_600_000 captured').to.equal(3_600_000);
+      expect(intervalSched.cronExpression, 'cronExpression absent on interval schedule').to.equal(undefined);
+
+      // Destroy completed — conductor session gone.
+      await conductor.result();
+      await pollWithTimeout(
+        async () => !(await enumerateEnsembleNames(deps())).includes(ensemble),
+        15_000,
+        100,
+      );
+
+      // ── Phase C: from-upgrade recreates scheduler with both schedule types ──
+      const fromResult = await runFromUpgrade(getClient(), {
+        home,
+        hostname: 'test-host',
+        taskQueue: TASK_QUEUE,
+        temporalAddress: 'localhost:7233',
+        temporalNamespace: 'default',
+      });
+      expect(fromResult.ok, 'from-upgrade ok').to.be.true;
+      expect(fromResult.failures, 'no recreation failures').to.be.empty;
+
+      // Poll until the recreated scheduler workflow is running and has processed
+      // its seeded entries (both schedule types must be visible).
+      const recreatedSched = getClient().workflow.getHandle(schedulerWorkflowId(ensemble));
+      await pollWithTimeout(
+        async () => {
+          try {
+            const entries = await recreatedSched.query(getSchedulesQuery);
+            return entries.length >= 2;
+          } catch {
+            return false;
+          }
+        },
+        15_000,
+        100,
+      );
+
+      const recreatedEntries = await recreatedSched.query(getSchedulesQuery);
+
+      // ── Once schedule: type + remainingCount preserved; firedCount reset ──
+      const onceRecreated = recreatedEntries.find((e) => e.name === 'one-shot-ping')!;
+      expect(onceRecreated, 'once schedule recreated').to.exist;
+      expect(onceRecreated.type, 'recreated type=once').to.equal('once');
+      expect(onceRecreated.remainingCount, 'remainingCount=1 preserved through round-trip').to.equal(1);
+      expect(onceRecreated.firedCount, 'firedCount reset to 0 on recreation').to.equal(0);
+
+      // ── Interval schedule: type + interval preserved; firedCount reset from 2 ──
+      const intervalRecreated = recreatedEntries.find((e) => e.name === 'hourly-check')!;
+      expect(intervalRecreated, 'interval schedule recreated').to.exist;
+      expect(intervalRecreated.type, 'recreated type=interval').to.equal('interval');
+      expect(intervalRecreated.interval, 'interval=3_600_000 preserved through round-trip').to.equal(3_600_000);
+      expect(intervalRecreated.firedCount, 'firedCount reset to 0 (was 2)').to.equal(0);
     });
   });
 });
