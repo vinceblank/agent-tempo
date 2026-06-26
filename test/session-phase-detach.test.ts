@@ -22,7 +22,7 @@
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §§2.2-2.6, §9.2.
  */
 import { expect } from 'chai';
-import type { Attachment, AttachmentInfo, OrphanSummary } from '../src/types';
+import type { Attachment, AttachmentInfo, OrphanSummary, Message } from '../src/types';
 import {
   setupTestEnv,
   setupSharedEnv,
@@ -43,6 +43,7 @@ import {
   attachmentInfoQuery,
   orphanSummaryQuery,
   setPreferredHostUpdate,
+  allMessagesQuery,
 } from '../src/workflows/signals';
 
 describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
@@ -177,6 +178,78 @@ describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
         info = await handle.query(attachmentInfoQuery);
       }
       expect(info.phase).to.equal('detached');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('#809 — draining with no firing deadline (drainingSince=null) is force-reaped to detached, not wedged', async function () {
+    // Regression for #809: the `draining` phase must ALWAYS escape. Pre-fix, both the
+    // `nextDeadlineMs()` candidate AND the §9.5.c reap were gated on `drainingSince !==
+    // null`, so a `draining` phase that lacked the stamp (a continueAsNew-restore edge /
+    // invariant breach) yielded a POSITIVE_INFINITY deadline and was never reaped — a
+    // silent, indefinite wedge with the same shape as the booting/#704 hang.
+    //
+    // We pre-seed the wedge shape directly via SessionInput (CAN-boundary style, like the
+    // expired-attachment reap test below): phase 'draining', NO drainingSince, NO
+    // attachment. The fixed loop must reap it to terminal 'detached' on its next pass.
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: `drain-wedge-${Date.now()}` }),
+        phase: 'draining',
+      });
+
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 30 && info.phase !== 'detached'; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase, 'wedged draining must escape to detached').to.equal('detached');
+      expect(info.currentAttachment).to.equal(undefined);
+
+      // The escape must be LOUD, not silent: exactly one `from: 'system'` watchdog notice
+      // lands in the inbox (surfaced to the next adapter on attach/restore). The atomic
+      // phase flip guarantees exactly-once even across a CAN mid-wedge.
+      const messages: Message[] = await handle.query(allMessagesQuery);
+      const watchdog = messages.filter((m) => m.from === 'system' && m.text.includes('#809'));
+      expect(watchdog.length, 'exactly one watchdog notice injected').to.equal(1);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('#809 — a runaway drainingDeadlineMs is capped at the DRAINING_DEADLINE_MS ceiling', async function () {
+    // Regression for #809: the per-detach window is honored only up to the absolute
+    // `DRAINING_DEADLINE_MS` (= MAX_DETACH_DEADLINE_MS, 120s) ceiling, so a pathologically
+    // large caller window can't stall the phase. We pre-seed draining that entered 200s
+    // ago with a 1-hour window. Pre-fix the reap honored the raw 1h window (200s << 1h →
+    // never reaps → wedged ~1h). Post-fix the effective window is min(1h, 120s) = 120s, so
+    // 200s elapsed is already past the ceiling → reaped on the first main-loop pass.
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const since = new Date(Date.now() - 200_000).toISOString();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: `drain-ceiling-${Date.now()}` }),
+        phase: 'draining',
+        drainingSince: since,
+        drainingDeadlineMs: 3_600_000, // 1 hour — pathologically large, must be capped
+      });
+
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 30 && info.phase !== 'detached'; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase, 'draining past the 120s ceiling must reap despite the 1h window').to.equal('detached');
+
+      const messages: Message[] = await handle.query(allMessagesQuery);
+      expect(
+        messages.some((m) => m.from === 'system' && m.text.includes('#809')),
+        'watchdog notice injected on ceiling reap',
+      ).to.equal(true);
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});

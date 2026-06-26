@@ -108,6 +108,7 @@ import {
   PLAYER_STATE_CONTENT_MAX,
   PLAYER_STATE_SLOTS_MAX,
   PLAYER_STATE_DEFAULT_KEY,
+  MAX_DETACH_DEADLINE_MS,
 } from '../utils/validation';
 import type {
   Attachment,
@@ -178,6 +179,22 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * `drainingDeadlineMs` state variable below (fix for #159 Gap 1a).
    */
   const DEFAULT_DRAINING_DEADLINE_MS = 5_000;
+  /**
+   * #809 — absolute hard ceiling on the `draining` phase. The per-detach
+   * `drainingDeadlineMs` window governs a *graceful* drain, but draining must
+   * ALWAYS escape regardless of how it was entered. Before #809 both the
+   * `nextDeadlineMs()` candidate AND the §9.5.c reap were gated on
+   * `drainingSince !== null` (and trusted an unclamped, caller-supplied
+   * `drainingDeadlineMs`). A `draining` phase whose `drainingSince` was never
+   * stamped — or whose window was set pathologically large — therefore had the
+   * same unbounded "Infinity deadline" weakness as `booting` (#704): a silent,
+   * indefinite wedge with no operator-visible escape. This ceiling caps the
+   * effective window so a runaway `drainingDeadlineMs` can't stall the phase,
+   * and the unconditional reap below force-exits a `drainingSince === null`
+   * wedge immediately. `MAX_DETACH_DEADLINE_MS` (the documented max detach
+   * window) is the natural ceiling — it never truncates a legitimate drain.
+   */
+  const DRAINING_DEADLINE_MS = MAX_DETACH_DEADLINE_MS;
   /** Max duration a messageId can stay in-flight before the safety timer ejects it. */
   const PROCESSING_DEADLINE_MS = 15 * 60 * 1000;
   /**
@@ -474,9 +491,18 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     if (processingSince) {
       candidates.push(new Date(processingSince).getTime() + PROCESSING_DEADLINE_MS);
     }
-    if (phase === 'draining' && drainingSince) {
-      const window = drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS;
-      candidates.push(new Date(drainingSince).getTime() + window);
+    if (phase === 'draining') {
+      // #809 — draining must ALWAYS yield a firing deadline so the main loop
+      // re-wakes and the §9.5.c reap can fire. With `drainingSince` stamped, use
+      // the per-detach window capped at the absolute ceiling; without it (the
+      // wedge shape — Infinity deadline, same as booting/#704) fall back to
+      // `nowMs` so the loop reaps on its very next pass instead of returning
+      // POSITIVE_INFINITY below.
+      const window = Math.min(
+        drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS,
+        DRAINING_DEADLINE_MS,
+      );
+      candidates.push(drainingSince ? new Date(drainingSince).getTime() + window : nowMs);
     }
     if (candidates.length === 0) return Number.POSITIVE_INFINITY;
     return Math.max(0, Math.min(...candidates) - nowMs);
@@ -1909,6 +1935,17 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // `DEFAULT_DRAINING_DEADLINE_MS` otherwise. `nextDeadlineMs()` uses the same value, so
     // the condition wake timing and the reap threshold stay in sync.
     //
+    // #809: this reap is now UNCONDITIONAL on `drainingSince`. Draining must ALWAYS
+    // escape, regardless of how it was entered. Before #809 both this block AND the
+    // `nextDeadlineMs()` candidate were gated on `drainingSince !== null`, so a `draining`
+    // phase that ever lacked the stamp (or carried a pathologically large
+    // `drainingDeadlineMs`) had the same unbounded "Infinity deadline" wedge as booting
+    // (#704) — silent, indefinite, no operator-visible escape. Now: a `drainingSince ===
+    // null` wedge is force-reaped on the next pass; otherwise we wait out the per-detach
+    // window CAPPED at the `DRAINING_DEADLINE_MS` ceiling. Either way the session lands in
+    // the recoverable terminal `detached` (restartable/restorable — NOT the destructive
+    // `gone`), with a loud `from: 'system'` watchdog notice so the wedge isn't silent.
+    //
     // #159 Gap 2: before flipping to `detached`, kill the OS child process on the host
     // where the adapter was running. If we skipped this step the workflow would happily
     // report `phase=detached` while an orphaned `claude.exe` kept holding the session
@@ -1916,53 +1953,75 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // Best-effort: errors from the activity are logged but don't block the state flip
     // (the alternative is a workflow wedged in `draining` forever when the host worker
     // is down, which is worse than a lingering process that operators can clean up).
-    if (
-      phase === 'draining' &&
-      drainingSince !== null &&
-      workflowNow().getTime() - new Date(drainingSince).getTime() >
-        (drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS)
-    ) {
-      const window = drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS;
-      const reaped = currentAttachment;
-      if (reaped) {
-        // Same routing consideration as in `forceDetachUpdate`: use `metadata.hostname`
-        // as the stable key. Best-effort only — a failure here (e.g. host worker down)
-        // would otherwise wedge the workflow in `draining` forever, which is worse than
-        // a lingering OS process that operators can clean up by hand.
-        const killHost = input.metadata.hostname;
-        try {
-          const killResult = await getHardTerminateProxy(killHost)({
-            ensemble: input.metadata.ensemble,
-            playerName: input.metadata.playerId,
-            agent: (input.metadata.agentType ?? 'claude') as AgentType,
-            workDir: input.metadata.workDir,
-          });
-          workflowLog.info(
-            `drainingDeadline hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
-            `killedPids=[${killResult.killedPids.join(',')}]`,
-          );
-        } catch (err) {
-          workflowLog.warn(
-            `drainingDeadline hard-terminate failed for ${killHost} ` +
-            `(continuing with state flip): ${err instanceof Error ? err.message : String(err)}`,
-          );
+    if (phase === 'draining') {
+      const window = Math.min(
+        drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS,
+        DRAINING_DEADLINE_MS,
+      );
+      // `drainingSince === null` is the wedge shape (entered `draining` with no stamp, or
+      // a determinism-restore edge) → reap immediately; otherwise wait out the capped
+      // window. `elapsedMs === null` flags the wedge for the watchdog notice below.
+      const elapsedMs = drainingSince
+        ? workflowNow().getTime() - new Date(drainingSince).getTime()
+        : null;
+      if (elapsedMs === null || elapsedMs > window) {
+        const reaped = currentAttachment;
+        if (reaped) {
+          // Same routing consideration as in `forceDetachUpdate`: use `metadata.hostname`
+          // as the stable key. Best-effort only — a failure here (e.g. host worker down)
+          // would otherwise wedge the workflow in `draining` forever, which is worse than
+          // a lingering OS process that operators can clean up by hand.
+          const killHost = input.metadata.hostname;
+          try {
+            const killResult = await getHardTerminateProxy(killHost)({
+              ensemble: input.metadata.ensemble,
+              playerName: input.metadata.playerId,
+              agent: (input.metadata.agentType ?? 'claude') as AgentType,
+              workDir: input.metadata.workDir,
+            });
+            workflowLog.info(
+              `drainingDeadline hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+              `killedPids=[${killResult.killedPids.join(',')}]`,
+            );
+          } catch (err) {
+            workflowLog.warn(
+              `drainingDeadline hard-terminate failed for ${killHost} ` +
+              `(continuing with state flip): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
-      }
-      lastDetachReason = lastDetachReason ?? 'force';
-      currentAttachment = null;
-      inFlightMessages.clear();
-      processingSince = null;
-      drainingSince = null;
-      drainingDeadlineMs = null;
-      detachedSince = workflowNow().toISOString();
-      setPhase('detached');
-      upsertSearchAttributes({
-        AgentTempoAttachedHost: [''],
-      });
-      if (reaped) {
-        workflowLog.info(
-          `drainingDeadline exceeded (${Math.round(window / 1000)}s); ` +
-          `reaping attachment ${reaped.attachmentId}`,
+        lastDetachReason = lastDetachReason ?? 'force';
+        currentAttachment = null;
+        inFlightMessages.clear();
+        processingSince = null;
+        drainingSince = null;
+        drainingDeadlineMs = null;
+        detachedSince = workflowNow().toISOString();
+        setPhase('detached');
+        upsertSearchAttributes({
+          AgentTempoAttachedHost: [''],
+        });
+        // #809 — loud, non-silent escape. Fires EXACTLY ONCE: the `setPhase('detached')`
+        // above flips the phase in this same loop iteration, before any `continueAsNew`,
+        // so the `phase === 'draining'` guard can't re-enter and re-inject the notice on a
+        // later pass (or after a CAN mid-wedge). Surfaced to the next adapter on
+        // attach/restore as a normal inbound message.
+        const detail = elapsedMs === null
+          ? `was wedged in 'draining' with no firing deadline`
+          : `did not finish draining within ${Math.round(window / 1000)}s`;
+        messages.push({
+          id: uuid4(),
+          from: 'system',
+          text:
+            `🛑 Attachment watchdog (#809): this session ${detail} and was force-detached. ` +
+            `The previous adapter (if any) was swept; the session is now 'detached' and can be ` +
+            `restarted or restored.`,
+          timestamp: workflowNow().toISOString(),
+          delivered: false,
+        });
+        workflowLog.warn(
+          `drainingDeadline reap (#809): session ${detail}` +
+          (reaped ? `; reaping attachment ${reaped.attachmentId}` : '; no attachment held'),
         );
       }
     }
