@@ -1078,6 +1078,15 @@ export function createOutboxActivities(
               // Best-effort; force path handles it below.
             }
           }
+          // NOTE (#809 follow-up — DEFERRED, separate issue): this graceful detach is
+          // fire-and-forget — we signal `requestDetach` then re-query the phase exactly
+          // ONCE here, with no wait/poll for `draining → detached`. So a non-force restart
+          // of an active session always observes `draining` and bails to "use force=true"
+          // (and a plain restart parks the target in `draining`). The #809 unconditional
+          // draining floor in session.ts removes the indefinite-wedge SYMPTOM regardless,
+          // but the right UX fix here is a bounded poll for `detached`/`booting` (then
+          // escalate to forceDetach) instead of a single immediate re-query. Tracked
+          // separately to keep the #809 PR scoped to the workflow-side floor.
           const info2 = await handle.query(attachmentInfoQuery) as AttachmentInfo;
           if (info2.phase !== 'detached' && info2.phase !== 'booting') {
             if (!force) {
