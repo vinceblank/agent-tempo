@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — beta.3
+
+### Removed
+
+- **BREAKING (client API):** removed `TempoClient.terminatePlayer()` (#674) — dead since the TUI deletion (#789); use `destroy(ensemble, playerId)` instead (graceful §2.5 destroy update, race-free via #845).
+
 ## [2.0.0-beta.2] - 2026-06-24
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.7.0.
