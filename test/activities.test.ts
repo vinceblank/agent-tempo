@@ -362,6 +362,67 @@ describe('resolveSession — Mode B index-lag fallback (#845)', function () {
     expect(result).to.not.be.null;
     expect(result!.workflowId).to.equal(listedId);
   });
+
+  // ── recruit → immediate-destroy index-lag regression (#674 / #845) ─────────
+  //
+  // Scenario: a player is recruited and immediately destroyed before its
+  // workflow has propagated to the Temporal visibility index (Temporal Cloud
+  // eventual consistency). The old `terminatePlayer` (deleted in #674/#789) used
+  // a raw visibility-only listWorkflows() and would throw "Player not found" in
+  // this window.
+  //
+  // The LIVE destroy path routes through:
+  //   client.destroy(ensemble, playerId)
+  //   → maestro outbox deliverDestroy activity
+  //   → resolveSession(client, ensemble, playerId)       ← the Mode-B chokepoint
+  //   → handle.executeUpdate(destroyUpdate, ...)
+  //
+  // resolveSession's Mode-B fallback (describe-by-derived-id) closes the race:
+  // when the visibility list misses the player, a single strongly-consistent
+  // describe() by the deterministic `agent-session-<e>-<p>` id recovers it.
+  // These tests lock in that coverage on the shipping path.
+
+  it('destroy via index-lag: list miss + running describe-by-id → handle returned (no throw)', async function () {
+    // Exactly the #674 race: just recruited, not yet visible, but describe-by-id
+    // finds the workflow RUNNING. resolveSession must return the handle so the
+    // destroy activity can proceed.
+    const derivedId = 'agent-session-destroy-test-newplayer';
+    const client = lagClient({
+      listed: [],   // visibility index lag — player not visible yet
+      describeById: {
+        [derivedId]: () => ({ status: { name: 'RUNNING' }, searchAttributes: {} }),
+      },
+    });
+    const result = await resolveSession(client as any, 'destroy-test', 'newplayer');
+    expect(result).to.not.be.null;
+    expect(result!.workflowId).to.equal(derivedId);
+  });
+
+  it('destroy via index-lag: list miss + non-running describe → null (already gone, no spurious throw)', async function () {
+    // A not-yet-visible player that is already COMPLETED/TERMINATED should
+    // return null so deliverDestroy emits an ApplicationFailure.nonRetryable
+    // (graceful "not found") rather than crashing with a confusing error.
+    // Regression guard: old terminatePlayer would throw on BOTH "not visible" cases
+    // identically; the live path must distinguish them.
+    const derivedId = 'agent-session-destroy-test-newplayer';
+    const client = lagClient({
+      listed: [],
+      describeById: {
+        [derivedId]: () => ({ status: { name: 'COMPLETED' }, searchAttributes: {} }),
+      },
+    });
+    const result = await resolveSession(client as any, 'destroy-test', 'newplayer');
+    expect(result).to.be.null;
+  });
+
+  it('destroy via index-lag: list miss + describe NotFound → null (genuinely absent)', async function () {
+    // A player that was never started (or whose derived id doesn't match) resolves
+    // to null — the destroy activity turns this into a graceful nonRetryable error,
+    // not an unhandled exception.
+    const client = lagClient({ listed: [] }); // no describeById entry → NotFound
+    const result = await resolveSession(client as any, 'destroy-test', 'ghost');
+    expect(result).to.be.null;
+  });
 });
 
 // ── scanEnsembleSessions ──

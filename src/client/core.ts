@@ -690,15 +690,17 @@ export function createTempoClientCore(
       return `maestro-msg-${Date.now()}`;
     },
 
-    async terminatePlayer(ensemble: string, playerId: string): Promise<void> {
-      const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
-      for await (const wf of listWorkflows({ query })) {
-        const h = handle(wf.workflowId);
-        await h.terminate('terminated via TUI');
-        return;
-      }
-      throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
-    },
+    // terminatePlayer removed in v2.0 (#674/#789). The method used a raw
+    // listWorkflows() visibility scan with no describe-by-id fallback, causing
+    // spurious "Player not found" on Temporal Cloud when the visibility index lagged
+    // behind a just-recruited workflow. Its only caller was the Ink TUI (deleted in
+    // #789), so no production path used it. The live destructive surface is
+    // client.destroy(ensemble, playerId), which enqueues a destroy outbox entry on
+    // the maestro → the dispatch loop calls resolveSession → #845 Mode-B
+    // describe-by-derived-id — race-free. Ensemble-scope silent-miss note: the
+    // ensemble-wide destroy() still iterates scanEnsembleSessions() (visibility);
+    // a just-recruited, not-yet-visible player may be silently skipped (separate
+    // minor gap, tracked but not blocking — the player self-heals / lingers).
 
     // ── PR-D verbs — enqueue on the TUI-owned maestro session's outbox.
     //   The dispatch loop runs `deliverDetach` / `deliverDestroy` /
