@@ -315,8 +315,11 @@ export interface TempoClientCore {
   sendCommand(ensemble: string, text: string, source: string): Promise<string>;
   /** Send a message to a specific player in an ensemble. Returns message ID. */
   sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string>;
-  /** Terminate a player's workflow. */
-  terminatePlayer(ensemble: string, playerId: string): Promise<void>;
+  // terminatePlayer removed in v2.0 (#674/#789) — the only caller was the Ink TUI,
+  // which was deleted in #789. The live destructive path is client.destroy(), which
+  // routes through resolveSession → the #845 Mode-B describe-by-id fallback and the
+  // graceful §2.5 destroy update (not a hard Temporal terminate). See the breaking-
+  // changes ledger in CHANGELOG.md for the v2.0 client-API removal notice.
   /**
    * #306: Recruit a player directly via the caller's maestro session outbox.
    * Replaces the legacy TUI path of routing `/recruit …` through the

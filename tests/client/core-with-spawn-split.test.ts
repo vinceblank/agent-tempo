@@ -81,7 +81,7 @@ const CORE_METHOD_NAMES = [
   // Direct workflow signals
   'sendCommand',
   'sendMessage',
-  'terminatePlayer',
+  // 'terminatePlayer' removed in v2.0 (#674/#789) — dead after TUI deletion.
   'cancelSchedule',
   // Maestro session helpers
   'ensureMaestroSession',
