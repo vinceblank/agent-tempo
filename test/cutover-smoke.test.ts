@@ -537,4 +537,104 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
       });
     },
   );
+
+  it(
+    'force-drain straggler round-trip: stragglers in snapshot survive to consumed.json and are distinct from inbox cues',
+    async function () {
+      this.timeout(90_000);
+      const ensemble = `${getTestEnsemble()}-forcedrain-rt`;
+
+      await withWorkerAndRecruitActivities(async () => {
+        // ── Phase A: 1.x ensemble with a permanently-stuck outbox entry ──
+        // Pause A's dispatch BEFORE enqueueing so the cue entry can never drain —
+        // this simulates a real-world stuck adapter mid-delivery.
+        const stuckSession = await startSession({
+          metadata: playerMetadata({ ensemble, playerId: 'stuck' }),
+        });
+        const peerSession = await startSession({
+          metadata: playerMetadata({ ensemble, playerId: 'peer' }),
+        });
+
+        await stuckSession.signal(setPausedSignal, true);
+        await pollWithTimeout(
+          async () => (await stuckSession.query(pausedQuery)) === true,
+          10_000,
+          50,
+        );
+        await stuckSession.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'cue', targetPlayerId: 'peer', message: 'this will straggle' }],
+        });
+
+        await waitForVisibility(ensemble);
+
+        // ── Phase B: upgrade with --force-drain (proceeds past the stuck outbox) ──
+        const upgradeResult = await runUpgradeToV2(upgradeDeps(), {
+          yes: true,
+          forceDrain: true,
+          drainTimeoutMs: 1_500,
+          drainPollIntervalMs: 50,
+        });
+
+        expect(upgradeResult.status, 'upgrade completed with force-drain').to.equal('done');
+
+        const snapPath = snapshotPath(home);
+        const snap = readSnapshot(home)!;
+        const ens = snap.ensembles.find((e) => e.name === ensemble)!;
+
+        // Straggler captured in snapshot before destroy.
+        expect(ens.forceDrainedStragglers, 'stragglers in snapshot').to.exist;
+        const straggler = ens.forceDrainedStragglers!.find((s) => s.playerId === 'stuck');
+        expect(straggler, 'stuck player straggler captured').to.exist;
+        expect(straggler!.entryType, 'straggler entry type=cue').to.equal('cue');
+
+        // 1.x sessions destroyed by upgrade engine.
+        await stuckSession.result();
+        await peerSession.result();
+        await waitForInvisibility(ensemble);
+
+        // ── Phase C: from-upgrade — straggler data survives in consumed.json ──
+        const fromResult = await runFromUpgrade(getClient(), {
+          home,
+          hostname: 'test-host',
+          taskQueue: TASK_QUEUE,
+          temporalAddress: 'localhost:7233',
+          temporalNamespace: 'default',
+        });
+
+        expect(fromResult.ok, 'from-upgrade ok').to.be.true;
+        expect(fromResult.snapshotFound, 'snapshot found').to.be.true;
+        expect(fromResult.failures, 'no recreation failures').to.be.empty;
+
+        // Snapshot archived on success.
+        expect(existsSync(snapPath), 'original snapshot removed after archive').to.be.false;
+        const consumedPath = join(home, CONSUMED_SNAPSHOT_FILENAME);
+        expect(existsSync(consumedPath), 'consumed snapshot archived').to.be.true;
+
+        // Straggler data preserved in the consumed snapshot for operator review.
+        // This is the contract: the operator reads .consumed.json to triage stuck
+        // outbox entries; they are NOT surfaced through fromResult.undeliveredCues
+        // (which is inbox-only, never outbox stragglers).
+        const consumedRaw = await import('fs').then((fs) => fs.readFileSync(consumedPath, 'utf8'));
+        const consumed = JSON.parse(consumedRaw) as typeof snap;
+        const consumedEns = consumed.ensembles.find((e) => e.name === ensemble)!;
+        expect(
+          consumedEns.forceDrainedStragglers,
+          'straggler data in consumed snapshot for operator review',
+        ).to.exist;
+        expect(
+          consumedEns.forceDrainedStragglers!.length,
+          'at least one straggler preserved',
+        ).to.be.greaterThan(0);
+
+        // KEY DISTINCTION: outbox stragglers ≠ inbox undelivered cues.
+        // fromResult.undeliveredCues pulls from player.undeliveredMessages (inbox);
+        // forceDrainedStragglers tracks stuck OUTBOX dispatch — a separate operator concern.
+        // No inbox cues were sent to stuck/peer in this fixture, so the array is empty.
+        expect(
+          fromResult.undeliveredCues,
+          'fromResult.undeliveredCues is inbox-only, not outbox stragglers',
+        ).to.have.lengthOf(0);
+      });
+    },
+  );
 });
