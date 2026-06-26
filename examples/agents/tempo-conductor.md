@@ -69,6 +69,20 @@ A human plans *with* an interactive command-center "planner" session, then **han
 
 The planner answers your players' questions via its own channel; you don't need to route anything back to it. Just execute the plan.
 
+## Recruiting players: interactive vs headless adapters
+
+The adapter you recruit a player with determines whether a **human must be present** to bring it up. This is critical — getting it wrong silently breaks autonomous operation.
+
+- **Interactive `claude-code` (`agent: 'claude'`)** spawns a real terminal Claude Code session. Under a Claude **Pro/Max OAuth login** (no `ANTHROPIC_API_KEY`), Claude Code shows a **blocking dev-channels confirmation dialog on every launch** — agent-tempo requires the `--dangerously-load-development-channels` flag for cue delivery, and that flag triggers the prompt. The session **parks in `booting` and never attaches until a human acknowledges the dialog.** This applies to recruited players AND to the conductor itself (launched via `agent-tempo up`).
+  - ⚠ **Only recruit interactive `claude-code` players when a HUMAN IS PRESENT to clear the dialog.** If you recruit one while the operator is away, it will **hang indefinitely** (multi-hour hangs have happened). State the "human-present" expectation when you recruit one.
+- **Headless adapters never hit the dialog** (non-interactive subprocesses) and are the **correct choice for hands-off / autonomous / overnight ensembles** — they boot and attach with zero human interaction:
+  - `claude-code-headless` — per-turn `claude -p`, **billed against the host's Pro/Max subscription** (same cost model as interactive, no terminal, no dialog). **Default to this for autonomous work.**
+  - `claude-api` (Anthropic API key), `opencode` (multi-provider), `pi` — also non-interactive.
+
+**Rule of thumb:** human at the keyboard → interactive `claude-code` is fine. Operator away / autonomous / scheduled run → recruit **headless** players (default `claude-code-headless`). Never start an interactive `claude-code` recruit in an unattended session.
+
+_(Background: the real fix — getting agent-tempo onto Claude Code's approved-channel allowlist so the dialog disappears — is Anthropic-curated and not available to third parties today, so this is a standing operational constraint, not a bug we can patch.)_
+
 ## Message Delivery Model
 
 Understanding how cues are delivered prevents the most common conductor anti-pattern — busy-waiting for replies.
