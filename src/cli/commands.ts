@@ -9,7 +9,8 @@ import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client
 import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn, sweepStaleSecretEnvFiles } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
 import { arePiExtensionsRegistered, installPiExtensions } from '../pi/install';
-import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME, bridgeLogPaths, bridgeLogsRoot } from '../config';
+import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, classifyTemporalServerOwnership, Config, CliOverrides, AGENT_TEMPO_HOME, bridgeLogPaths, bridgeLogsRoot } from '../config';
+import { sessionDestroyQuery, scopeDestroyTargets } from './destroy-scope';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
 import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
@@ -1771,6 +1772,20 @@ interface DownOpts extends CliOverrides {
    * opt-in for the hard-reset case.
    */
   killSharedTemporal: boolean;
+  /**
+   * #907 — the ensemble `--destroy` is scoped to (resolved via the canonical
+   * `--ensemble` > positional > env > 'default' precedence). Only this
+   * ensemble's session / maestro / scheduler workflows are terminated; the
+   * GLOBAL maestro and other ensembles are never touched. `--all-ensembles`
+   * widens the blast radius back to every ensemble.
+   */
+  ensemble: string;
+  /**
+   * #907 — `down --destroy --all-ensembles`: terminate workflows across EVERY
+   * ensemble (the pre-#907 wide behavior), including the global maestro.
+   * Off by default; gated behind a louder confirmation.
+   */
+  allEnsembles: boolean;
   dir: string;
 }
 
@@ -1836,6 +1851,32 @@ export function stopTemporalServer(opts: StopTemporalServerOpts): StopTemporalRe
     return { action: 'killed' };
   } catch (err) {
     return { action: 'failed', error: err };
+  }
+}
+
+/**
+ * Stop a Temporal dev server agent-tempo owns and render the user-facing
+ * outcome. Callers gate ownership (#907) before invoking this; the only
+ * remaining guard here is the cross-*profile* one inside `stopTemporalServer`
+ * (#423), overridable via `killSharedTemporal`.
+ */
+function stopOwnedTemporalServer(opts: { killSharedTemporal: boolean }): void {
+  const result = stopTemporalServer({ killSharedTemporal: opts.killSharedTemporal });
+  switch (result.action) {
+    case 'killed':
+      out.success('Temporal server stopped');
+      break;
+    case 'failed':
+      out.warn('Could not stop Temporal server (may need to stop it manually)');
+      break;
+    case 'skipped-cross-profile': {
+      const otherProfile = isDevMode() ? 'prod' : 'dev';
+      out.warn(
+        `Temporal server kept running — the ${otherProfile} profile appears active. ` +
+          `Pass --kill-shared-temporal to override.`,
+      );
+      break;
+    }
   }
 }
 
@@ -1912,12 +1953,17 @@ export async function down(opts: DownOpts) {
 
   out.heading('agent-tempo teardown');
   out.log(opts.destroy
-    ? `  ${out.bold('Destroying all workflows')}, then stopping daemon + Temporal.`
+    ? `  ${out.bold(
+        opts.allEnsembles
+          ? 'Destroying workflows across ALL ensembles'
+          : `Destroying workflows in ensemble '${opts.ensemble}'`,
+      )}, then stopping daemon + Temporal.`
     : `  Stopping daemon + Temporal. Workflows stay parked for the next ${out.dim('agent-tempo up')}.`,
   );
 
-  // Step 1 (destroy mode only): enumerate + terminate workflows across every
-  // ensemble, after a typed confirmation showing the user what's at stake.
+  // Step 1 (destroy mode only): enumerate + terminate workflows — scoped to the
+  // resolved ensemble by default, or every ensemble under `--all-ensembles`
+  // (#907) — after a typed confirmation showing the user what's at stake.
   let temporalUp = await isTemporalReachable(config);
 
   // `--destroy` can only terminate workflows while Temporal is reachable.
@@ -1929,7 +1975,15 @@ export async function down(opts: DownOpts) {
   // long enough to run the terminations — Step 4 below stops it again.
   let startedTemporalForDestroy = false;
   if (opts.destroy && !temporalUp) {
-    if (!temporalCliExists()) {
+    if (!classifyTemporalServerOwnership(config).owned) {
+      // #907 — never spawn a local `temporal server start-dev` to stand in for
+      // a remote / Cloud address we can't reach. We don't own that server, and
+      // a local dev server on its port would be wrong.
+      out.warn(
+        `Cannot reach Temporal at ${config.temporalAddress} — it is remote/Cloud, not a local ` +
+        `server agent-tempo can start. Workflows (if any) are left intact.`,
+      );
+    } else if (!temporalCliExists()) {
       out.warn('temporal CLI not found — cannot destroy workflows; they will persist on disk.');
     } else {
       out.log(`  ${out.dim('...')} Temporal is down — starting it temporarily to destroy workflows...`);
@@ -1974,28 +2028,35 @@ export async function down(opts: DownOpts) {
           }
           return ids;
         };
+        // #907 — scope to a single ensemble by default; `--all-ensembles`
+        // restores the (pre-#907) wide blast radius. Sessions are scoped at the
+        // QUERY level via the `AgentTempoEnsemble` search attribute — their
+        // `agent-session-<ensemble>-<player>` IDs cannot be split back into
+        // (ensemble, player) unambiguously, so post-hoc ID parsing would
+        // mis-target. Maestro/scheduler/global are enumerated wide, then scoped
+        // by exact ID match (`scopeDestroyTargets`).
         const baseFilter = 'ExecutionStatus = "Running"';
-        const [sessionIds, maestroIds, schedulerIds, globalMaestroIds] = await Promise.all([
-          collect(`WorkflowType = "agentSessionWorkflow" AND ${baseFilter}`),
+        const scopeEnsemble = opts.allEnsembles ? undefined : opts.ensemble;
+        const [sessionIds, allMaestroIds, allSchedulerIds, allGlobalMaestroIds] = await Promise.all([
+          collect(sessionDestroyQuery(scopeEnsemble)),
           collect(`WorkflowType = "agentMaestroWorkflow" AND ${baseFilter}`),
           collect(`WorkflowType = "agentSchedulerWorkflow" AND ${baseFilter}`),
           collect(`WorkflowType = "agentGlobalMaestroWorkflow" AND ${baseFilter}`),
         ]);
 
-        // Ensemble names are best-effort display only — derived from
-        // workflow ID prefixes when present. We terminate by ID, not by
-        // ensemble, so a missing name no longer blocks cleanup.
-        const ensemblesFromIds = new Set<string>();
-        for (const id of sessionIds) {
-          // `agent-session-<ensemble>-<playerId>` / legacy `claude-session-<ensemble>-<playerId>`
-          const m = id.match(/^(?:agent|claude)-session-(.+?)-[^-]+$/);
-          if (m) ensemblesFromIds.add(m[1]);
-        }
-        for (const id of maestroIds) {
-          // `agent-maestro-<ensemble>` (and `agent-maestro-global` which we exclude as global)
-          const m = id.match(/^(?:agent|claude)-maestro-(.+)$/);
-          if (m && m[1] !== 'global') ensemblesFromIds.add(m[1]);
-        }
+        const scoped = scopeDestroyTargets(
+          {
+            maestroIds: allMaestroIds,
+            schedulerIds: allSchedulerIds,
+            globalMaestroIds: allGlobalMaestroIds,
+          },
+          { ensemble: opts.ensemble, allEnsembles: opts.allEnsembles },
+        );
+        const { maestroIds, schedulerIds, globalMaestroIds } = scoped;
+        // Display only — never used to target terminations (that's by ID). In
+        // scoped mode this is the single target ensemble; in `--all-ensembles`
+        // mode it is derived from unambiguous maestro IDs (#907 Problem B).
+        const displayEnsembles = scoped.displayEnsembles;
 
         const totalTargets =
           sessionIds.length + maestroIds.length + schedulerIds.length + globalMaestroIds.length;
@@ -2005,9 +2066,15 @@ export async function down(opts: DownOpts) {
         } else {
           if (!opts.yes) {
             console.log();
-            if (ensemblesFromIds.size > 0) {
-              out.log('  The following ensembles will be destroyed:');
-              for (const name of [...ensemblesFromIds].sort()) {
+            // #907 — the workflows are destroyed; the ensemble *definition*
+            // (lineup, saved state on disk) is not. Say so, and label the
+            // count as workflows, not ensembles.
+            if (displayEnsembles.length > 0) {
+              out.log(
+                `  Workflows in the following ensemble${displayEnsembles.length !== 1 ? 's' : ''} ` +
+                `will be destroyed (the ensemble definitions are not deleted):`,
+              );
+              for (const name of displayEnsembles) {
                 out.log(`    - ${name}`);
               }
             }
@@ -2017,6 +2084,9 @@ export async function down(opts: DownOpts) {
               `${schedulerIds.length} scheduler${schedulerIds.length !== 1 ? 's' : ''}` +
               (globalMaestroIds.length > 0 ? `, ${globalMaestroIds.length} global maestro` : ''),
             );
+            if (opts.allEnsembles) {
+              out.warn('  --all-ensembles: this spans EVERY ensemble and the global maestro.');
+            }
             console.log();
             const confirmed = await typedConfirmPrompt(
               `  This terminates every workflow (${totalTargets}) and cannot be undone.`,
@@ -2052,7 +2122,7 @@ export async function down(opts: DownOpts) {
           const results = await Promise.all(targets.map(terminate));
           const terminated = results.filter(Boolean).length;
 
-          const ensembleCount = ensemblesFromIds.size;
+          const ensembleCount = displayEnsembles.length;
           out.success(
             `Terminated ${terminated}/${totalTargets} workflow${terminated !== 1 ? 's' : ''}` +
             (ensembleCount > 0 ? ` across ${ensembleCount} ensemble${ensembleCount !== 1 ? 's' : ''}` : ''),
@@ -2080,37 +2150,39 @@ export async function down(opts: DownOpts) {
 
   // Step 4: Stop Temporal dev server.
   //
+  // #907 — the *namespace* is agent-tempo's unit of ownership; the Temporal
+  // *server* is not. A shared local server (hosting other namespaces), a
+  // remote server, or Temporal Cloud is NOT ours to stop. Gate the kill on
+  // demonstrable ownership: only a loopback dev server with no API key / TLS
+  // configured. A server we spawned ourselves just for the destroy step
+  // (`startedTemporalForDestroy`) is ours outright regardless. This refusal is
+  // categorical — `--kill-shared-temporal` (the cross-*profile* opt-in) does
+  // NOT override it.
+  //
   // Cross-profile coexistence (ADR 0014 §5.6, #423): the dev-server is one
   // OS-wide process and `pkill`/`taskkill` cannot distinguish profile
-  // ownership. Without the guard, `--dev down` kills the prod profile's
-  // Temporal as collateral damage (and vice versa). `stopTemporalServer`
-  // skips the kill when the OPPOSITE profile is likely active;
-  // `--kill-shared-temporal` is the explicit opt-in to override.
-  if (temporalUp) {
-    // When we started Temporal ourselves just for the destroy step, always
-    // stop it again — the cross-profile guard is about not killing a server
-    // the *other* profile owns, but this one we own outright.
-    const result = stopTemporalServer({
-      killSharedTemporal: opts.killSharedTemporal || startedTemporalForDestroy,
-    });
-    switch (result.action) {
-      case 'killed':
-        out.success('Temporal server stopped');
-        break;
-      case 'failed':
-        out.warn('Could not stop Temporal server (may need to stop it manually)');
-        break;
-      case 'skipped-cross-profile': {
-        const otherProfile = isDevMode() ? 'prod' : 'dev';
-        out.warn(
-          `Temporal server kept running — the ${otherProfile} profile appears active. ` +
-            `Pass --kill-shared-temporal to override.`,
-        );
-        break;
-      }
+  // ownership. `stopTemporalServer` skips the kill when the OPPOSITE profile
+  // is likely active; `--kill-shared-temporal` is the explicit opt-in to
+  // override THAT (local) guard only.
+  if (!temporalUp) {
+    out.log(`  ${out.dim('Temporal not running')}`);
+  } else if (!startedTemporalForDestroy) {
+    const ownership = classifyTemporalServerOwnership(config);
+    if (!ownership.owned) {
+      const where =
+        ownership.reason === 'api-key' ? 'Temporal Cloud / an authenticated remote (API key configured)'
+        : ownership.reason === 'tls' ? 'a remote Temporal (TLS configured)'
+        : `a non-local Temporal (${config.temporalAddress})`;
+      out.log(
+        `  ${out.dim(`Temporal server left running — points at ${where}; not agent-tempo's to stop.`)}`,
+      );
+    } else {
+      stopOwnedTemporalServer({ killSharedTemporal: opts.killSharedTemporal });
     }
   } else {
-    out.log(`  ${out.dim('Temporal not running')}`);
+    // We spawned this local dev server ourselves just for the destroy step —
+    // ours outright, so force past the cross-profile guard.
+    stopOwnedTemporalServer({ killSharedTemporal: true });
   }
 
   // Step 4: Check for npx usage, then remove MCP config
