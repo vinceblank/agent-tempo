@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **BREAKING (client API):** removed `TempoClient.terminatePlayer()` (#674) — dead since the TUI deletion (#789); use `destroy(ensemble, playerId)` instead (graceful §2.5 destroy update, race-free via #845).
 
+### Changed
+
+- **Wire-protocol drift detector now covers memo keys (#899, PR #911)** — the `test/wire-protocol.test.ts` AST scanner previously had no visibility into workflow memo fields; a key like `AgentTempoCloseReason` could be added to `MEMO_KEYS` without the drift check catching a missing docs entry. The new `wire-protocol memo-key drift detector` describe block adds bidirectional coverage: `extractMemoKeysFromSource()` reads all string values from the `MEMO_KEYS = { … } as const` block in `src/utils/search-attributes.ts`; `extractMemoKeysFromDocs()` reads the `### Workflow memo` table in `docs/WIRE-PROTOCOL.md`. Four assertions ensure a non-zero count from each source (scan-nothing guard per #707) and that every code-side key is documented and every documented key exists in code. Closes #899.
+
 ## [2.0.0-beta.2] - 2026-06-24
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.7.0.
