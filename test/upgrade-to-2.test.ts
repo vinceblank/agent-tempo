@@ -462,4 +462,141 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       expect(intervalRecreated.firedCount, 'firedCount reset to 0 (was 2)').to.equal(0);
     });
   });
+
+  // ── Gap 1: multi-ensemble round-trip ────────────────────────────────────────
+  // Real deployments always have 2+ ensembles. Validates that `runUpgradeToV2`
+  // discovers and captures all of them, and `runFromUpgrade` recreates each
+  // independently with no cross-ensemble contamination.
+  it('multi-ensemble round-trip: two ensembles captured + recreated independently', async function () {
+    this.timeout(120_000);
+    const base = getTestEnsemble();
+    const ensAlpha = `${base}-multi-alpha`;
+    const ensBeta = `${base}-multi-beta`;
+
+    await withWorkerAndRecruitActivities(async () => {
+      // ── Alpha: conductor + soloist + cron schedule ──
+      const alphaConductor = await startSession({ metadata: conductorMetadata({ ensemble: ensAlpha }) });
+      const alphaSoloist = await startSession({
+        metadata: playerMetadata({ ensemble: ensAlpha, playerId: 'analyst' }),
+      });
+
+      const alphaScheduler = await getClient().workflow.start('agentSchedulerWorkflow', {
+        workflowId: schedulerWorkflowId(ensAlpha),
+        taskQueue: TASK_QUEUE,
+        args: [{ ensemble: ensAlpha, entries: [] }],
+      });
+      const alphaEntry: ScheduleEntry = {
+        name: 'alpha-check',
+        message: 'alpha ping',
+        target: 'analyst',
+        createdBy: 'conductor',
+        type: 'cron',
+        nextFireAt: new Date(Date.now() + 3_600_000).toISOString(),
+        cronExpression: '0 10 * * *',
+        firedCount: 0,
+      };
+      await alphaScheduler.signal(addScheduleSignal, alphaEntry);
+
+      // ── Beta: conductor only, no schedule ──
+      const betaConductor = await startSession({ metadata: conductorMetadata({ ensemble: ensBeta }) });
+
+      // Wait until both ensembles are visible to the upgrade engine.
+      await Promise.all([
+        waitForVisibility(ensAlpha),
+        waitForVisibility(ensBeta),
+      ]);
+
+      // ── Run upgrade: must capture both ensembles in one pass ──
+      const result = await runUpgradeToV2(deps(), {
+        yes: true,
+        drainTimeoutMs: 3_000,
+        drainPollIntervalMs: 50,
+      });
+      expect(result.status, 'upgrade done').to.equal('done');
+
+      // ── Snapshot fidelity: both ensembles present and isolated ──
+      const snap = readSnapshot(home)!;
+      const snapAlpha = snap.ensembles.find((e) => e.name === ensAlpha);
+      const snapBeta = snap.ensembles.find((e) => e.name === ensBeta);
+      expect(snapAlpha, 'alpha captured in snapshot').to.exist;
+      expect(snapBeta, 'beta captured in snapshot').to.exist;
+
+      // Alpha has schedule; beta does not.
+      expect(snapAlpha!.schedules, 'alpha schedule captured').to.have.lengthOf(1);
+      expect(snapAlpha!.schedules[0].name, 'alpha schedule name').to.equal('alpha-check');
+      expect(snapBeta!.schedules, 'beta has no schedules').to.have.lengthOf(0);
+
+      // Alpha has conductor + soloist; beta has conductor only.
+      expect(snapAlpha!.players, 'alpha: conductor + analyst').to.have.lengthOf(2);
+      expect(snapBeta!.players, 'beta: conductor only').to.have.lengthOf(1);
+
+      // No cross-contamination: alpha's schedule absent from beta; alpha's unique soloist
+      // player absent from beta. (Conductors in both ensembles share the 'conductor'
+      // playerId by convention — that's correct; isolation is by ensemble name, not ID.)
+      expect(
+        snapBeta!.schedules.some((s) => s.name === 'alpha-check'),
+        'alpha schedule absent from beta snapshot',
+      ).to.be.false;
+      expect(
+        snapBeta!.players.some((p) => p.playerId === 'analyst'),
+        'alpha soloist absent from beta player list',
+      ).to.be.false;
+      expect(
+        snapBeta!.players.find((p) => p.isConductor),
+        'beta conductor captured',
+      ).to.exist;
+
+      // ── Destroy: all sessions complete ──
+      await alphaConductor.result();
+      await alphaSoloist.result();
+      await betaConductor.result();
+      await Promise.all([
+        pollWithTimeout(
+          async () => !(await enumerateEnsembleNames(deps())).includes(ensAlpha),
+          15_000, 100,
+        ),
+        pollWithTimeout(
+          async () => !(await enumerateEnsembleNames(deps())).includes(ensBeta),
+          15_000, 100,
+        ),
+      ]);
+
+      // ── From-upgrade: both ensembles recreated independently ──
+      const fromResult = await runFromUpgrade(getClient(), {
+        home,
+        hostname: 'test-host',
+        taskQueue: TASK_QUEUE,
+        temporalAddress: 'localhost:7233',
+        temporalNamespace: 'default',
+      });
+      expect(fromResult.ok, 'from-upgrade ok').to.be.true;
+      expect(fromResult.failures, 'no recreation failures').to.be.empty;
+      expect(fromResult.ensemblesRecreated, 'two ensembles recreated').to.equal(2);
+
+      // Alpha scheduler must be recreated and hold its entry.
+      const alphaSchedHandle = getClient().workflow.getHandle(schedulerWorkflowId(ensAlpha));
+      await pollWithTimeout(
+        async () => {
+          try {
+            const entries = await alphaSchedHandle.query(getSchedulesQuery);
+            return entries.length >= 1;
+          } catch { return false; }
+        },
+        15_000, 100,
+      );
+      const alphaEntries = await alphaSchedHandle.query(getSchedulesQuery);
+      expect(alphaEntries.find((e) => e.name === 'alpha-check'), 'alpha schedule recreated').to.exist;
+
+      // Beta scheduler must NOT be recreated (no schedules were captured).
+      let betaSchedulerRecreated = false;
+      try {
+        const betaSchedHandle = getClient().workflow.getHandle(schedulerWorkflowId(ensBeta));
+        const betaEntries = await betaSchedHandle.query(getSchedulesQuery);
+        betaSchedulerRecreated = betaEntries.length > 0;
+      } catch {
+        betaSchedulerRecreated = false;
+      }
+      expect(betaSchedulerRecreated, 'beta scheduler NOT recreated (no schedules to restore)').to.be.false;
+    });
+  });
 });
