@@ -89,6 +89,16 @@ Stops the daemon, installs the latest version, and restarts automatically. To up
 agent-tempo upgrade 0.22.0
 ```
 
+### Upgrading from 1.x to 2.0
+
+A live-ensemble migration is required — a 2.0 worker cannot replay 1.x workflow histories. Run this on your 1.7.x install before switching to the 2.0 package:
+
+```bash
+agent-tempo upgrade-to-2
+```
+
+This runs a six-phase protocol (preflight → pause → drain → snapshot → destroy → done) that captures continuity before tearing down 1.x workflows. See the [1.7.0 → 2.0 Cutover Guide](docs/ops/v2-cutover.md) for the full procedure, flags (`--dry-run`, `--force-drain`, `--yes`), and rollback notes.
+
 ## Stopping & Tear Down
 
 ```bash
