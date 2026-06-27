@@ -298,6 +298,66 @@ export interface Config {
   costProfile?: CostProfile;
 }
 
+/**
+ * Whether agent-tempo demonstrably OWNS a *local* Temporal dev server that
+ * `down` may stop — vs. a shared / remote / Temporal Cloud server that is NOT
+ * agent-tempo's to manage (#907).
+ *
+ * The *namespace* is agent-tempo's unit of ownership; the Temporal *server* is
+ * not. `down --destroy` terminates the namespace's workflows (correct), but it
+ * must never kill a server it doesn't own — `pkill -f 'temporal server
+ * start-dev'` / `taskkill /IM temporal.exe` are OS-wide and cannot tell whose
+ * server they hit.
+ */
+export type TemporalServerOwnership =
+  | { owned: true }
+  | { owned: false; reason: 'api-key' | 'tls' | 'remote'; host: string };
+
+/** Parse the host portion out of a `host:port` (or bracketed IPv6) address. */
+function temporalHost(address: string): string {
+  const a = (address || '').trim();
+  // Bracketed IPv6 with optional port: [::1]:7233 → ::1
+  const bracket = a.match(/^\[([^\]]+)\]/);
+  if (bracket) return bracket[1].toLowerCase();
+  // A bare IPv6 literal has 2+ colons and no brackets (so no host:port split).
+  if ((a.match(/:/g) || []).length >= 2) return a.toLowerCase();
+  // host:port or bare host.
+  return (a.split(':')[0] || '').toLowerCase();
+}
+
+/** Loopback hosts agent-tempo's own dev server binds to. Empty host (e.g. a
+ *  bare `:7233`) is treated as loopback, matching the `up` auto-start probe. */
+function isLoopbackHost(host: string): boolean {
+  return host === '' || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+/**
+ * Classify whether `down` may stop the configured Temporal server (#907).
+ *
+ * Returns `owned: false` (skip the server stop) when ANY of these hold:
+ *   - an API key is configured (Temporal Cloud / authenticated remote),
+ *   - a TLS client cert or key is configured (remote / Cloud transport),
+ *   - the address host is not loopback (localhost / 127.0.0.1 / ::1).
+ *
+ * The `--kill-shared-temporal` cross-*profile* opt-in (#423) does NOT override
+ * a `false` here: cross-profile collateral is a local-dev concern, whereas a
+ * remote/Cloud server is categorically not ours to stop.
+ */
+export function classifyTemporalServerOwnership(config: Config): TemporalServerOwnership {
+  const host = temporalHost(config.temporalAddress);
+  if (config.temporalApiKey) return { owned: false, reason: 'api-key', host };
+  if (config.temporalTlsCertPath || config.temporalTlsKeyPath) {
+    return { owned: false, reason: 'tls', host };
+  }
+  if (!isLoopbackHost(host)) return { owned: false, reason: 'remote', host };
+  return { owned: true };
+}
+
+/** Boolean convenience wrapper over {@link classifyTemporalServerOwnership}. */
+export function isOwnedLocalTemporal(config: Config): boolean {
+  return classifyTemporalServerOwnership(config).owned;
+}
+
 /** Persisted config file fields (stored in ~/.agent-tempo/config.json). */
 export interface PersistedConfig {
   temporalAddress?: string;

@@ -63,9 +63,12 @@ interface ParsedArgs {
   /** Issue #172: `up --no-hold` opts out of the defer-conductor-instructions-
    *  until-first-user-message behavior. */
   noHold: boolean;
-  /** When set with `down`, terminate every live workflow across all
-   *  ensembles before stopping infra. */
+  /** When set with `down`, terminate live workflows before stopping infra.
+   *  Scoped to the resolved ensemble unless `allEnsembles` is also set. */
   destroy: boolean;
+  /** `down --destroy --all-ensembles` (#907): widen the destroy from the
+   *  resolved ensemble back to EVERY ensemble (and the global maestro). */
+  allEnsembles: boolean;
   /** `down --kill-shared-temporal` (#423): bypass the cross-profile guard
    *  and tear down the shared Temporal dev server unconditionally. */
   killSharedTemporal: boolean;
@@ -132,6 +135,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     project: false,
     noHold: false,
     destroy: false,
+    allEnsembles: false,
     killSharedTemporal: false,
     includeStale: false,
     force: false,
@@ -186,6 +190,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.fromUpgrade = true;
     } else if (arg === '--destroy') {
       result.destroy = true;
+    } else if (arg === '--all-ensembles') {
+      // `down --destroy --all-ensembles` (#907): widen the destroy back to
+      // every ensemble (the pre-#907 behavior), including the global maestro.
+      result.allEnsembles = true;
     } else if (arg === '--kill-shared-temporal') {
       // #423 (down only): bypass the cross-profile coexistence guard and
       // tear down the shared Temporal dev server even when the OPPOSITE
@@ -506,6 +514,10 @@ async function main() {
         killSharedTemporal: args.killSharedTemporal,
         yes: args.yes,
         destroy: args.destroy,
+        // #907 — scope `--destroy` to the resolved ensemble by default
+        // (--ensemble > positional > env > 'default'); --all-ensembles widens it.
+        ensemble: resolveEnsemble(args),
+        allEnsembles: args.allEnsembles,
         dir: args.dir,
         ...overrides,
       });
