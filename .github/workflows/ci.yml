@@ -520,9 +520,12 @@ jobs:
     needs: [lint-test-ensemble, changes]
     # #354 + #355: skip on docs-only PRs and on push-to-main.
     # Skip on v2 branch/PRs — TUI is deleted in #789 and tests/tui/ goes with it.
+    # workflow_dispatch excluded: base_ref is '' on dispatch, so the base_ref != 'v2'
+    # guard is bypassed and the job runs on any branch — including v2-era branches that
+    # lack tests/tui/. test-vitest already covers vitest on workflow_dispatch.
     if: |
-      ((github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
-      || github.event_name == 'workflow_dispatch')
+      github.event_name == 'pull_request'
+      && needs.changes.outputs.code == 'true'
       && github.base_ref != 'v2'
       && github.ref != 'refs/heads/v2'
     strategy:
