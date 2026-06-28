@@ -546,10 +546,10 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
         'beta conductor captured',
       ).to.exist;
 
-      // ── Destroy: all sessions complete ──
-      await alphaConductor.result();
-      await alphaSoloist.result();
-      await betaConductor.result();
+      // ── Destroy: verify sessions gone via bounded visibility check ──
+      // result() has no timeout — hangs indefinitely if executeUpdate(destroyUpdate)
+      // fails silently on a slow CI runner (caught in destroyEnsemble's allSettled).
+      // waitForInvisibility with a 15-second bound is the correct verification shape.
       await Promise.all([
         pollWithTimeout(
           async () => !(await enumerateEnsembleNames(deps())).includes(ensAlpha),
