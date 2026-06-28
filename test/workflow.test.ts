@@ -37,8 +37,12 @@ describe('agentSessionWorkflow', function () {
 
   describe('lifecycle', function () {
     it('starts and responds to metadata query', async function () {
-      const meta = playerMetadata({ playerId: 'lifecycle-1' });
       await withWorker(async () => {
+        // #772 — playerMetadata() must be called INSIDE withWorker so
+        // CURRENT_TEST_HOSTNAME (set by mintTaskQueue()) is already updated.
+        // Calling it before withWorker gets the prior invocation's hostname,
+        // causing destroyUpdate to route hardTerminateAttachment to the wrong queue.
+        const meta = playerMetadata({ playerId: 'lifecycle-1' });
         const handle = await startSession({ metadata: meta });
         const result = await handle.query(getMetadataQuery);
 
