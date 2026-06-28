@@ -46,7 +46,7 @@ describe('agentSessionWorkflow', function () {
         // `meta.ensemble` comes from `playerMetadata()` — under #210 shared env
         // it's a per-file suffix (`test-ensemble-<random>`), otherwise the default.
         expect(result.ensemble).to.equal(meta.ensemble);
-        expect(result.hostname).to.equal('test-host');
+        expect(result.hostname).to.equal(meta.hostname); // #772 — hostname comes from playerMetadata()
         expect(result.isConductor).to.equal(false);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });

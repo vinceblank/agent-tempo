@@ -27,6 +27,7 @@ import {
   withWorkerAndRecruitActivities,
   withWorkerAndGlobalMaestroActivities,
   pollWithTimeout,
+  CURRENT_TEST_HOSTNAME,
 } from './helpers';
 import {
   schedulerWorkflowId,
@@ -421,7 +422,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       // ── Phase C: from-upgrade recreates scheduler with both schedule types ──
       const fromResult = await runFromUpgrade(getClient(), {
         home,
-        hostname: 'test-host',
+        hostname: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
         taskQueue: TASK_QUEUE,
         temporalAddress: 'localhost:7233',
         temporalNamespace: 'default',
@@ -564,7 +565,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       // ── From-upgrade: both ensembles recreated independently ──
       const fromResult = await runFromUpgrade(getClient(), {
         home,
-        hostname: 'test-host',
+        hostname: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
         taskQueue: TASK_QUEUE,
         temporalAddress: 'localhost:7233',
         temporalNamespace: 'default',
