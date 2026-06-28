@@ -125,9 +125,34 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   let home: string;
   let temporalAddress: string;
 
-  beforeEach(function () {
+  /**
+   * Wait until the shared test env has no Running agentSessionWorkflows visible
+   * in the visibility index. Previous test files leave terminated workflows that
+   * may still appear Running due to visibility lag — if C1's dry-run or C5's
+   * upgrade engine sees them, it calls `scanEnsembleSessions` (15 s deadline
+   * each) for every stale ensemble, easily exceeding the spawn timeout. Polling
+   * for a clean slate before each test ensures the CLI sees exactly what the
+   * test sets up (nothing for C1/C2, one conductor for C5).
+   */
+  async function waitForCleanSlate(): Promise<void> {
+    await pollWithTimeout(
+      async () => (await enumerateEnsembleNames(deps())).length === 0,
+      30_000,
+      500,
+    );
+  }
+
+  beforeEach(async function () {
+    this.timeout(45_000); // waitForCleanSlate polls up to 30 s
     home = mkdtempSync(join(tmpdir(), 'tempo-gap5-cli-'));
     temporalAddress = getTestEnvServerAddress();
+    if (!temporalAddress) {
+      throw new Error(
+        `[gap5:beforeEach] getTestEnvServerAddress() returned empty string — testEnv.address not set.`,
+      );
+    }
+    console.log(`[gap5:beforeEach] temporalAddress=${temporalAddress}`);
+    await waitForCleanSlate();
   });
 
   afterEach(function () {
@@ -153,12 +178,16 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   }
 
   /**
-   * CLI opts for tests WITHOUT a running worker — `runCli` (sync) is fine.
-   * `AGENT_TEMPO_HOME_OVERRIDE` redirects snapshot I/O to the isolated temp
-   * dir; the module-load-time `AGENT_TEMPO_HOME` constant in `config.ts` reads
-   * this override, not a bare `AGENT_TEMPO_HOME` env var.
+   * CLI opts shared by all tests. `AGENT_TEMPO_HOME_OVERRIDE` redirects
+   * snapshot I/O to the isolated temp dir; the module-load-time
+   * `AGENT_TEMPO_HOME` constant in `config.ts` reads this override, not a bare
+   * `AGENT_TEMPO_HOME` env var.
+   *
+   * Default `timeoutMs` is 60 s — generous enough for worst-case CI where
+   * `scanEnsembleSessions` (15 s visibility deadline) is called multiple times
+   * during the full upgrade protocol (drain + snapshot phases each scan once).
    */
-  function cliOpts(extra: Record<string, string> = {}, timeoutMs = 25_000): RunCliOptions {
+  function cliOpts(extra: Record<string, string> = {}, timeoutMs = 60_000): RunCliOptions {
     return {
       temporalAddress,
       timeoutMs,
@@ -175,10 +204,11 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C1: --dry-run ──────────────────────────────────────────────────────────
 
   it('C1: --dry-run exits 0 and prints "Dry-run complete"', async function () {
-    this.timeout(30_000);
-    // No sessions needed — dry-run connects and enumerates (may find nothing)
-    // then exits before modifying anything.
-    // No worker needed → `runCli` (sync) is safe here.
+    this.timeout(90_000); // waitForCleanSlate (30 s) + CLI dry-run (60 s cap)
+    // No sessions needed — dry-run connects and enumerates (finds nothing after
+    // waitForCleanSlate) then exits before modifying anything.
+    // No worker needed → `runCli` (sync) is safe here: the embedded Go server
+    // is a separate process whose event loop is independent of spawnSync.
     const r = runCli(['upgrade-to-2', '--dry-run', '--yes'], cliOpts());
     expect(r.exitCode, 'exit code 0 for dry-run').to.equal(0);
     expect(r.stdout, 'dry-run completion line').to.match(/Dry-run complete/);
@@ -188,7 +218,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C2: connection failure (exit 1) ───────────────────────────────────────
 
   it('C2: connection failure exits 1 with actionable "Could not connect" message', async function () {
-    this.timeout(20_000);
+    this.timeout(50_000); // waitForCleanSlate (30 s) + CLI 12 s cap
     // Point at a port where no Temporal server is running. The CLI must catch
     // the connection error, print a helpful message, and exit 1 — same path as
     // the dynamic-import crash guard (both return 1 from upgradeToV2Command).
@@ -210,7 +240,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C3: version-floor refusal (exit 2) ────────────────────────────────────
 
   it('C3: version-floor refusal exits 2 — fixed "1.7.x" message (was "1.8.x")', async function () {
-    this.timeout(30_000);
+    this.timeout(90_000); // waitForCleanSlate (30 s) + worker setup + CLI spawn (60 s cap)
 
     await withWorkerAndGlobalMaestroActivities({}, async () => {
       // Defensive: terminate any leftover global maestro from a prior test.
@@ -279,7 +309,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C5: successful cutover (exit 0) ───────────────────────────────────────
 
   it('C5: successful full cutover exits 0 and prints "Cutover complete"', async function () {
-    this.timeout(40_000);
+    this.timeout(120_000); // waitForCleanSlate (30 s) + worker setup + CLI upgrade (60 s cap)
     const ensemble = `${getTestEnsemble()}-gap5-success`;
 
     await withWorkerAndRecruitActivities(async () => {

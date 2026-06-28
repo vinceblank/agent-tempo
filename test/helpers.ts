@@ -1083,7 +1083,16 @@ export function getTestEnvServerAddress(): string {
   if (!testEnv) {
     throw new Error('getTestEnvServerAddress() called before setupTestEnv()');
   }
-  return testEnv.address;
+  const addr = testEnv.address;
+  // Fail loud: an empty or falsy address means the SDK didn't set it after
+  // server startup — callers would silently get an unroutable target.
+  if (!addr) {
+    throw new Error(
+      `getTestEnvServerAddress(): testEnv.address is empty (${JSON.stringify(addr)}). ` +
+      `The embedded Temporal server may not have started correctly.`,
+    );
+  }
+  return addr;
 }
 
 /** Internal — resolves the current test env; for helpers only. */
