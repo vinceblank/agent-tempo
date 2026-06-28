@@ -1069,6 +1069,23 @@ export function getNativeConnection(): TestWorkflowEnvironment['nativeConnection
   return testEnv.nativeConnection;
 }
 
+/**
+ * Returns the gRPC address of the shared `TestWorkflowEnvironment` server.
+ * Use this when spawning child-process CLI invocations that must connect to
+ * the same ephemeral server (e.g. with `runCli` / `runCliAsync` from the
+ * CLI harness).
+ *
+ * `TestWorkflowEnvironment.address` is the authoritative address — it is set
+ * after `createLocal()` assigns a port, so it reflects the actual bound address
+ * even when the default port (7233) is already in use.
+ */
+export function getTestEnvServerAddress(): string {
+  if (!testEnv) {
+    throw new Error('getTestEnvServerAddress() called before setupTestEnv()');
+  }
+  return testEnv.address;
+}
+
 /** Internal — resolves the current test env; for helpers only. */
 function requireTestEnv(): TestWorkflowEnvironment {
   if (!testEnv) {

@@ -88,6 +88,13 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
   try {
+    // `AGENT_TEMPO_DRAIN_TIMEOUT_MS` allows the drain timeout to be overridden via
+    // environment variable — used by the CLI test harness to keep drain-stop tests
+    // fast (the default 60 s wait is too slow for CI). Omit to get the engine default.
+    const drainTimeoutMs = process.env.AGENT_TEMPO_DRAIN_TIMEOUT_MS
+      ? parseInt(process.env.AGENT_TEMPO_DRAIN_TIMEOUT_MS, 10)
+      : undefined;
+
     const result = await runUpgradeToV2(
       {
         client,
@@ -103,6 +110,7 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
         yes: opts.yes,
         dryRun: opts.dryRun,
         forceDrain: opts.forceDrain,
+        drainTimeoutMs,
       },
     );
 
@@ -118,7 +126,7 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
         out.log('Cutover aborted — no changes were made.');
         return 0;
       case 'refused':
-        out.error('Cutover refused — one or more daemons are below the 1.8.x version floor.');
+        out.error('Cutover refused — one or more daemons are below the 1.7.x version floor.');
         return 2;
       case 'drain-stopped':
         out.warn('Cutover stopped at DRAIN — outbox entries are still pending.');
