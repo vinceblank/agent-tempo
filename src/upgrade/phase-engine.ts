@@ -773,22 +773,27 @@ async function destroySessionWithFallback(
 ): Promise<void> {
   const handle = deps.client.workflow.getHandle(workflowId);
   let timedOut = false;
-  await Promise.race([
-    handle.executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => {
-        timedOut = true;
-        reject(new Error(`destroyUpdate timed out after ${timeoutMs}ms`));
-      }, timeoutMs),
-    ),
-  ]).catch(async (err) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      handle.executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`destroyUpdate timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (err) {
     deps.log(
       timedOut
         ? `[upgrade] destroy ${playerId} timed out — terminating directly: ${errMsg(err)}`
         : `[upgrade] destroy ${playerId} failed (continuing): ${errMsg(err)}`,
     );
     await handle.terminate(reason).catch(() => {});
-  });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function reassertPause(deps: UpgradeDeps, ensembleNames: string[]): Promise<void> {
