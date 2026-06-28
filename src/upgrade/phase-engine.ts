@@ -760,12 +760,9 @@ export async function destroyEnsemble(deps: UpgradeDeps, ensemble: string): Prom
  * within that window, the client re-polls and the call can hang for 60-90s.
  * Racing against a 15s timer gives the graceful path enough headroom for the
  * hardTerminateAttachment activity (5s scheduleToCloseTimeout) while bounding
- * the worst case to 15s per session.
- *
- * After terminate() is called, the dangling update promise is awaited so the
- * PollWorkflowExecutionUpdate RPC settles before this function returns.
- * Leaving it dangling causes testEnv.teardown() (and CLI process shutdown) to
- * block for up to 60s per session waiting for the in-flight gRPC poll to drain.
+ * the worst case to 15s per session. The detached executeUpdate promise is
+ * abandoned; the workflow is already Terminated so its eventual settlement
+ * is harmless.
  */
 async function destroySessionWithFallback(
   deps: UpgradeDeps,
@@ -775,39 +772,23 @@ async function destroySessionWithFallback(
   timeoutMs = 15_000,
 ): Promise<void> {
   const handle = deps.client.workflow.getHandle(workflowId);
-
-  // Hoist the update promise so we can await its settlement even after the
-  // 15-second race fires.
-  const updatePromise = handle.executeUpdate(destroyUpdate, {
-    args: [{ reason, terminatedBy: 'upgrade-to-2' }],
-  });
-
   let timedOut = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      updatePromise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true;
-          reject(new Error(`destroyUpdate timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-      }),
-    ]);
-  } catch (err) {
+  await Promise.race([
+    handle.executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        timedOut = true;
+        reject(new Error(`destroyUpdate timed out after ${timeoutMs}ms`));
+      }, timeoutMs),
+    ),
+  ]).catch(async (err) => {
     deps.log(
       timedOut
         ? `[upgrade] destroy ${playerId} timed out — terminating directly: ${errMsg(err)}`
         : `[upgrade] destroy ${playerId} failed (continuing): ${errMsg(err)}`,
     );
     await handle.terminate(reason).catch(() => {});
-    // Await the dangling update promise so the PollWorkflowExecutionUpdate RPC
-    // settles before we return. terminate() causes the server to fail all pending
-    // polls for this execution, so this resolves almost immediately.
-    await updatePromise.catch(() => { /* expected: workflow terminated */ });
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 async function reassertPause(deps: UpgradeDeps, ensembleNames: string[]): Promise<void> {
