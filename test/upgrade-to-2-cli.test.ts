@@ -5,13 +5,13 @@
  * reusable CLI harness (#918) against the shared `TestWorkflowEnvironment`.
  * Tests in-process unit coverage can't reach: real `process.exitCode` /
  * `process.exit()` paths, dynamic-import crash guard, and the CLI's
- * `AGENT_TEMPO_HOME` / drain-timeout env wiring.
+ * `AGENT_TEMPO_HOME` env wiring.
  *
  * Exit codes under test:
  *   C1  0  — `--dry-run` exits 0 and prints "Dry-run complete"
  *   C2  1  — connection failure (proxy for dynamic-import crash-guard path)
  *   C3  2  — version-floor refusal ("1.7.x version floor" — fixes stale "1.8.x")
- *   C4  3  — drain-stopped without `--force-drain`
+ *   C4  3  — drain-stopped status maps to exit 3 (in-process; no subprocess)
  *   C5  0  — successful full cutover
  *
  * ## Spawn discipline
@@ -25,6 +25,7 @@
  * for the child process to exit.
  *
  * C1 and C2 run WITHOUT a worker and use `runCli` (synchronous is fine there).
+ * C4 is a pure in-process mapping test — no subprocess, no worker.
  *
  * Gap 6 (`up --from-upgrade` full CLI path) is DESCOPED: it would trigger
  * real `ensureInfra` (daemon + SA) against the ephemeral test server, and we
@@ -47,7 +48,6 @@ import {
   getTestEnvServerAddress,
   TASK_QUEUE,
   startSession,
-  playerMetadata,
   conductorMetadata,
   withWorkerAndRecruitActivities,
   withWorkerAndGlobalMaestroActivities,
@@ -55,16 +55,11 @@ import {
 } from './helpers';
 import { GLOBAL_MAESTRO_WORKFLOW_ID } from '../src/config';
 import {
-  setPausedSignal,
-  pausedQuery,
-  submitOutboxUpdate,
-  destroyUpdate,
-} from '../src/workflows/signals';
-import {
   enumerateEnsembleNames,
   type UpgradeDeps,
 } from '../src/upgrade/phase-engine';
 import { hostProfilesWithExistenceQuery } from '../src/workflows/maestro-signals';
+import { statusToExitCode } from '../src/cli/upgrade-to-2-command';
 import { runCli, type CliResult, type RunCliOptions } from './helpers/cli-harness';
 
 const SILENT = (..._args: unknown[]): void => {};
@@ -266,39 +261,19 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
     });
   });
 
-  // ── C4: drain-stopped (exit 3) ────────────────────────────────────────────
+  // ── C4: drain-stopped (exit 3) — in-process mapping test ─────────────────
 
-  it('C4: drain-stopped exits 3 when outbox stalls without --force-drain', async function () {
-    this.timeout(40_000);
-    const ensemble = `${getTestEnsemble()}-gap5-drain`;
-
-    await withWorkerAndRecruitActivities(async () => {
-      // Seed a permanently-stuck outbox entry (session paused before enqueue).
-      const blocker = await startSession({
-        metadata: playerMetadata({ ensemble, playerId: 'blocker' }),
-      });
-      await blocker.signal(setPausedSignal, true);
-      await pollWithTimeout(async () => (await blocker.query(pausedQuery)) === true, 10_000, 50);
-      await blocker.executeUpdate(submitOutboxUpdate, {
-        args: [{ type: 'cue', targetPlayerId: 'nobody', message: 'stuck' }],
-      });
-      await waitForVisibility(ensemble);
-
-      // `AGENT_TEMPO_DRAIN_TIMEOUT_MS=2000` keeps the test fast — the engine
-      // would otherwise wait the default 60 s for the outbox to clear.
-      // IMPORTANT: use `await spawnCli` (async) — see module-level comment.
-      const r = await spawnCli(
-        ['upgrade-to-2', '--yes'],
-        cliOpts({ AGENT_TEMPO_DRAIN_TIMEOUT_MS: '2000' }, 20_000),
-      );
-      expect(r.exitCode, 'exit code 3 for drain-stopped').to.equal(3);
-      expect(r.stdout, '"stopped at DRAIN" message').to.match(/stopped at DRAIN/);
-
-      // The upgrade engine must NOT have written a snapshot (SNAPSHOT-precedes-DESTROY).
-      // Clean up the live session manually — it was NOT destroyed by the CLI.
-      await blocker.executeUpdate(destroyUpdate, { args: [{}] });
-      await blocker.result();
-    });
+  it('C4: drain-stopped status maps to exit code 3', function () {
+    // Verify the status → exit-code mapping without a subprocess or worker.
+    //
+    // The real drain-stop ENGINE behavior (outbox that won't clear → status:
+    // 'drain-stopped') is exercised in the phase-engine integration tests
+    // (test/upgrade-to-2.test.ts) via opts.drainTimeoutMs directly.
+    // Here we just assert the CLI's status→exit-code switch is correct.
+    expect(statusToExitCode('drain-stopped'), 'drain-stopped → 3').to.equal(3);
+    // Regression-guard the other status codes while we're here.
+    expect(statusToExitCode('done'), 'done → 0').to.equal(0);
+    expect(statusToExitCode('refused'), 'refused → 2').to.equal(2);
   });
 
   // ── C5: successful cutover (exit 0) ───────────────────────────────────────
@@ -312,12 +287,12 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
       await waitForVisibility(ensemble);
 
       // The CLI drives the full upgrade protocol against the test server.
-      // `AGENT_TEMPO_DRAIN_TIMEOUT_MS=3000` avoids the 60 s drain wait (empty
-      // outbox drains immediately, but a short explicit bound makes it safe).
+      // The outbox is empty (conductor has no pending entries) so drain
+      // completes on the first poll cycle — no timeout override needed.
       // IMPORTANT: use `await spawnCli` (async) — see module-level comment.
       const r = await spawnCli(
         ['upgrade-to-2', '--yes'],
-        cliOpts({ AGENT_TEMPO_DRAIN_TIMEOUT_MS: '3000' }),
+        cliOpts(),
       );
       expect(r.exitCode, 'exit code 0 for success').to.equal(0);
       expect(r.stdout, '"Cutover complete" completion message').to.match(/Cutover complete/);

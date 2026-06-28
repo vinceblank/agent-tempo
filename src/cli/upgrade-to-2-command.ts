@@ -45,6 +45,37 @@ function promptYesNo(question: string): Promise<boolean> {
   });
 }
 
+/**
+ * Pure status → process exit-code mapping.
+ *
+ * Exported so tests can verify the mapping directly without going through the
+ * full CLI lifecycle (dynamic imports, Temporal connection, subprocess).
+ */
+export function statusToExitCode(
+  status: 'done' | 'dry-run' | 'aborted' | 'refused' | 'drain-stopped' | (string & {}),
+): number {
+  switch (status) {
+    case 'done':
+      out.success('Cutover complete — all workflows torn down, snapshot stamped `done`.');
+      return 0;
+    case 'dry-run':
+      out.log('Dry-run complete. Re-run without --dry-run to perform the cutover.');
+      return 0;
+    case 'aborted':
+      out.log('Cutover aborted — no changes were made.');
+      return 0;
+    case 'refused':
+      out.error('Cutover refused — one or more daemons are below the 1.7.x version floor.');
+      return 2;
+    case 'drain-stopped':
+      out.warn('Cutover stopped at DRAIN — outbox entries are still pending.');
+      out.log('  Re-run once they clear, or pass --force-drain to proceed (stragglers recorded, not delivered).');
+      return 3;
+    default:
+      return 0;
+  }
+}
+
 export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number> {
   const config = getConfig(opts);
 
@@ -88,13 +119,6 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
   try {
-    // `AGENT_TEMPO_DRAIN_TIMEOUT_MS` allows the drain timeout to be overridden via
-    // environment variable — used by the CLI test harness to keep drain-stop tests
-    // fast (the default 60 s wait is too slow for CI). Omit to get the engine default.
-    const drainTimeoutMs = process.env.AGENT_TEMPO_DRAIN_TIMEOUT_MS
-      ? parseInt(process.env.AGENT_TEMPO_DRAIN_TIMEOUT_MS, 10)
-      : undefined;
-
     const result = await runUpgradeToV2(
       {
         client,
@@ -110,31 +134,11 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
         yes: opts.yes,
         dryRun: opts.dryRun,
         forceDrain: opts.forceDrain,
-        drainTimeoutMs,
       },
     );
 
     console.log();
-    switch (result.status) {
-      case 'done':
-        out.success('Cutover complete — all workflows torn down, snapshot stamped `done`.');
-        return 0;
-      case 'dry-run':
-        out.log('Dry-run complete. Re-run without --dry-run to perform the cutover.');
-        return 0;
-      case 'aborted':
-        out.log('Cutover aborted — no changes were made.');
-        return 0;
-      case 'refused':
-        out.error('Cutover refused — one or more daemons are below the 1.7.x version floor.');
-        return 2;
-      case 'drain-stopped':
-        out.warn('Cutover stopped at DRAIN — outbox entries are still pending.');
-        out.log('  Re-run once they clear, or pass --force-drain to proceed (stragglers recorded, not delivered).');
-        return 3;
-      default:
-        return 0;
-    }
+    return statusToExitCode(result.status);
   } catch (err) {
     out.error(`Cutover failed: ${errMsg(err)}`);
     out.log(`  If a snapshot was written (~/.agent-tempo/upgrade-snapshot-v1.json), re-run to resume from where it stopped.`);
