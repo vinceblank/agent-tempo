@@ -354,35 +354,45 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
       const ensemble = `${getTestEnsemble()}-forcedrain-rt`;
 
       await withWorkerAndRecruitActivities(async () => {
+        console.log(`[straggler:A1] worker-ready @ ${Date.now()}`);
         // ── Phase A: 1.x ensemble with a permanently-stuck outbox entry ──
         // Pause A's dispatch BEFORE enqueueing so the cue entry can never drain —
         // this simulates a real-world stuck adapter mid-delivery.
         const stuckSession = await startSession({
           metadata: playerMetadata({ ensemble, playerId: 'stuck' }),
         });
+        console.log(`[straggler:A2] stuckSession started @ ${Date.now()}`);
         const peerSession = await startSession({
           metadata: playerMetadata({ ensemble, playerId: 'peer' }),
         });
+        console.log(`[straggler:A3] peerSession started @ ${Date.now()}`);
 
         await stuckSession.signal(setPausedSignal, true);
+        console.log(`[straggler:A4] signal(paused) sent @ ${Date.now()}`);
         await pollWithTimeout(
           async () => (await stuckSession.query(pausedQuery)) === true,
           10_000,
           50,
         );
+        console.log(`[straggler:A5] pausedQuery confirmed @ ${Date.now()}`);
+        console.log(`[straggler:A6] executeUpdate(submitOutbox) START @ ${Date.now()}`);
         await stuckSession.executeUpdate(submitOutboxUpdate, {
           args: [{ type: 'cue', targetPlayerId: 'peer', message: 'this will straggle' }],
         });
+        console.log(`[straggler:A6] executeUpdate(submitOutbox) DONE @ ${Date.now()}`);
 
         await waitForVisibility(ensemble);
+        console.log(`[straggler:A7] waitForVisibility done @ ${Date.now()}`);
 
         // ── Phase B: upgrade with --force-drain (proceeds past the stuck outbox) ──
+        console.log(`[straggler:B1] runUpgradeToV2 START @ ${Date.now()}`);
         const upgradeResult = await runUpgradeToV2(upgradeDeps(), {
           yes: true,
           forceDrain: true,
           drainTimeoutMs: 1_500,
           drainPollIntervalMs: 50,
         });
+        console.log(`[straggler:B1] runUpgradeToV2 DONE status=${upgradeResult.status} @ ${Date.now()}`);
 
         expect(upgradeResult.status, 'upgrade completed with force-drain').to.equal('done');
 
@@ -400,9 +410,12 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // Use bounded waitForInvisibility rather than result() — result() has
         // no timeout and hangs indefinitely if executeUpdate(destroyUpdate) fails
         // silently on a slow CI runner (the error is caught in destroyEnsemble).
+        console.log(`[straggler:C1] waitForInvisibility START @ ${Date.now()}`);
         await waitForInvisibility(ensemble);
+        console.log(`[straggler:C1] waitForInvisibility DONE @ ${Date.now()}`);
 
         // ── Phase C: from-upgrade — straggler data survives in consumed.json ──
+        console.log(`[straggler:C2] runFromUpgrade START @ ${Date.now()}`);
         const fromResult = await runFromUpgrade(getClient(), {
           home,
           hostname: 'test-host',
@@ -410,6 +423,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
           temporalAddress: 'localhost:7233',
           temporalNamespace: 'default',
         });
+        console.log(`[straggler:C2] runFromUpgrade DONE ok=${fromResult.ok} @ ${Date.now()}`);
 
         expect(fromResult.ok, 'from-upgrade ok').to.be.true;
         expect(fromResult.snapshotFound, 'snapshot found').to.be.true;
