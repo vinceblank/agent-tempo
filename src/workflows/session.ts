@@ -328,6 +328,21 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   const closeMemoSessionId = (): string | undefined =>
     spawnRecord?.sessionId ?? input.metadata.sessionId;
   /**
+   * #897 (C) — common `hardTerminateAttachment` activity input. Threads the
+   * durable `spawnRecord` pid + sessionId so the kill targets the EXACT recorded
+   * process (pid-reuse-guarded by sessionId) instead of a name+ensemble cmdline
+   * search; falls back to the search when no pid/sessionId was recorded. Shared by
+   * the destroy, forceDetach, drainingDeadline, and boot-timeout kill sites.
+   */
+  const hardTerminateArgs = () => ({
+    ensemble: input.metadata.ensemble,
+    playerName: input.metadata.playerId,
+    agent: (input.metadata.agentType ?? 'claude') as AgentType,
+    workDir: input.metadata.workDir,
+    ...(spawnRecord?.pid !== undefined ? { pid: spawnRecord.pid } : {}),
+    ...(spawnRecord?.sessionId ? { sessionId: spawnRecord.sessionId } : {}),
+  });
+  /**
    * Record a `deliveryId` and report whether it is NEW (caller should apply) vs a
    * duplicate that must be dropped. `undefined` (un-threaded / legacy caller) is
    * always NEW — no dedup key, preserves pre-#910 behavior. Deterministic (pure
@@ -957,12 +972,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       input.metadata.hostname;
     if (killHost) {
       try {
-        const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)({
-          ensemble: input.metadata.ensemble,
-          playerName: input.metadata.playerId,
-          agent: (input.metadata.agentType ?? 'claude') as AgentType,
-          workDir: input.metadata.workDir,
-        });
+        const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)(hardTerminateArgs());
         workflowLog.info(
           `destroy hard-terminate on ${killHost} (phase=${phase}): strategy=${killResult.strategy}, ` +
           `killedPids=[${killResult.killedPids.join(',')}]`,
@@ -1197,12 +1207,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // workflow state stays in sync with what actually happened on the host.
     const killHost = input.metadata.hostname;
     try {
-      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
-        ensemble: input.metadata.ensemble,
-        playerName: input.metadata.playerId,
-        agent: (input.metadata.agentType ?? 'claude') as AgentType,
-        workDir: input.metadata.workDir,
-      });
+      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)(hardTerminateArgs());
       workflowLog.info(
         `forceDetach hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
         `killedPids=[${killResult.killedPids.join(',')}]`,
@@ -1274,7 +1279,37 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * `sessionId`/`adapterId` into the activity signature so the adapter boots
    * into the pre-claimed attachment.
    */
-  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable, model }) => {
+  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable, model, originId }) => {
+    // #897 (D) — restart spawn-idempotency. `deliverRestart` runs at-least-once
+    // (CAN-redrive of the still-`processing` restart entry, or an activity retry):
+    // a second run that reaches enqueueSpawn would push a SECOND spawn entry and
+    // double-spawn the adapter. Dedup on the originating restart-entry-id: if a
+    // not-yet-dispatched spawn (`pending`/`processing`) already carries this
+    // `originId`, return ITS id instead of pushing a duplicate. The CAN-carried
+    // outbox keeps pending/processing entries, so this covers the dangerous window
+    // (first spawn enqueued but not yet dispatched); once the first spawn HAS
+    // dispatched, its adapter holds the attachment and the re-driven restart's
+    // re-claim hits `AttachmentConflict` before reaching here.
+    //
+    // D2 precision: this dedup only guarantees single-spawn in the PRE-dispatch
+    // window. The POST-dispatch single-adapter guarantee comes from #897-B1, NOT
+    // here — if a transient loser process does briefly spawn (e.g. two spawns
+    // raced past this check), B1's claimAttachment `SessionIdMismatch` /
+    // `AttachmentConflict` rejects the loser's claim and the orphan-guard
+    // self-exits it. So: dedup = belt (pre-dispatch), B1 = suspenders (post-dispatch).
+    if (originId !== undefined) {
+      const existing = outbox.find(
+        (e) => e.type === 'spawn' && e.originId === originId &&
+          (e.status === 'pending' || e.status === 'processing'),
+      );
+      if (existing) {
+        workflowLog.warn(
+          `enqueueSpawn deduped (#897 D): restart entry ${originId} already has ` +
+          `pending spawn ${existing.id} — not enqueuing a duplicate.`,
+        );
+        return { spawnEntryId: existing.id };
+      }
+    }
     const spawnEntryId = uuid4();
     const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
@@ -1294,6 +1329,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       nativeResolvable,
       // #131 Phase C — claude-api model id carried across restart.
       ...(model !== undefined ? { model } : {}),
+      // #897 (D) — originating restart-entry-id for spawn-idempotency dedup.
+      ...(originId !== undefined ? { originId } : {}),
       createdAt: workflowNow().toISOString(),
       status: 'pending',
     };
@@ -1957,12 +1994,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       const killHost = preferredHost ?? input.metadata.hostname;
       if (killHost) {
         try {
-          const killResult = await getHardTerminateProxyForDestroy(killHost)({
-            ensemble: input.metadata.ensemble,
-            playerName: input.metadata.playerId,
-            agent: (input.metadata.agentType ?? 'claude') as AgentType,
-            workDir: input.metadata.workDir,
-          });
+          const killResult = await getHardTerminateProxyForDestroy(killHost)(hardTerminateArgs());
           workflowLog.info(
             `boot-timeout hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
             `killedPids=[${killResult.killedPids.join(',')}]`,
@@ -2070,12 +2102,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
           // a lingering OS process that operators can clean up by hand.
           const killHost = input.metadata.hostname;
           try {
-            const killResult = await getHardTerminateProxy(killHost)({
-              ensemble: input.metadata.ensemble,
-              playerName: input.metadata.playerId,
-              agent: (input.metadata.agentType ?? 'claude') as AgentType,
-              workDir: input.metadata.workDir,
-            });
+            const killResult = await getHardTerminateProxy(killHost)(hardTerminateArgs());
             workflowLog.info(
               `drainingDeadline hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
               `killedPids=[${killResult.killedPids.join(',')}]`,
@@ -2260,6 +2287,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               ensemble: input.metadata.ensemble,
               targetPlayerId: entry.targetPlayerId,
               invokerPlayerId: entry.invokerPlayerId ?? input.metadata.playerId,
+              // #897 (D) — the restart entry id is the spawn-dedup key.
+              restartEntryId: entry.id,
               ...(entry.force !== undefined ? { force: entry.force } : {}),
               ...(entry.host !== undefined ? { host: entry.host } : {}),
               ...(entry.fresh !== undefined ? { fresh: entry.fresh } : {}),
@@ -2331,7 +2360,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         // creates an attachment + enqueues a spawn, a subsequent spawn
         // activity failure leaves the session `attached` with no adapter — the
         // worst steady state. Force-detach the just-created attachment so the
-        // session lands in `detached` and `restart` can be retried. Guard with
+        // session lands in `detached` and `restart` can be retried.
+        //
+        // #897 note: this path intentionally does NOT hard-terminate a
+        // partially-spawned process (unchanged from pre-#897) — a spawn that
+        // FAILED the activity usually never produced a live process, and a
+        // best-effort kill here would add a per-host activity to the failure path
+        // for little gain. Revisit only if partial-spawn process leaks are
+        // actually observed (a stray pid surviving a failed spawn). Guard with
         // `expectedAttachmentId` (TOCTOU: another claim may have superseded).
         if (
           entry.type === 'spawn' &&

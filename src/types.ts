@@ -854,6 +854,13 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
    * subprocess runs the same model the original recruit chose.
    */
   model?: string;
+  /**
+   * #897 (D) — id of the originating `restart` outbox entry that produced this
+   * spawn. The `enqueueSpawn` handler dedups on it so a re-driven `deliverRestart`
+   * (CAN-redrive / activity retry) can't enqueue a second spawn → double-spawn.
+   * Absent for recruit/migrate spawns that don't carry a restart origin.
+   */
+  originId?: string;
 }
 
 /**

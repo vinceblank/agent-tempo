@@ -25,7 +25,11 @@ import {
   claimAttachmentUpdate,
   attachmentInfoQuery,
   orphanSummaryQuery,
+  enqueueSpawnUpdate,
+  outboxQuery,
+  setPausedSignal,
 } from '../src/workflows/signals';
+import type { OutboxEntry } from '../src/types';
 
 const claimArgs = (sessionId?: string) => ({
   host: 'host-A',
@@ -139,6 +143,46 @@ describe('session spawn identity + sessionId-match guard (#897)', function () {
 
       const summary: OrphanSummary = await handle.query(orphanSummaryQuery);
       expect(summary.spawnRecord).to.deep.equal(spawnRecord);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('D: enqueueSpawn dedups on the originating restart-entry-id (no double-spawn)', async function () {
+    // Pause the session so spawn entries stay `pending` (not dispatched), then
+    // enqueue twice with the SAME originId — the second must return the FIRST
+    // spawnEntryId and NOT push a duplicate. A different originId enqueues fresh.
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: `spawn-dedup-${Date.now()}` }),
+      });
+      // Hold the outbox so the pending spawn entries aren't dispatched mid-test.
+      await handle.signal(setPausedSignal, true);
+
+      const spawnArgs = (originId: string) => ({
+        host: 'host-A',
+        attachmentId: `att-${originId}`,
+        runId: `run-${originId}`,
+        resume: false,
+        adapterId: 'claude-code',
+        originId,
+      });
+
+      const first = await handle.executeUpdate(enqueueSpawnUpdate, { args: [spawnArgs('R1')] });
+      const dup = await handle.executeUpdate(enqueueSpawnUpdate, { args: [spawnArgs('R1')] });
+      const other = await handle.executeUpdate(enqueueSpawnUpdate, { args: [spawnArgs('R2')] });
+
+      expect(dup.spawnEntryId, 'duplicate originId returns the first spawnEntryId').to.equal(first.spawnEntryId);
+      expect(other.spawnEntryId, 'a different originId enqueues a fresh spawn').to.not.equal(first.spawnEntryId);
+
+      const outbox: OutboxEntry[] = await handle.query(outboxQuery);
+      const spawns = outbox.filter((e) => e.type === 'spawn');
+      // Exactly two spawn entries (R1 once, R2 once) — the R1 duplicate was deduped.
+      expect(spawns.length, 'R1 duplicate must not create a second spawn entry').to.equal(2);
+      const r1Spawns = spawns.filter((e) => (e as { originId?: string }).originId === 'R1');
+      expect(r1Spawns.length, 'exactly one spawn for originId R1').to.equal(1);
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});

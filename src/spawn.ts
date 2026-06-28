@@ -671,6 +671,8 @@ export function resolvePiInteractiveBinary(deps: {
 export interface PiConductorSpawnOpts {
   ensemble: string;
   sessionName: string;
+  /** #897 — conductor spawn sessionId → AGENT_TEMPO_SESSION_ID (B1 claim-echo), when known. */
+  sessionId?: string;
   /** Temporal env (address/namespace/api-key/tls) built by the caller. */
   temporalEnvVars: Record<string, string>;
   /** Temporal task queue — the Pi extension's PiWorkflowClient needs it (confirm #1). */
@@ -719,6 +721,10 @@ export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
     // propagation-safe + principled if a pi subprocess ever does; stdin-EOF stays).
     [ENV.NO_PPID_WATCHDOG]: '1',
     [ENV.PLAYER_NAME]: opts.sessionName,
+    // #897 — thread the conductor's spawn sessionId so B1's claim guard works for
+    // the interactive Pi conductor too (the Pi client echoes it on claimAttachment).
+    // Unset → guard allows (back-compat); forwarded only when the caller knows it.
+    ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
     ...(opts.devMode ? { [ENV.DEV_MODE]: '1' } : {}),
     ...(opts.anthropicApiKey ? { ANTHROPIC_API_KEY: opts.anthropicApiKey } : {}),
     ...(opts.conductorTypeName ? { [ENV.PLAYER_TYPE]: opts.conductorTypeName } : {}),
@@ -791,6 +797,9 @@ export function buildPiCommandCenterSpawn(opts: PiCommandCenterSpawnOpts): {
     [ENV.ENSEMBLE]: opts.ensemble,
     [ENV.PI_ROLE]: 'command-center', // #820 — deterministic role force (top of resolvePiRole precedence)
     [ENV.MISSION_CONTROL]: '1', // #729 A2 role opt-in (defense-in-depth alongside PI_ROLE)
+    // #897 — intentionally NO AGENT_TEMPO_SESSION_ID here: mission-control is an
+    // observer/operator board that NEVER claims an attachment / registers as a player,
+    // so it has no session identity to echo on a claim (nothing to discriminate).
     // #820 — CLEAR (not omit) inherited identity vars. An ensemble shell (e.g. a
     // conductor terminal) exports these; the spawned terminal would inherit them and
     // resolvePiRole would flip to 'player', making the board CLAIM/HIJACK that slot.

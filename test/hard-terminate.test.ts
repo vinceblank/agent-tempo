@@ -100,6 +100,12 @@ async function spawnTestVictim(opts: {
   playerName: string;
   tmpDir?: string;
   /**
+   * #897 (C) — when set, embed `--session-id <sessionId>` in the victim's argv so
+   * the pid-exact kill path's pid-reuse guard (`processCmdlineMatchesSessionId`)
+   * can match it. Mirrors how interactive Claude carries its `--session-id <uuid>`.
+   */
+  sessionId?: string;
+  /**
    * Ensemble name to embed as `--remote-control-session-name-prefix <ensemble>` in
    * the victim's argv. Defaults to 'test-ensemble-hardterm-fixture' to match the common-case callers
    * that pass `ensemble: 'test-ensemble-hardterm-fixture'` to `hardTerminateAttachment`. Tests that
@@ -151,6 +157,7 @@ async function spawnTestVictim(opts: {
           q(ensemble),
           q('-n'),
           q(opts.playerName),
+          ...(opts.sessionId ? [q('--session-id'), q(opts.sessionId)] : []),
           q('--tempo-test-marker'),
         ].join(' '),
         '',
@@ -225,6 +232,7 @@ async function spawnTestVictim(opts: {
     ensemble,
     '-n',
     opts.playerName,
+    ...(opts.sessionId ? ['--session-id', opts.sessionId] : []),
     '--tempo-test-marker',
   ];
   const child = spawn(process.execPath, args, {
@@ -713,5 +721,63 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     });
     expect(result.killedPids).to.deep.equal([]);
     expect(result.strategy).to.equal('none');
+  });
+
+  it('#897 (C): pid-exact path kills the recorded pid when its cmdline still carries the sessionId', async function () {
+    const playerName = `tempo-pid-${process.pid}-${Date.now()}`;
+    const sessionId = `sid-${process.pid}-${Date.now()}`;
+    const victim = await spawnTestVictim({ binaryArg: 'node', playerName, sessionId, tmpDir: tmpWorkDir });
+    spawnedPids.push(victim.pid);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(isAlive(victim.pid), 'victim should be alive after spawn').to.equal(true);
+
+    const result = await hardTerminateAttachment({
+      ensemble: 'test-ensemble-hardterm-fixture',
+      playerName,
+      agent: 'claude',
+      workDir: tmpWorkDir,
+      pid: victim.pid,
+      sessionId,
+    });
+
+    for (let i = 0; i < 30 && isAlive(victim.pid); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(isAlive(victim.pid), 'victim should be dead via the exact-pid path').to.equal(false);
+    expect(result.killedPids, 'killedPids should include the recorded pid').to.include(victim.pid);
+    expect(result.strategy, 'should use the exact-pid strategy').to.equal('pid');
+  });
+
+  it('#897 (C): pid-reuse guard refuses the exact-pid kill when the sessionId no longer matches', async function () {
+    // The recorded pid is alive but belongs to a process whose cmdline carries a
+    // DIFFERENT sessionId (simulating pid reuse). The guard must refuse the
+    // exact-pid kill and fall through to the search — which here finds nothing
+    // (the player name doesn't match), so the bystander survives.
+    const playerName = `tempo-reuse-${process.pid}-${Date.now()}`;
+    const victim = await spawnTestVictim({
+      binaryArg: 'node',
+      playerName,
+      sessionId: `sid-REAL-${Date.now()}`,
+      tmpDir: tmpWorkDir,
+    });
+    spawnedPids.push(victim.pid);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(isAlive(victim.pid), 'bystander should be alive after spawn').to.equal(true);
+
+    const result = await hardTerminateAttachment({
+      ensemble: 'test-ensemble-hardterm-fixture',
+      // A non-matching player name so the search fallback finds nothing → bystander survives.
+      playerName: `unrelated-${process.pid}-${Date.now()}`,
+      agent: 'claude',
+      workDir: tmpWorkDir,
+      pid: victim.pid,
+      sessionId: `sid-WRONG-${Date.now()}`, // not in the victim's cmdline
+    });
+
+    // The guard must have refused the pid kill; the bystander stays alive.
+    expect(isAlive(victim.pid), 'pid-reuse guard must NOT kill the mismatched-sessionId process').to.equal(true);
+    expect(result.killedPids, 'no pid should have been killed').to.not.include(victim.pid);
+    expect(result.strategy, 'should fall through past the pid path').to.not.equal('pid');
+    expect(result.notes.join('\n')).to.match(/no longer carries sessionId|falling through/i);
   });
 });
