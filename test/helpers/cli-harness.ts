@@ -15,12 +15,11 @@
  * import { runCli, CliResult } from '../helpers/cli-harness';
  *
  * // Inside a TestWorkflowEnvironment-backed describe block:
- * const env = getTestEnv();
- * const result = await runCli(['upgrade-to-2', '--dry-run'], {
- *   temporalAddress: env.options.connection.address,
+ * const r = runCli(['upgrade-to-2', '--dry-run'], {
+ *   temporalAddress: getTestEnvAddress(testEnv),
  * });
- * assert.equal(result.exitCode, 0);
- * assert.match(result.stdout, /Dry-run complete/);
+ * assert.equal(r.exitCode, 0);
+ * assert.match(r.stdout, /Dry-run complete/);
  * ```
  *
  * ## Design decisions
@@ -36,19 +35,21 @@
  * - **`TEMPORAL_NAMESPACE=default` by default** — matches the ephemeral server
  *   started by `TestWorkflowEnvironment.createLocal()`. Override via `env`.
  *
- * - **`AGENT_TEMPO_SKIP_PREFLIGHT=1` by default** — prevents the CLI's
- *   infra-preflight (Temporal SA registration, daemon auto-start) from
- *   blocking short-lived test invocations that only need the verb logic.
- *   Clear it by passing `skipPreflight: false` in options if a test
- *   specifically exercises the preflight path.
+ * - **`AGENT_TEMPO_DEV_MODE` cleared** — prevents an inherited dev-mode env
+ *   from leaking into test invocations. `AGENT_TEMPO_DEV_MODE` is the var
+ *   `dev-mode-bootstrap.ts` promotes `--dev` into (§5.4 ADR 0014). Re-enable
+ *   via `opts.env` when a test explicitly exercises the dev-mode path.
  *
- * - **Timeout** — defaults to 15 000 ms. Long enough for an ephemeral-server
- *   round-trip but tight enough that a hung verb fails the test quickly.
- *   Override via `timeoutMs` in options.
+ * - **Synchronous (`spawnSync`)** — keeps test bodies simple; no async
+ *   child-process stream management. `runCli` inside `async it()` is fine for
+ *   Mocha. For verbs that may take > 15 s, bump `timeoutMs` in opts.
  *
- * - **No daemon, no daemon** — the harness sets `AGENT_TEMPO_SKIP_DAEMON=1`
- *   by default so the CLI doesn't try to contact or start a background daemon
- *   process during tests. Override via `skipDaemon: false` if needed.
+ * - **`result.error` surfaced** — a spawn failure (e.g. ENOENT for the node
+ *   binary, a pre-exec OS error) sets `result.error` on `CliResult` instead of
+ *   silently returning `exitCode: null`. Tests that care only about exit codes
+ *   can ignore the field; tests that probe spawn-level failures check it.
+ *
+ * - **Timeout** — defaults to 15 000 ms. Override via `timeoutMs` in options.
  */
 
 import { spawnSync } from 'child_process';
@@ -73,7 +74,7 @@ const CLI_ENTRY = path.join(REPO_ROOT, 'dist', 'cli.js');
  * Result of a `runCli` invocation.
  */
 export interface CliResult {
-  /** Process exit code — `null` if the process was killed (timeout/signal). */
+  /** Process exit code — `null` if the process was killed (timeout/signal) or a spawn error occurred. */
   exitCode: number | null;
   /** Combined stdout as a string (UTF-8). */
   stdout: string;
@@ -84,6 +85,13 @@ export interface CliResult {
    * When `timedOut` is true, `exitCode` is `null`.
    */
   timedOut: boolean;
+  /**
+   * Set when `spawnSync` itself fails before the child could run — e.g. ENOENT
+   * for the node binary, a pre-exec OS error, or a Windows access-denied on
+   * spawn. Distinct from the child exiting with a non-zero code. When set,
+   * `exitCode` is `null` and `stdout`/`stderr` are empty.
+   */
+  error?: Error;
 }
 
 /**
@@ -92,7 +100,7 @@ export interface CliResult {
 export interface RunCliOptions {
   /**
    * Temporal gRPC address for the ephemeral test server.
-   * Typically `testEnv.options?.connection?.address ?? '127.0.0.1:7233'`.
+   * Typically `getTestEnvAddress(testEnv)` (see helper below).
    * Set as `TEMPORAL_ADDRESS` env var so the CLI connects to the right server.
    */
   temporalAddress?: string;
@@ -123,20 +131,6 @@ export interface RunCliOptions {
    * Defaults to the repo root so relative paths in the CLI resolve correctly.
    */
   cwd?: string;
-
-  /**
-   * When `false`, does NOT inject `AGENT_TEMPO_SKIP_PREFLIGHT=1`.
-   * Set to `false` only when a test specifically exercises the preflight path.
-   * Default: `true` (skip preflight).
-   */
-  skipPreflight?: boolean;
-
-  /**
-   * When `false`, does NOT inject `AGENT_TEMPO_SKIP_DAEMON=1`.
-   * Set to `false` only when a test specifically exercises the daemon path.
-   * Default: `true` (skip daemon auto-start).
-   */
-  skipDaemon?: boolean;
 }
 
 // ── Core function ──────────────────────────────────────────────────────────
@@ -144,14 +138,17 @@ export interface RunCliOptions {
 /**
  * Spawn `node dist/cli.js <args>` synchronously and return the captured
  * result. Uses `spawnSync` (blocking) so tests can use straightforward
- * `const result = runCli(...)` without the complexity of managing async
- * child-process streams.
+ * `const result = runCli(...)` without managing async child-process streams.
+ * Works fine inside `async it()` bodies — Mocha awaits the promise; the sync
+ * call blocks only the current microtask, not other test suites.
  *
  * @param args  argv to pass after `dist/cli.js`, e.g. `['upgrade-to-2', '--dry-run']`
  * @param opts  harness options — see {@link RunCliOptions}
- * @returns     {@link CliResult} with exit code, stdout, stderr, and timeout flag
+ * @returns     {@link CliResult} with exit code, stdout, stderr, timeout flag, and
+ *              spawn-level error (if any)
  *
- * @throws {Error} if `dist/cli.js` does not exist (build not run)
+ * @throws {Error} if `dist/cli.js` does not exist (build not run) — use the
+ *         clear build-not-run error rather than an opaque ENOENT from spawnSync
  *
  * @example
  * ```ts
@@ -172,8 +169,6 @@ export function runCli(args: string[], opts: RunCliOptions = {}): CliResult {
 
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const cwd = opts.cwd ?? REPO_ROOT;
-  const skipPreflight = opts.skipPreflight ?? true;
-  const skipDaemon = opts.skipDaemon ?? true;
 
   // Build the child environment. Inherit the current process's env (for PATH,
   // HOME, etc.) but override Temporal coordinates and test-mode flags.
@@ -182,11 +177,10 @@ export function runCli(args: string[], opts: RunCliOptions = {}): CliResult {
     // ── Temporal coordinates ──
     ...(opts.temporalAddress ? { TEMPORAL_ADDRESS: opts.temporalAddress } : {}),
     TEMPORAL_NAMESPACE: opts.temporalNamespace ?? 'default',
-    // ── Test-mode guards ──
-    ...(skipPreflight ? { AGENT_TEMPO_SKIP_PREFLIGHT: '1' } : {}),
-    ...(skipDaemon ? { AGENT_TEMPO_SKIP_DAEMON: '1' } : {}),
-    // Ensure no inherited AGENT_TEMPO_DEV_MODE leaks into non-dev tests
-    // (caller can re-enable it via opts.env if needed).
+    // Clear any inherited dev-mode flag so tests run against the production
+    // surface by default. `dev-mode-bootstrap.ts` promotes `--dev` into
+    // AGENT_TEMPO_DEV_MODE (ADR 0014 §5.4) — scrubbing that var is sufficient.
+    // Re-enable via opts.env when a test specifically exercises dev mode.
     AGENT_TEMPO_DEV_MODE: '',
     // ── Caller overrides (last — highest precedence) ──
     ...opts.env,
@@ -210,40 +204,10 @@ export function runCli(args: string[], opts: RunCliOptions = {}): CliResult {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
     timedOut,
+    // Surface spawn-level errors (ENOENT, pre-exec OS failure, etc.) so
+    // callers aren't left with a silent exitCode: null / empty streams.
+    ...(result.error ? { error: result.error } : {}),
   };
-}
-
-// ── Async variant ──────────────────────────────────────────────────────────
-
-/**
- * Async wrapper around `runCli` that offloads the blocking `spawnSync` call
- * to a `setImmediate`-deferred microtask. Keeps the Mocha event loop
- * responsive during long-running CLI invocations without pulling in the
- * full async child-process machinery.
- *
- * Use this in `it(...)` bodies that await a long CLI run (e.g. `upgrade-to-2`
- * against a real Temporal server). For sub-50ms verbs (`--version`, `--help`)
- * the synchronous `runCli` is fine — no await overhead.
- *
- * @example
- * ```ts
- * it('upgrade-to-2 --dry-run exits 0', async function () {
- *   this.timeout(20_000);
- *   const r = await runCliAsync(['upgrade-to-2', '--dry-run'], { temporalAddress: addr });
- *   assert.equal(r.exitCode, 0);
- * });
- * ```
- */
-export function runCliAsync(args: string[], opts: RunCliOptions = {}): Promise<CliResult> {
-  return new Promise((resolve, reject) => {
-    setImmediate(() => {
-      try {
-        resolve(runCli(args, opts));
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -272,10 +236,9 @@ function filterEnv(raw: NodeJS.ProcessEnv): Record<string, string> {
  * Falls back to `'127.0.0.1:7233'` (the `createLocal` default) when neither
  * field is set, which is correct for the common single-server test setup.
  *
- * Pass the result as `temporalAddress` to `runCli` / `runCliAsync`:
+ * Pass the result as `temporalAddress` to `runCli`:
  * ```ts
- * const addr = getTestEnvAddress(testEnv);
- * const r = runCli(['status'], { temporalAddress: addr });
+ * const r = runCli(['status'], { temporalAddress: getTestEnvAddress(testEnv) });
  * ```
  *
  * @param testEnv  a `TestWorkflowEnvironment` obtained from `setupTestEnv()`
