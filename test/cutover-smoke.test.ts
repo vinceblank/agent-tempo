@@ -439,6 +439,40 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
           fromResult.undeliveredCues,
           'fromResult.undeliveredCues is inbox-only, not outbox stragglers',
         ).to.have.lengthOf(0);
+
+        // ── Defensive teardown ──
+        // Terminate all Running workflows in the straggler ensemble BEFORE the
+        // withWorkerAndRecruitActivities callback returns. Two categories:
+        //
+        // 1. Original stuckSession/peerSession: destroyEnsemble may have needed
+        //    its terminate() fallback (e.g., the 15s race fired on a very slow
+        //    CI runner). Any surviving Running execution blocks worker drain.
+        //
+        // 2. runFromUpgrade recreated skeleton sessions (including a maestro).
+        //    The maestro's 5-second refresh dispatches refreshEnsembleStateV2 —
+        //    not registered with this test's worker. If the condition timer fires
+        //    while the worker is still draining, the unregistered activity task
+        //    sits in the queue and the maestro waits indefinitely for it.
+        //
+        // terminate() is server-side and immediate: it cancels pending tasks
+        // without requiring the worker, so nothing blocks the drain.
+        //
+        // Using workflowId (not runId) terminates the CURRENT execution for each
+        // ID — correct whether this is the original session or the runFromUpgrade
+        // skeleton (same workflow ID, new run ID).
+        const sessionIds = [stuckSession.workflowId, peerSession.workflowId];
+        await Promise.allSettled(
+          sessionIds.map((wfId) =>
+            getClient().workflow.getHandle(wfId).terminate('straggler-test-cleanup').catch(() => {}),
+          ),
+        );
+        // Also sweep all Running workflows in this ensemble (catches the maestro
+        // recreated by runFromUpgrade and any other workflows with the ensemble SA).
+        for await (const wf of getClient().workflow.list({
+          query: `AgentTempoEnsemble = "${ensemble}" AND ExecutionStatus = "Running"`,
+        })) {
+          await getClient().workflow.getHandle(wf.workflowId).terminate('straggler-test-cleanup').catch(() => {});
+        }
       });
     },
   );
