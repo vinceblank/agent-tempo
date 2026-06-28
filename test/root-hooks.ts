@@ -45,11 +45,17 @@ export const mochaGlobalSetup = async function (): Promise<void> {
  * way, but the zombie is what bricks the NEXT `npm test`.
  */
 export const mochaGlobalTeardown = async function (): Promise<void> {
+  console.log(`[teardown:global] mochaGlobalTeardown START @ ${Date.now()}`);
   try {
+    console.log(`[teardown:global] teardownSharedTestEnv START @ ${Date.now()}`);
     await teardownSharedTestEnv();
+    console.log(`[teardown:global] teardownSharedTestEnv DONE @ ${Date.now()}`);
   } finally {
     // Run the reap even if teardown threw — a partial teardown is the
     // exact case that produces the leftover zombie we're trying to kill.
+    console.log(`[teardown:global] reapOrphanTemporalServers START @ ${Date.now()}`);
     await reapOrphanTemporalServers();
+    console.log(`[teardown:global] reapOrphanTemporalServers DONE @ ${Date.now()}`);
   }
+  console.log(`[teardown:global] mochaGlobalTeardown DONE @ ${Date.now()}`);
 };

@@ -49,6 +49,7 @@ import {
   schedulerWorkflowId,
   sessionWorkflowId,
   conductorWorkflowId,
+  maestroWorkflowId,
 } from '../src/config';
 import {
   savePlayerStateUpdate,
@@ -85,7 +86,11 @@ const SCHEDULE_TZ = 'America/New_York';
 
 describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function () {
   before(setupSharedEnv);
-  after(teardownTestEnv);
+  after(async function teardownWithInstrumentation() {
+    console.log(`[teardown:cutover-smoke] after() start @ ${Date.now()}`);
+    await teardownTestEnv();
+    console.log(`[teardown:cutover-smoke] after() done @ ${Date.now()}`);
+  });
 
   // Fresh temp home per test — isolates snapshot files from other suites.
   let home: string;
@@ -440,39 +445,44 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
           'fromResult.undeliveredCues is inbox-only, not outbox stragglers',
         ).to.have.lengthOf(0);
 
-        // ── Defensive teardown ──
-        // Terminate all Running workflows in the straggler ensemble BEFORE the
-        // withWorkerAndRecruitActivities callback returns. Two categories:
+        // ── Comprehensive teardown: terminate every workflow this test created ──
         //
-        // 1. Original stuckSession/peerSession: destroyEnsemble may have needed
-        //    its terminate() fallback (e.g., the 15s race fired on a very slow
-        //    CI runner). Any surviving Running execution blocks worker drain.
+        // Server-side terminate() needs no worker and cancels all pending tasks
+        // immediately. This ensures:
+        //   (a) The worker drain (after withWorkerAndRecruitActivities returns)
+        //       has no in-flight workflow tasks keeping it alive.
+        //   (b) testEnv.teardown() (mochaGlobalTeardown) can shut down the
+        //       embedded Temporal server without blocking on Running workflows
+        //       with open long-poll connections.
         //
-        // 2. runFromUpgrade recreated skeleton sessions (including a maestro).
-        //    The maestro's 5-second refresh dispatches refreshEnsembleStateV2 —
-        //    not registered with this test's worker. If the condition timer fires
-        //    while the worker is still draining, the unregistered activity task
-        //    sits in the queue and the maestro waits indefinitely for it.
-        //
-        // terminate() is server-side and immediate: it cancels pending tasks
-        // without requiring the worker, so nothing blocks the drain.
-        //
-        // Using workflowId (not runId) terminates the CURRENT execution for each
-        // ID — correct whether this is the original session or the runFromUpgrade
-        // skeleton (same workflow ID, new run ID).
-        const sessionIds = [stuckSession.workflowId, peerSession.workflowId];
+        // Terminate by KNOWN IDs first — these are available immediately without
+        // depending on the eventually-consistent visibility index. Then sweep by
+        // ensemble SA as defense-in-depth for any workflow we may have missed.
+        console.log(`[teardown:straggler] terminate-all @ ${Date.now()}`);
+        const knownIds = [
+          stuckSession.workflowId,
+          peerSession.workflowId,
+          maestroWorkflowId(ensemble),
+          schedulerWorkflowId(ensemble),
+          conductorWorkflowId(ensemble),
+        ];
         await Promise.allSettled(
-          sessionIds.map((wfId) =>
+          knownIds.map((wfId) =>
             getClient().workflow.getHandle(wfId).terminate('straggler-test-cleanup').catch(() => {}),
           ),
         );
-        // Also sweep all Running workflows in this ensemble (catches the maestro
-        // recreated by runFromUpgrade and any other workflows with the ensemble SA).
+        console.log(`[teardown:straggler] known-ids-terminated @ ${Date.now()}`);
+        // Visibility sweep — catches any additional runFromUpgrade skeleton (e.g.
+        // player sessions). Eventually consistent; IDs above cover the critical ones.
         for await (const wf of getClient().workflow.list({
           query: `AgentTempoEnsemble = "${ensemble}" AND ExecutionStatus = "Running"`,
         })) {
-          await getClient().workflow.getHandle(wf.workflowId).terminate('straggler-test-cleanup').catch(() => {});
+          await getClient()
+            .workflow.getHandle(wf.workflowId)
+            .terminate('straggler-test-cleanup')
+            .catch(() => {});
         }
+        console.log(`[teardown:straggler] visibility-sweep-done @ ${Date.now()}`);
       });
     },
   );

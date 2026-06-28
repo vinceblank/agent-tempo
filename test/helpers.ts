@@ -661,7 +661,10 @@ async function awaitWorkerSlotRelease(): Promise<void> {
  * widened slot-retry as its backstop).
  */
 export async function runWorkerUntil<T>(worker: Worker, fn: () => Promise<T>): Promise<T> {
+  const tq = (worker as unknown as { options?: { taskQueue?: string } }).options?.taskQueue ?? '?';
+  console.log(`[teardown:worker] runUntil START tq=${tq} @ ${Date.now()}`);
   const result = await worker.runUntil(fn);
+  console.log(`[teardown:worker] runUntil DONE (worker STOPPED) tq=${tq} @ ${Date.now()}`);
   await awaitWorkerSlotRelease();
   return result;
 }
