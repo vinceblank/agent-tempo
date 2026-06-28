@@ -44,7 +44,6 @@ import {
   conductorMetadata,
   withWorkerAndRecruitActivities,
   pollWithTimeout,
-  CURRENT_TEST_HOSTNAME,
 } from './helpers';
 import {
   schedulerWorkflowId,
@@ -239,7 +238,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // ────────────────────────────────────────────────────────────────────
         const fromResult = await runFromUpgrade(getClient(), {
           home,
-          hostname: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
+          hostname: 'test-host',
           taskQueue: TASK_QUEUE,
           temporalAddress: 'localhost:7233',
           temporalNamespace: 'default',
@@ -325,7 +324,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         const token = await soloistWf.executeUpdate(claimAttachmentUpdate, {
           args: [
             {
-              host: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
+              host: 'test-host',
               adapterId: 'claude',
               adapterClass: 'interactive',
               leaseMs: 30_000,
@@ -461,7 +460,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         console.log(`[straggler:C2] runFromUpgrade START @ ${Date.now()}`);
         const fromResult = await runFromUpgrade(getClient(), {
           home,
-          hostname: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
+          hostname: 'test-host',
           taskQueue: TASK_QUEUE,
           temporalAddress: 'localhost:7233',
           temporalNamespace: 'default',
@@ -621,7 +620,7 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // ── Phase C: from-upgrade — straggler data survives in consumed.json ──
         const fromResult = await runFromUpgrade(getClient(), {
           home,
-          hostname: CURRENT_TEST_HOSTNAME, // #772 — match per-invocation host queue
+          hostname: 'test-host',
           taskQueue: TASK_QUEUE,
           temporalAddress: 'localhost:7233',
           temporalNamespace: 'default',

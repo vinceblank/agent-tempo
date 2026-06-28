@@ -425,19 +425,6 @@ const TASK_QUEUE_BASE = 'test-agent-tempo';
  */
 export let TASK_QUEUE = TASK_QUEUE_BASE;
 
-/**
- * Per-invocation hostname — mirrors the per-invocation uniqueness of
- * {@link TASK_QUEUE}. Updated by {@link mintTaskQueue} alongside `TASK_QUEUE`
- * (#772). Exported so the rare test that needs to match it explicitly (e.g.
- * `runFromUpgrade` opts) can import it rather than hard-code `'test-host'`.
- *
- * Shape: `test-host-<fileHex>-<n>` — parallel to `TASK_QUEUE` so the
- * Temporal UI can tie session workflows back to their test invocation.
- * Initial value `'test-host'` is a defensive fallback for any read before
- * the first `setupTestEnv()`/`withWorker*` call.
- */
-export let CURRENT_TEST_HOSTNAME = 'test-host';
-
 /** Monotonic counter — per-invocation uniqueness within the process. */
 let taskQueueCounter = 0;
 
@@ -450,9 +437,6 @@ let taskQueueCounter = 0;
  * Temporal-UI entries back to their test file; the counter isolates
  * consecutive `withWorker` calls within a file.
  *
- * Also updates {@link CURRENT_TEST_HOSTNAME} to a matching unique value (#772)
- * so the per-host worker's task queue is isolated from concurrent test files.
- *
  * Exported for tests that inline their own worker setup instead of going
  * through a `withWorker*` helper (e.g. `destroy.test.ts`'s capturing
  * variant) — they must mint too, or they'd reuse the previous mint and
@@ -462,12 +446,15 @@ export function mintTaskQueue(): string {
   taskQueueCounter += 1;
   const fileSuffix = currentEnsemblePrefix.replace(/^test-ensemble-/, '');
   TASK_QUEUE = `${TASK_QUEUE_BASE}-${fileSuffix}-${taskQueueCounter}`;
-  // #772 — derive a unique hostname from the same suffix so the per-host
-  // worker's task queue is also unique per invocation, eliminating the
-  // SlotKey conflict that `SLOT_RELEASE_BARRIER_MS` was papering over.
-  CURRENT_TEST_HOSTNAME = `test-host-${fileSuffix}-${taskQueueCounter}`;
   return TASK_QUEUE;
 }
+
+/**
+ * Per-host task queue for spawnProcess activities.
+ * The workflow routes spawnProcess to `agent-tempo-{hostname}`.
+ * Tests use hostname 'test-host', so the queue is `agent-tempo-test-host`.
+ */
+const HOST_TASK_QUEUE = 'agent-tempo-test-host';
 
 /**
  * Locate the pre-built workflow bundle. `npm run build` must be run first.
@@ -633,9 +620,10 @@ export const _isAccessDeniedError = isAccessDeniedError;
 // a loaded Windows runner.
 //
 // #721 landed the structural fix for the MAIN queue (unique mint per
-// withWorker). #772 extended the same pattern to the HOST queue (also
-// unique per invocation via CURRENT_TEST_HOSTNAME). This retry is now a
-// belt-and-suspenders backstop for both queues — do not remove.
+// withWorker) — this retry is now the HOST-QUEUE BACKSTOP only (the shared
+// `agent-tempo-test-host` queue still carries the #642 race). Do NOT retire
+// it before #772 (per-test unique host queues) lands + the CI soak there
+// passes.
 const SLOT_RETRY_DEFAULT_ATTEMPTS = 6;
 const SLOT_RETRY_DEFAULT_BASE_MS = 200;
 const SLOT_RETRY_DEFAULT_FACTOR = 2;
@@ -654,9 +642,9 @@ const SLOT_RETRY_DEFAULT_JITTER_MS = 100;
  * retry above is the backstop). ~223 withWorker calls × 20ms ≈ 4.5s/shard —
  * negligible vs. total test runtime. Not injectable: always wanted post-shutdown.
  *
- * Post-#721 the main queue is minted unique per withWorker. Post-#772 the
- * host queue is also unique per invocation (via CURRENT_TEST_HOSTNAME). The
- * barrier is now belt-and-suspenders for both queues.
+ * Post-#721 the main queue is minted unique per withWorker, so this barrier
+ * serves the shared HOST queue (`agent-tempo-test-host`) only. Do NOT retire
+ * before #772 lands + its CI soak passes.
  */
 const SLOT_RELEASE_BARRIER_MS = 20;
 async function awaitWorkerSlotRelease(): Promise<void> {
@@ -1068,20 +1056,6 @@ export function getClient(): Client {
 }
 
 /**
- * Get the shared `NativeConnection` for `Worker.create(...)`. Tests that need
- * a custom Worker topology — for example, a per-host worker with a capturing
- * `hardTerminateAttachment` stub (#227) — use this to build their own workers
- * instead of going through `withWorker` / `withWorkerAndRecruitActivities`.
- * Call `setupTestEnv()` first.
- */
-export function getNativeConnection(): TestWorkflowEnvironment['nativeConnection'] {
-  if (!testEnv) {
-    throw new Error('getNativeConnection() called before setupTestEnv() — make sure your before() hook awaits setupTestEnv()');
-  }
-  return testEnv.nativeConnection;
-}
-
-/**
  * Returns the gRPC address of the shared `TestWorkflowEnvironment` server.
  * Use this when spawning child-process CLI invocations that must connect to
  * the same ephemeral server (e.g. with `runCli` / `runCliAsync` from the
@@ -1105,6 +1079,20 @@ export function getTestEnvServerAddress(): string {
     );
   }
   return addr;
+}
+
+/**
+ * Get the shared `NativeConnection` for `Worker.create(...)`. Tests that need
+ * a custom Worker topology — for example, a per-host worker with a capturing
+ * `hardTerminateAttachment` stub (#227) — use this to build their own workers
+ * instead of going through `withWorker` / `withWorkerAndRecruitActivities`.
+ * Call `setupTestEnv()` first.
+ */
+export function getNativeConnection(): TestWorkflowEnvironment['nativeConnection'] {
+  if (!testEnv) {
+    throw new Error('getNativeConnection() called before setupTestEnv() — make sure your before() hook awaits setupTestEnv()');
+  }
+  return testEnv.nativeConnection;
 }
 
 /** Internal — resolves the current test env; for helpers only. */
@@ -1147,10 +1135,9 @@ export async function skipTime(durationMs: number): Promise<void> {
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
  *
- * Also spins up a tiny per-host worker on `agent-tempo-${CURRENT_TEST_HOSTNAME}`
- * that stubs `hardTerminateAttachment` — needed by `forceDetachUpdate` and the
- * fire-and-forget `destroyUpdate` (#164) which schedule the activity on the per-host
- * queue. Unique per invocation via {@link CURRENT_TEST_HOSTNAME} (#772).
+ * Also spins up a tiny per-host worker on `agent-tempo-test-host` that stubs
+ * `hardTerminateAttachment` — needed by `forceDetachUpdate` and the fire-and-forget
+ * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
@@ -1161,7 +1148,7 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   });
   const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `agent-tempo-${CURRENT_TEST_HOSTNAME}`, // #772 — unique per invocation
+    taskQueue: HOST_TASK_QUEUE,
     activities: {
       hardTerminateAttachment: async () => ({
         killedPids: [],
@@ -1212,7 +1199,7 @@ export function playerMetadata(overrides: Partial<SessionMetadata> = {}): Sessio
   return {
     playerId: `player-${Date.now()}`,
     ensemble: currentEnsemblePrefix,
-    hostname: CURRENT_TEST_HOSTNAME, // #772 — matches the per-invocation host worker queue
+    hostname: 'test-host',
     workDir: '/tmp/test',
     isConductor: false,
     agentType: 'claude',
@@ -1414,7 +1401,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
   // Per-host worker — same stub so activities routed via the per-host queue also resolve.
   const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `agent-tempo-${CURRENT_TEST_HOSTNAME}`, // #772 — unique per invocation
+    taskQueue: HOST_TASK_QUEUE,
     activities: {
       spawnProcess: async () => ({ success: true }),
       hardTerminateAttachment: async () => ({
@@ -1440,9 +1427,8 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
  * per-host task queue used by `spawnProcess` during recruit dispatch.
  *
  * The session workflow routes `spawnProcess` to `agent-tempo-{hostname}`.
- * Tests use the per-invocation {@link CURRENT_TEST_HOSTNAME} (see playerMetadata),
- * so we need a worker on `agent-tempo-${CURRENT_TEST_HOSTNAME}` with a stubbed
- * spawnProcess to avoid launching real terminals (#772 — unique per invocation).
+ * Tests use hostname 'test-host' (see playerMetadata), so we need a worker on
+ * `agent-tempo-test-host` with a stubbed spawnProcess to avoid launching real terminals.
  */
 export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): Promise<T> {
   const taskQueue = mintTaskQueue(); // #721 — unique SlotKey per invocation
@@ -1470,15 +1456,13 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
     },
   });
 
-  // Per-host worker: handles spawnProcess for the per-invocation test hostname.
-  // spawnProcess is routed to `agent-tempo-{hostname}` by the session workflow;
-  // CURRENT_TEST_HOSTNAME (set by mintTaskQueue above) is the hostname that
-  // playerMetadata() defaults to, so routing is consistent.
+  // Per-host worker: handles spawnProcess for the 'test-host' hostname.
+  // spawnProcess is routed to `agent-tempo-{hostname}` by the session workflow.
   // No workflowBundle — this worker only polls for activity tasks, matching
   // the production per-host worker config in src/worker.ts.
   const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `agent-tempo-${CURRENT_TEST_HOSTNAME}`, // #772 — unique per invocation
+    taskQueue: `agent-tempo-test-host`,
     activities: {
       spawnProcess: async () => ({ success: true }),
       // #159 Gap 2: stub hardTerminate alongside spawnProcess on the per-host queue.
@@ -1551,7 +1535,7 @@ async function startWorkerPair(
   });
   const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `agent-tempo-${CURRENT_TEST_HOSTNAME}`, // #772 — unique per invocation
+    taskQueue: HOST_TASK_QUEUE,
     activities: {
       spawnProcess: async () => ({ success: true }),
       hardTerminateAttachment: hardTerminateStub,
@@ -1646,7 +1630,7 @@ export async function withWorkerAndRecruitCapture<T>(
 
   const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `agent-tempo-${CURRENT_TEST_HOSTNAME}`, // #772 — unique per invocation
+    taskQueue: `agent-tempo-test-host`,
     activities: {
       spawnProcess: capturingSpawn,
       hardTerminateAttachment: async () => ({

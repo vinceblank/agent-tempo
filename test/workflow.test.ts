@@ -37,12 +37,8 @@ describe('agentSessionWorkflow', function () {
 
   describe('lifecycle', function () {
     it('starts and responds to metadata query', async function () {
+      const meta = playerMetadata({ playerId: 'lifecycle-1' });
       await withWorker(async () => {
-        // #772 — playerMetadata() must be called INSIDE withWorker so
-        // CURRENT_TEST_HOSTNAME (set by mintTaskQueue()) is already updated.
-        // Calling it before withWorker gets the prior invocation's hostname,
-        // causing destroyUpdate to route hardTerminateAttachment to the wrong queue.
-        const meta = playerMetadata({ playerId: 'lifecycle-1' });
         const handle = await startSession({ metadata: meta });
         const result = await handle.query(getMetadataQuery);
 
@@ -50,7 +46,7 @@ describe('agentSessionWorkflow', function () {
         // `meta.ensemble` comes from `playerMetadata()` — under #210 shared env
         // it's a per-file suffix (`test-ensemble-<random>`), otherwise the default.
         expect(result.ensemble).to.equal(meta.ensemble);
-        expect(result.hostname).to.equal(meta.hostname); // #772 — hostname comes from playerMetadata()
+        expect(result.hostname).to.equal('test-host');
         expect(result.isConductor).to.equal(false);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });

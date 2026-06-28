@@ -18,7 +18,6 @@ import {
   getNativeConnection,
   TASK_QUEUE,
   mintTaskQueue,
-  CURRENT_TEST_HOSTNAME,
   PROTOCOL_VERSION,
 } from './helpers';
 
@@ -188,21 +187,21 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
   });
 
   it('concurrent forceDetach + destroy — workflow reaches gone without errors', async function () {
-    this.timeout(20_000);
+    this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `destroy-164-race-${Date.now()}`;
       const handle = await startSession({
         metadata: playerMetadata({
           playerId: 'race-epsilon',
           ensemble,
-          hostname: CURRENT_TEST_HOSTNAME, // #772 — match withWorker's host queue
+          hostname: 'test-host',
           agentType: 'claude',
         }),
       });
 
       // Create a live attachment.
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: CURRENT_TEST_HOSTNAME, protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }], // #772 — match withWorker's host queue
+        args: [{ host: 'test-host', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
       // Fire forceDetach and destroy concurrently.
