@@ -332,7 +332,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * durable `spawnRecord` pid + sessionId so the kill targets the EXACT recorded
    * process (pid-reuse-guarded by sessionId) instead of a name+ensemble cmdline
    * search; falls back to the search when no pid/sessionId was recorded. Shared by
-   * the destroy, forceDetach, drainingDeadline, and spawn-rollback kill sites.
+   * the destroy, forceDetach, drainingDeadline, and boot-timeout kill sites.
    */
   const hardTerminateArgs = () => ({
     ensemble: input.metadata.ensemble,
@@ -1290,6 +1290,13 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // (first spawn enqueued but not yet dispatched); once the first spawn HAS
     // dispatched, its adapter holds the attachment and the re-driven restart's
     // re-claim hits `AttachmentConflict` before reaching here.
+    //
+    // D2 precision: this dedup only guarantees single-spawn in the PRE-dispatch
+    // window. The POST-dispatch single-adapter guarantee comes from #897-B1, NOT
+    // here — if a transient loser process does briefly spawn (e.g. two spawns
+    // raced past this check), B1's claimAttachment `SessionIdMismatch` /
+    // `AttachmentConflict` rejects the loser's claim and the orphan-guard
+    // self-exits it. So: dedup = belt (pre-dispatch), B1 = suspenders (post-dispatch).
     if (originId !== undefined) {
       const existing = outbox.find(
         (e) => e.type === 'spawn' && e.originId === originId &&
@@ -2353,7 +2360,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         // creates an attachment + enqueues a spawn, a subsequent spawn
         // activity failure leaves the session `attached` with no adapter — the
         // worst steady state. Force-detach the just-created attachment so the
-        // session lands in `detached` and `restart` can be retried. Guard with
+        // session lands in `detached` and `restart` can be retried.
+        //
+        // #897 note: this path intentionally does NOT hard-terminate a
+        // partially-spawned process (unchanged from pre-#897) — a spawn that
+        // FAILED the activity usually never produced a live process, and a
+        // best-effort kill here would add a per-host activity to the failure path
+        // for little gain. Revisit only if partial-spawn process leaks are
+        // actually observed (a stray pid surviving a failed spawn). Guard with
         // `expectedAttachmentId` (TOCTOU: another claim may have superseded).
         if (
           entry.type === 'spawn' &&
