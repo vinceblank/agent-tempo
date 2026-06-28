@@ -906,6 +906,8 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
         ...(opts.sessionId ? { [ENV.BRIDGE_SESSION_ID]: opts.sessionId } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo / B2 orphan-guard).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // PR-D attachment handoff — renew rather than fresh-claim in startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -962,6 +964,8 @@ export interface MockAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /** #897 — spawn sessionId forwarded as AGENT_TEMPO_SESSION_ID (B1 claim-echo). */
+  sessionId?: string;
   /**
    * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
    * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
@@ -1025,6 +1029,10 @@ export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
         // Mock-specific knobs.
         AGENT_TEMPO_MOCK_MODE: opts.mockMode ?? 'echo',
         ...(opts.mockScenario ? { AGENT_TEMPO_MOCK_SCENARIO: opts.mockScenario } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -1081,6 +1089,8 @@ export interface ClaudeApiAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /** #897 — spawn sessionId forwarded as AGENT_TEMPO_SESSION_ID (B1 claim-echo). */
+  sessionId?: string;
   /**
    * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
    * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
@@ -1149,6 +1159,8 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
         // Model selection: recruit-arg → AGENT_TEMPO_API_MODEL → in-adapter default.
         ...(opts.model ? { [ENV.API_MODEL]: opts.model } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -1204,6 +1216,8 @@ export interface OpenCodeAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /** #897 — spawn sessionId forwarded as AGENT_TEMPO_SESSION_ID (B1 claim-echo). */
+  sessionId?: string;
   /**
    * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
    * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
@@ -1271,6 +1285,8 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
         // Model selection: recruit-arg → AGENT_TEMPO_OPENCODE_MODEL → in-adapter default.
         ...(opts.model ? { [ENV.OPENCODE_MODEL]: opts.model } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -1319,6 +1335,8 @@ export interface PiHeadlessAdapterOpts {
   model?: string;
   /** Restart-resume: the Pi conversation id to continue (from `metadata.sessionId`). */
   continueSessionId?: string;
+  /** #897 — spawn sessionId forwarded as AGENT_TEMPO_SESSION_ID (B1 claim-echo). */
+  sessionId?: string;
   /**
    * 3c Tier-2 ingest token (minted by the daemon outbox, scoped to this player's
    * workflowId). Threaded into the subprocess env as `AGENT_TEMPO_INGEST_TOKEN`
@@ -1389,6 +1407,8 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
         ...(opts.model ? { [ENV.PI_MODEL]: opts.model } : {}),
         // Restart-resume: continue the prior Pi conversation.
         ...(opts.continueSessionId ? { [ENV.PI_CONTINUE_SESSION]: opts.continueSessionId } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // 3c Tier-2: per-player ingest token (minted by the daemon outbox).
         // Absent → the inner-loop publisher's HTTP client no-ops (no fine tail).
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -1450,6 +1470,8 @@ export interface ClaudeCodeHeadlessAdapterOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /** #897 — spawn sessionId forwarded as AGENT_TEMPO_SESSION_ID (B1 claim-echo). */
+  sessionId?: string;
   /**
    * T1.1 PR-1 — per-player ingest token (AGENT_TEMPO_INGEST_TOKEN). Minted by
    * the outbox at spawn; authenticates the adapter's loopback daemon-HTTP
@@ -1524,6 +1546,8 @@ export function spawnClaudeCodeHeadlessAdapter(
         // Permission mode: recruit-arg → AGENT_TEMPO_PERMISSION_MODE → in-adapter default.
         ...(opts.permissionMode ? { [ENV.PERMISSION_MODE]: opts.permissionMode } : {}),
         ...(opts.dangerouslySkipPermissions ? { [ENV.DANGEROUSLY_SKIP_PERMISSIONS]: '1' } : {}),
+        // #897 — universal spawn-identity env (B1 claim-echo).
+        ...(opts.sessionId ? { [ENV.SESSION_ID]: opts.sessionId } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),

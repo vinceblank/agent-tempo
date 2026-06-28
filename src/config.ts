@@ -15,6 +15,16 @@ export const ENV = {
   BRIDGE_MODE: 'AGENT_TEMPO_BRIDGE_MODE',
   BRIDGE_MODEL: 'COPILOT_BRIDGE_MODEL',
   BRIDGE_SESSION_ID: 'COPILOT_BRIDGE_SESSION_ID',
+  /**
+   * #897 — the spawn `sessionId` forwarded to EVERY recruited process so it
+   * knows its own identity at bootstrap. The orphan-guard (`server.ts`) compares
+   * it against the closed run's `MEMO_KEYS.sessionId` to self-exit a late orphan
+   * by exact identity match (superseding the #704 wall-clock TTL). Set in every
+   * `src/spawn.ts` env block from `opts.sessionId`; read in `server.ts`. Distinct
+   * from the copilot-only `BRIDGE_SESSION_ID` (which the bridge already forwards
+   * for SDK session continuity) — this one is universal across all adapters.
+   */
+  SESSION_ID: 'AGENT_TEMPO_SESSION_ID',
   TEMPORAL_ADDRESS: 'TEMPORAL_ADDRESS',
   TEMPORAL_NAMESPACE: 'TEMPORAL_NAMESPACE',
   TEMPORAL_API_KEY: 'TEMPORAL_API_KEY',
@@ -30,13 +40,9 @@ export const ENV = {
    * Default 180s. For tests/tuning.
    */
   BOOTING_DEADLINE_MS: 'AGENT_TEMPO_BOOTING_DEADLINE_MS',
-  /**
-   * #704 — override (ms) for how long a destroyed / boot-timed-out run's
-   * close-reason tombstone is honored by the bootstrap orphan-guard
-   * (`server.ts`). A late-launching orphan within this window self-exits.
-   * Default 6h (the observed orphan spawn delay was ~100min). For tuning.
-   */
-  ORPHAN_TOMBSTONE_TTL_MS: 'AGENT_TEMPO_ORPHAN_TOMBSTONE_TTL_MS',
+  // #897 (B2) — removed `ORPHAN_TOMBSTONE_TTL_MS`. The bootstrap orphan-guard no
+  // longer uses a wall-clock TTL; it discriminates by EXACT sessionId match
+  // (`SESSION_ID` above vs the closed run's `MEMO_KEYS.sessionId`). No clock, no env.
   /**
    * #753 — cadence (ms) of the periodic `[agent-tempo:action-counters]` log
    * line each instrumented process emits. Default 5 minutes; `0` disables.

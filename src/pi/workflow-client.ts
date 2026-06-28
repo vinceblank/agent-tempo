@@ -17,7 +17,7 @@ import { Client, QueryNotRegisteredError, type WorkflowHandle } from '@temporali
 import { createTemporalConnection } from '../connection';
 import { actionCountingInterceptors, withActionSource } from '../utils/action-counters';
 import { MEMO_KEYS } from '../utils/search-attributes';
-import { getConfig, sessionWorkflowId, type Config } from '../config';
+import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import {
   claimAttachmentUpdate,
   heartbeatSignal,
@@ -220,6 +220,11 @@ export class PiWorkflowClient {
           adapterClass: 'interactive',
           leaseMs: this.leaseMs,
           protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
+          // #897 (B1) — echo our spawn sessionId (env first, else metadata) for
+          // the orphan-claim mismatch guard. Absent → guard allows (back-compat).
+          ...((process.env[ENV.SESSION_ID] || this.metadata.sessionId)
+            ? { sessionId: process.env[ENV.SESSION_ID] || this.metadata.sessionId }
+            : {}),
           ...(this.expectedAttachmentId ? { expectedAttachmentId: this.expectedAttachmentId } : {}),
         },
       ],

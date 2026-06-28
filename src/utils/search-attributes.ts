@@ -82,6 +82,13 @@ export const MEMO_KEYS = {
   // search attribute): avoids a 6th Keyword (the #747 SA-diet keeps us at 5/10)
   // and needs no operator registration.
   closeReason: 'AgentTempoCloseReason',
+  // #897 — the session's spawn `sessionId`, stamped on the close memo alongside
+  // `closeReason` (destroy + boot-timeout) so the bootstrap orphan-guard can
+  // discriminate a late orphan by EXACT identity (closed run's sessionId ==
+  // the booting process's own `AGENT_TEMPO_SESSION_ID`) instead of a wall-clock
+  // TTL. String memo (not a search attribute): free under the #747 SA-diet,
+  // no operator registration. Absent for sessions closed before #897.
+  sessionId: 'AgentTempoSessionId',
 } as const;
 
 /**

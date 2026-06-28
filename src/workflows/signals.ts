@@ -215,6 +215,15 @@ export const claimAttachmentUpdate = defineUpdate<
      * cannot silently claim a 2.0 workflow.
      */
     protocolVersion: number;
+    /**
+     * #897 (B1) — OPTIONAL spawn-identity discriminator: the claiming adapter's
+     * own `sessionId` (from `AGENT_TEMPO_SESSION_ID`). The workflow rejects a
+     * claim ONLY when BOTH this AND `metadata.sessionId` are present and differ
+     * (`SessionIdMismatch`) — a stale orphan adapter whose run was superseded.
+     * Absent on either side → allowed (back-compat: legacy adapters, and fresh
+     * claims that land before `metadata.sessionId` is populated).
+     */
+    sessionId?: string;
   }]
 >('claimAttachment');
 
