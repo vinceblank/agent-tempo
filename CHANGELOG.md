@@ -9,7 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
-- **BREAKING (client API):** removed `TempoClient.terminatePlayer()` (#674) — dead since the TUI deletion (#789); use `destroy(ensemble, playerId)` instead (graceful §2.5 destroy update, race-free via #845).
+- **BREAKING (client API):** removed `TempoClient.terminatePlayer()` (#674, PR #912) — dead since the TUI deletion (#789); use `destroy(ensemble, playerId)` instead (graceful §2.5 destroy update, race-free via #845).
+
+### Added
+
+- **`down --destroy --all-ensembles` flag (#907, PR #915)** — new explicit opt-in that destroys workflows across all ensembles, restoring the pre-#907 wide behavior behind a louder confirm prompt. The default (`down --destroy`) now scopes to the resolved ensemble only.
+
+### Fixed
+
+- **`down --destroy` scoped to one ensemble; Cloud/remote Temporal server never killed (#907, PR #915)** — `down --destroy` previously terminated workflows across every ensemble. Now scoped to the resolved ensemble via `AgentTempoEnsemble` SA at query level. Added `classifyTemporalServerOwnership()`: categorically refuses to stop a Temporal server when an API key, TLS cert/key, or non-loopback address is configured — `--kill-shared-temporal` does not override a Cloud/remote refusal. Also stops auto-spawning a local dev server to stand in for an unreachable remote address.
+
+- **Draining-phase wedge fixed (#809, PR #913)** — a session entering `draining` without a `drainingSince` timestamp (continueAsNew-restore edge) produced an infinite next-deadline and wedged restart indefinitely. Now bounded by `DRAINING_DEADLINE_MS` (= 120s, matching the #704 booting watchdog): `nextDeadlineMs()` always yields a finite deadline while draining; the §9.5.c reap fires immediately when the stamp is absent (or after the elapsed cap). Terminal state is recoverable `detached`, not destructive `gone`. A `from: 'system'` watchdog notice is pushed into the inbox exactly once so the wedge is never silent.
+
+- **Outbox delivery deduplication (#910)** — `cue` and `report` entries are now idempotent. The stable outbox entry `id` is threaded as `deliveryId` through `deliverCue` / `deliverReport` into the `receiveMessage` / `playerReport` signals (additive optional field). The receiver keeps a bounded FIFO ring (512 entries, carried across continueAsNew) and drops a repeated `deliveryId` as a true no-op before any side effect. Prevents silent double-cue on continueAsNew redrive or transient activity retry.
+
+- **Orphan guard replaced — exact spawn-identity, wall-clock TTL removed (#897, PRs #920 + #922)** — replaces the beta.2 (#704) "running-run × close-reason × wall-clock-TTL" heuristic with exact identity matching across four slices:
+  - **A — Spawn record persisted**: new `SpawnRecord {hostname, pid, sessionId, spawnedAt}` on `SessionInput`, carried across continueAsNew; populated from outbox activity results (real wall-clock + pid).
+  - **B — sessionId-match claim guard**: `claimAttachment` rejects with `SessionIdMismatch` when the claim-side `sessionId` and `metadata.sessionId` are both set and differ — a stale orphan whose run was superseded. `MEMO_KEYS.sessionId` is co-stamped on the close memo alongside `closeReason`. The `ORPHAN_TOMBSTONE_TTL_MS` env var and all wall-clock TTL logic from #704 are **removed**.
+  - **C — Pid-exact, pid-reuse-guarded hard-terminate**: `destroy` / `forceDetach` / `drainingDeadline` kill the exact recorded pid, but only after `processCmdlineMatchesSessionId` confirms the live process at that pid still carries the expected sessionId (guards against OS pid-reuse after exit).
+  - **D — Restart spawn-idempotency**: the restart outbox entry id is threaded through `enqueueSpawn` as `originId`; a CAN redrive finds the existing pending/processing spawn entry and returns it instead of pushing a second one, preventing double-spawn.
+
+- **`destroyEnsemble` executeUpdate bounded at 15s (#923)** — the `destroyUpdate` executeUpdate was unbounded (60–120s long-poll), blocking the cutover `destroy` phase. Now bounded at 15s with a terminate fallback via `destroySessionWithFallback`.
+
+### Changed
+
+- **Wire-protocol drift detector now covers memo keys (#899, PR #911)** — the `test/wire-protocol.test.ts` AST scanner was blind to workflow memo fields; a key added to `MEMO_KEYS` could slip in without a docs check. New `wire-protocol memo-key drift detector` describe block: `extractMemoKeysFromSource()` reads all string values from the `MEMO_KEYS = { … } as const` block in `src/utils/search-attributes.ts`; `extractMemoKeysFromDocs()` reads the `### Workflow memo` table in `docs/WIRE-PROTOCOL.md`. Four assertions: non-zero source count, non-zero docs count (scan-nothing guards per #707), every code-side key documented, every documented key in code. Closes #899.
+
+### Internal / Testing
+
+- **GA-gate test coverage expanded (#796, PRs #916 / #925; issue #923 closed by #916)** — `cutover-smoke.test.ts` and `upgrade-to-2.test.ts` now cover: force-drain straggler round-trip (outbox stragglers vs inbox cues non-conflation, F2 populated-both-channels); once/interval schedule type round-trips through upgrade + recreation (Gap 7); cron timezone end-to-end through `from-upgrade` recreation (F1); CLI exit-code harness exercising real `process.exit()` paths via child process (Gap 5).
+- **`AGENT_TEMPO_DRAIN_TIMEOUT_MS` env var removed (#921)** — undocumented internal knob (added only to speed up a subprocess test) removed; replaced by in-process `statusToExitCode()` pure function.
+- **CI: `test-tui` job no longer triggers on `workflow_dispatch` (#916, #921 follow)** — prevented "No test files found" failures on v2 branches after `tests/tui/` was deleted (#789).
+
+### Known deferred (beta.4 follow-ups)
+
+- #914 — restart non-force poll: graceful detach is currently fire-and-forget (single re-query, no wait for draining→detached); full poll lands separately
+- #924 — booting-recruit boot-stamp orphan edge case
+- #926 — stale package-lock regeneration
+- #772 — multi-ensemble unique host-queue refactor
+
+---
 
 ## [2.0.0-beta.2] - 2026-06-24
 
