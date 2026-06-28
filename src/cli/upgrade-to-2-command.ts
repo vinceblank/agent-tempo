@@ -46,10 +46,12 @@ function promptYesNo(question: string): Promise<boolean> {
 }
 
 /**
- * Pure status → process exit-code mapping.
+ * Maps an upgrade result status to a process exit code, printing the
+ * appropriate user-facing message as a side effect.
  *
- * Exported so tests can verify the mapping directly without going through the
- * full CLI lifecycle (dynamic imports, Temporal connection, subprocess).
+ * Exported so tests can verify the status → exit-code mapping directly
+ * without going through the full CLI lifecycle (dynamic imports, Temporal
+ * connection, subprocess).
  */
 export function statusToExitCode(
   status: 'done' | 'dry-run' | 'aborted' | 'refused' | 'drain-stopped' | (string & {}),
