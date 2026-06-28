@@ -74,7 +74,12 @@ export type {
 // `attachmentTicket` (#318) is an additive optional field — coat-check ticket
 // the sender stashed via `coat_check_put`; the recipient pulls the body via
 // `coat_check_get`. Backward-compatible — pre-#318 cues simply don't have it.
-export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string; attachmentTicket?: string }]>('receiveMessage');
+// `deliveryId` (#910) is an additive optional field — the originating outbox
+// entry's stable `id`, threaded source→receiver so the receiver can drop a
+// redelivered cue (at-least-once delivery: a CAN/crash mid-dispatch, or an
+// activity retry after a server-side signal apply). Omitted by un-threaded /
+// legacy callers → no dedup (back-compat).
+export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string; attachmentTicket?: string; deliveryId?: string }]>('receiveMessage');
 export const recordSentMessageSignal = defineSignal<[{ to: string; text: string; broadcastId?: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
@@ -136,7 +141,10 @@ export const pausedQuery = defineQuery<boolean>('paused');
 // ── Conductor Signals ──
 
 export const commandSignal = defineSignal<[{ text: string; source: string; replyTo?: string }]>('command');
-export const playerReportSignal = defineSignal<[{ playerId: string; text: string; type: 'result' | 'blocker' | 'question' }]>('playerReport');
+// `deliveryId` (#910) — additive optional outbox entry id for at-least-once
+// dedup on the conductor receiver (mirrors `receiveMessage`). Back-compat: legacy
+// callers omit it → no dedup.
+export const playerReportSignal = defineSignal<[{ playerId: string; text: string; type: 'result' | 'blocker' | 'question'; deliveryId?: string }]>('playerReport');
 
 // ── Conductor Queries ──
 
