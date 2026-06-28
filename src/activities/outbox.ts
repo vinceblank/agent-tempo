@@ -332,6 +332,19 @@ export interface OutboxActivityResult {
    * structured here so a future workflow-side relay can surface it to the operator.
    */
   note?: string;
+  /**
+   * #897 (A) — OS pid of the process `spawnProcess` launched, when the spawn
+   * helper returned one. The dispatch loop records it onto the durable
+   * `spawnRecord` from this RESULT (not a workflow-side clock). Absent on
+   * non-spawn activities and on the FIX-3 duplicate-skip path.
+   */
+  pid?: number;
+  /**
+   * #897 (A) — ISO timestamp captured IN `spawnProcess` at process-start (real
+   * wall-clock). Pairs with {@link pid} to source the whole `spawnRecord` from
+   * one place. Absent on non-spawn activities / the duplicate-skip path.
+   */
+  spawnedAt?: string;
 }
 
 export interface RecruitResult extends OutboxActivityResult {
@@ -680,6 +693,12 @@ export function createOutboxActivities(
             ? ingestTokens?.mint(sessionWorkflowId(ensemble, targetName))
             : undefined;
 
+        // #897 (A) — capture spawn identity from the activity (real wall-clock +
+        // the helper-returned pid) so the dispatch loop records `spawnRecord`
+        // from this RESULT, not a workflow-side clock. One source for both fields.
+        const spawnedAt = new Date().toISOString();
+        let spawnedPid: number | undefined;
+
         if (agent === 'mock') {
           // ADR 0014 PR-2 — mock adapter spawns headless. No terminal,
           // no Claude binary, no MCP server child. Talks to Temporal
@@ -697,11 +716,13 @@ export function createOutboxActivities(
             workDir,
             mockMode,
             mockScenario,
+            sessionId,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned mock adapter (pid ${pid}) in ${workDir} as "${targetName}" (mode=${mockMode ?? 'echo'}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
         } else if (agent === 'copilot') {
           if (allowedTools && allowedTools.length > 0) {
@@ -723,6 +744,7 @@ export function createOutboxActivities(
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'claude-api') {
           // #131 Phase C — headless Anthropic Messages API adapter. No
@@ -744,11 +766,13 @@ export function createOutboxActivities(
             isConductor,
             workDir,
             model,
+            sessionId,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned claude-api adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'opencode') {
           // #449 Phase C — headless multi-provider adapter via OpenCode.
@@ -772,11 +796,13 @@ export function createOutboxActivities(
             isConductor,
             workDir,
             model,
+            sessionId,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned opencode adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'claude-code-headless') {
           // #520 — headless Claude Code adapter. Spawns the host's `claude` CLI
@@ -801,11 +827,13 @@ export function createOutboxActivities(
             workDir,
             permissionMode,
             dangerouslySkipPermissions,
+            sessionId,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned claude-code-headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${permissionMode ? ` (permissionMode=${permissionMode})` : ''}${dangerouslySkipPermissions ? ' (dangerouslySkipPermissions=true)' : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else if (agent === 'pi') {
           // Phase 3a — headless Pi runtime. Injects the src/pi extension into
@@ -829,11 +857,13 @@ export function createOutboxActivities(
             // Restart-resume: continue the prior Pi conversation only on a
             // restart (resume=true); a fresh recruit starts a new Pi session.
             continueSessionId: resume ? sessionId : undefined,
+            sessionId,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
+          spawnedPid = pid;
           log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
@@ -880,15 +910,25 @@ export function createOutboxActivities(
           if (temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = temporalApiKey;
           if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
           if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;
+          // #897 (B) — forward the spawn sessionId so the MCP-server child
+          // (`server.ts`) knows its own identity for the orphan-guard, and the
+          // interactive adapter echoes it on `claimAttachment` for the sessionId
+          // mismatch guard. Inherited by the MCP child via the claude process env.
+          if (sessionId) envVars[ENV.SESSION_ID] = sessionId;
           // PR-D: forward pre-claimed attachment so the adapter renews rather than fresh-claims.
           if (attachmentId) envVars[ENV.ATTACHMENT_ID] = attachmentId;
           if (attachmentRunId) envVars[ENV.ATTACHMENT_RUN_ID] = attachmentRunId;
           if (adapterId) envVars[ENV.ADAPTER_ID] = adapterId;
           const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
+          spawnedPid = pid;
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
         }
 
-        return { success: true };
+        return {
+          success: true,
+          ...(spawnedPid !== undefined ? { pid: spawnedPid } : {}),
+          spawnedAt,
+        };
       } catch (err) {
         // #236: spawnProcess throws predominantly OS-side errors (ENOENT/EACCES
         // on the claude binary, EAGAIN on process-table overflow). The classifier

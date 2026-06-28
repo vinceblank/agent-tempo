@@ -158,31 +158,31 @@ async function main() {
   // every managed re-creation (recruit / restart / migrate / up) pre-creates a
   // RUNNING run, so a legit reuse is seen as RUNNING and simply attaches — it never
   // reaches this branch. Gated `!isConductor` (conductors are operator-driven via
-  // `up`, never a recruited orphan). A generous wall-clock TTL bounds a stale
-  // tombstone so a much-later legit manual reuse of the same name isn't blocked
-  // forever (observed orphan delay ~100min; default 6h, env-overridable).
+  // `up`, never a recruited orphan).
+  // #897 (B2): the discriminator is now EXACT sessionId identity, not a wall-clock
+  // TTL. We compare THIS process's own spawn sessionId (`AGENT_TEMPO_SESSION_ID`)
+  // against the closed run's stamped `MEMO_KEYS.sessionId`. A legit re-recruit
+  // carries a fresh sessionId → never matches → proceeds; the true orphan carries
+  // its closed run's sessionId → exits precisely, however late. No TTL/clock.
   if (!isConductor) {
-    const ttlMsRaw = Number(process.env[ENV.ORPHAN_TOMBSTONE_TTL_MS]);
-    const orphanTombstoneTtlMs =
-      Number.isFinite(ttlMsRaw) && ttlMsRaw > 0 ? ttlMsRaw : 6 * 60 * 60 * 1000;
+    const mySessionId = process.env[ENV.SESSION_ID] || undefined;
     try {
       const desc = await client.workflow.getHandle(workflowId).describe();
-      const closeReason = (desc.memo as Record<string, unknown> | undefined)?.[
-        MEMO_KEYS.closeReason
-      ];
+      const memo = desc.memo as Record<string, unknown> | undefined;
+      const closeReason = memo?.[MEMO_KEYS.closeReason];
+      const closedSessionId = memo?.[MEMO_KEYS.sessionId];
       const orphan = shouldSelfExitAsOrphan(
         {
           statusName: desc.status.name,
           closeReason,
-          closeTimeMs: desc.closeTime ? desc.closeTime.getTime() : 0,
+          closedSessionId,
         },
-        orphanTombstoneTtlMs,
-        Date.now(),
+        mySessionId,
       );
       if (orphan) {
         log(
-          `recruit was cancelled (close-reason: ${closeReason}) — exiting to avoid ` +
-          `re-registering an orphan session for ${workflowId}`,
+          `recruit was cancelled (close-reason: ${closeReason}, sessionId: ${mySessionId}) — ` +
+          `exiting to avoid re-registering an orphan session for ${workflowId}`,
         );
         process.exit(0);
       }

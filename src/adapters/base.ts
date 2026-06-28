@@ -20,6 +20,7 @@ import {
   adapterExitedSignal,
 } from '../workflows/signals';
 import { PROTOCOL_VERSION } from '../constants';
+import { ENV } from '../config';
 import type {
   AdapterClass,
   AdapterDescriptor,
@@ -482,6 +483,9 @@ export abstract class BaseAttachment {
         adapterClass: this.descriptor.adapterClass as AdapterClass,
         leaseMs: 3 * this.descriptor.heartbeatMs,
         protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
+        // #897 (B1) — echo our own spawn sessionId so the workflow rejects a
+        // stale orphan's claim (mismatch). Absent → guard allows (back-compat).
+        ...(process.env[ENV.SESSION_ID] ? { sessionId: process.env[ENV.SESSION_ID] } : {}),
         ...(expectedAttachmentId ? { expectedAttachmentId } : {}),
       }],
     });
@@ -1255,6 +1259,8 @@ export abstract class BaseAttachment {
               adapterClass: this.descriptor.adapterClass as AdapterClass,
               leaseMs: 3 * this.descriptor.heartbeatMs,
               protocolVersion: PROTOCOL_VERSION, // #786 — 2.0 wire handshake
+              // #897 (B1) — echo our spawn sessionId for the orphan-claim guard.
+              ...(process.env[ENV.SESSION_ID] ? { sessionId: process.env[ENV.SESSION_ID] } : {}),
             }],
           });
 

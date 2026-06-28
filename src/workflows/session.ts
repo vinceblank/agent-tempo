@@ -24,7 +24,7 @@ function workflowNow(): Date {
   return new Date();
 }
 
-import type { OutboxActivities } from '../activities/outbox';
+import type { OutboxActivities, OutboxActivityResult } from '../activities/outbox';
 import type { HardTerminateResult } from '../activities/hard-terminate';
 import { extendAttachmentForCAN } from './attachment-math';
 
@@ -121,6 +121,7 @@ import type {
   PlayerStateEntry,
   OrphanSummary,
   SpawnOutboxEntry,
+  SpawnRecord,
 } from '../types';
 // ── Outbox Activity Proxies ──
 
@@ -299,6 +300,33 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // slip a dup through; the cap is sized well above (max in-flight + CAN window).
   const SEEN_DELIVERY_IDS_CAP = 512;
   const seenDeliveryIds: string[] = input.seenDeliveryIds ?? [];
+
+  // #897 (A) — durable spawn-identity record of the LAST process this session
+  // spawned. Set from the `spawnProcess` activity RESULT in the dispatch loop
+  // (host/pid/sessionId/spawnedAt), carried across CAN. Exists pre-attach so
+  // reconcile/destroy tooling has a spawn identity even before an adapter claims.
+  let spawnRecord: SpawnRecord | null = input.spawnRecord ?? null;
+  /**
+   * Record spawn identity from a `spawnProcess` RESULT. No-op when `spawnedAt`
+   * is absent — that's the FIX-3 duplicate-skip path (no process launched), so
+   * the prior `spawnRecord` is preserved rather than blanked.
+   */
+  function recordSpawn(result: OutboxActivityResult, host: string, sessionId: string | undefined): void {
+    if (!result.spawnedAt) return;
+    spawnRecord = {
+      hostname: host,
+      ...(result.pid !== undefined ? { pid: result.pid } : {}),
+      ...(sessionId !== undefined ? { sessionId } : {}),
+      spawnedAt: result.spawnedAt,
+    };
+  }
+  /**
+   * #897 (B2) — the sessionId to stamp on the close memo for the orphan-guard's
+   * exact-identity match. Prefer the spawn identity (== the orphan process's own
+   * `AGENT_TEMPO_SESSION_ID`); fall back to the adapter-set metadata sessionId.
+   */
+  const closeMemoSessionId = (): string | undefined =>
+    spawnRecord?.sessionId ?? input.metadata.sessionId;
   /**
    * Record a `deliveryId` and report whether it is NEW (caller should apply) vs a
    * duplicate that must be dropped. `undefined` (un-threaded / legacy caller) is
@@ -964,7 +992,13 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // completion. The bootstrap orphan-guard (`server.ts`) reads it via
     // `describe().memo` to self-tombstone a late-launching orphan process whose
     // run was destroyed and never recreated (no running run + this reason).
-    upsertMemo({ [MEMO_KEYS.closeReason]: 'destroyed' });
+    // #897 (B2) — co-stamp the session's sessionId so the orphan-guard matches by
+    // EXACT identity (closed run's sessionId == the booting process's own) instead
+    // of a wall-clock TTL. Source: the spawn identity, falling back to metadata.
+    upsertMemo({
+      [MEMO_KEYS.closeReason]: 'destroyed',
+      ...(closeMemoSessionId() ? { [MEMO_KEYS.sessionId]: closeMemoSessionId() } : {}),
+    });
     setPhase('gone');
     // Inject a final audit message so the old adapter-completion path has something to show.
     messages.push({
@@ -1086,7 +1120,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     wakeEpoch++;
     return attachmentTokenFrom(newAttachment, leaseMs);
   }, {
-    validator: ({ host, leaseMs, protocolVersion }) => {
+    validator: ({ host, leaseMs, protocolVersion, sessionId }) => {
       // #786 — cross-host cutover safety, checked FIRST (pure, synchronous, no
       // IO, no history event — rejects pre-admission). A v1 adapter omits
       // `protocolVersion` (→ undefined); any value other than PROTOCOL_VERSION is
@@ -1099,6 +1133,25 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
           `protocol-${PROTOCOL_VERSION} (2.0) workflow. Upgrade the agent-tempo install on ` +
           `that host to 2.0 (it cannot drive a 2.0 session).`,
           'ProtocolMismatch',
+        );
+      }
+      // #897 (B1) — spawn-identity discriminator. Reject ONLY a DEFINITE
+      // mismatch: both the claimant's `sessionId` AND the workflow's current
+      // `metadata.sessionId` are present and differ → a stale orphan adapter
+      // (its run was superseded by a re-spawn with a fresh sessionId). Unset on
+      // either side → allow (legacy adapters; fresh claims that land before
+      // `metadata.sessionId` is populated). Pure/pre-admission like the protocol
+      // check — a rejected stale claim records no history event.
+      if (
+        sessionId !== undefined &&
+        input.metadata.sessionId !== undefined &&
+        sessionId !== input.metadata.sessionId
+      ) {
+        throw ApplicationFailure.nonRetryable(
+          `claimAttachment rejected on ${workflowInfo().workflowId}: claimant sessionId ` +
+          `'${sessionId}' does not match this session's '${input.metadata.sessionId}' — ` +
+          `a stale orphan adapter whose run was superseded. The live adapter holds the session.`,
+          'SessionIdMismatch',
         );
       }
       if (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 600_000) {
@@ -1353,6 +1406,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     ...(lastDetachReason ? { reason: lastDetachReason } : {}),
     ...(preferredHost ? { preferredHost } : {}),
     ...(lastAdapterMeta ? { lastAdapter: lastAdapterMeta } : {}),
+    // #897 (A) — surface the durable spawn identity on the existing query
+    // (rather than a new query) so restore/reconcile tooling sees host/pid/sessionId.
+    ...(spawnRecord ? { spawnRecord } : {}),
   }));
 
   // ── Player Saveable State Handlers (#334 PR-1, ADR 0011) ──
@@ -1938,7 +1994,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         }
       }
       // Tombstone MEMO (shared with the orphan-guard) + terminal `gone`.
-      upsertMemo({ [MEMO_KEYS.closeReason]: 'boot-timeout' });
+      // #897 (B2) — co-stamp the sessionId for exact-identity orphan matching.
+      upsertMemo({
+        [MEMO_KEYS.closeReason]: 'boot-timeout',
+        ...(closeMemoSessionId() ? { [MEMO_KEYS.sessionId]: closeMemoSessionId() } : {}),
+      });
       lastAdapterMeta = lastAdapterMeta ?? {
         hostname: killHost ?? input.metadata.hostname,
         adapterId: '',
@@ -2134,7 +2194,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
             // is locked and the initial message is deferred until release.
             const targetHost = entry.targetHostname || input.metadata.hostname;
             const spawnFn = getSpawnProxy(targetHost);
-            await spawnFn({
+            const recruitSpawnResult = await spawnFn({
               targetName: entry.targetName,
               workDir: entry.workDir,
               isConductor: entry.isConductor,
@@ -2155,6 +2215,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // can plumb it into the subprocess env (AGENT_TEMPO_API_MODEL).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
+            // #897 (A) — record the fresh-recruit spawn identity from the RESULT.
+            recordSpawn(recruitSpawnResult, targetHost, recruitResult.sessionId);
             break;
           }
           case 'release': {
@@ -2231,7 +2293,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
             const spawnTc = input.temporalConfig;
             const spawnHost = entry.targetHostname;
             const spawnFn = getSpawnProxy(spawnHost);
-            await spawnFn({
+            const spawnResult = await spawnFn({
               targetName: entry.targetName,
               workDir: entry.workDir,
               isConductor: entry.isConductor,
@@ -2252,6 +2314,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // by deliverRestart).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
+            // #897 (A) — record spawn identity from the activity RESULT (real
+            // wall-clock + helper pid), not a workflow-side clock. `spawnedAt`
+            // is absent on the FIX-3 duplicate-skip path → no record update.
+            recordSpawn(spawnResult, spawnHost, entry.sessionId);
             break;
           }
         }
@@ -2386,6 +2452,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         // #910 — carry the at-least-once dedup ring forward (omit when empty;
         // bounded so it stays constant-size across CAN).
         ...(seenDeliveryIds.length > 0 ? { seenDeliveryIds } : {}),
+        // #897 (A) — carry the spawn-identity record across CAN (omit when null).
+        ...(spawnRecord ? { spawnRecord } : {}),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }

@@ -202,6 +202,29 @@ export interface OrphanSummary {
   reason?: DetachReason;
   preferredHost?: string;
   lastAdapter?: { hostname: string; adapterId: string };
+  /** #897 — last recorded spawn identity (surfaced here so restore tooling can
+   *  see the host/pid/sessionId the workflow last spawned). See {@link SpawnRecord}. */
+  spawnRecord?: SpawnRecord;
+}
+
+/**
+ * #897 — durable record of the LAST process this session spawned, captured from
+ * the `spawnProcess` activity RESULT (not a workflow-side clock) and carried
+ * across continueAsNew. Exists PRE-attach (unlike {@link Attachment}, which only
+ * appears once an adapter claims) so destroy / reconcile tooling has a spawn
+ * identity to reason about even for a session that never attached. Persisting it
+ * is scope A of #897; pid-exact kills (C) and restart spawn-dedup (D) that would
+ * *consume* it are deferred follow-ups.
+ */
+export interface SpawnRecord {
+  /** Host the process was spawned on (the spawn entry's `targetHostname`). */
+  hostname: string;
+  /** OS pid of the spawned process, when the spawn helper returned one. */
+  pid?: number;
+  /** The `sessionId` the process was spawned with (mirrors `SessionMetadata.sessionId`). */
+  sessionId?: string;
+  /** ISO timestamp captured IN the spawn activity at process-start (real wall-clock). */
+  spawnedAt: string;
 }
 
 export interface SessionMetadata {
@@ -535,6 +558,12 @@ export interface SessionInput {
    * documented bound in docs/WIRE-PROTOCOL.md.
    */
   seenDeliveryIds?: string[];
+  /**
+   * #897 — last spawn-identity record (see {@link SpawnRecord}), carried across
+   * continueAsNew so the host/pid/sessionId of the most recent spawn survives a
+   * CAN boundary. Omitted when no spawn has happened on this run chain.
+   */
+  spawnRecord?: SpawnRecord;
 }
 
 export interface Message {
