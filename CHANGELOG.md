@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Internal / Testing
 
-- **GA-gate test coverage expanded (#796, PRs #916 / #923 / #925)** — `cutover-smoke.test.ts` and `upgrade-to-2.test.ts` now cover: force-drain straggler round-trip (outbox stragglers vs inbox cues non-conflation, F2 populated-both-channels); once/interval schedule type round-trips through upgrade + recreation (Gap 7); cron timezone end-to-end through `from-upgrade` recreation (F1); CLI exit-code harness exercising real `process.exit()` paths via child process (Gap 5).
+- **GA-gate test coverage expanded (#796, PRs #916 / #925; issue #923 closed by #916)** — `cutover-smoke.test.ts` and `upgrade-to-2.test.ts` now cover: force-drain straggler round-trip (outbox stragglers vs inbox cues non-conflation, F2 populated-both-channels); once/interval schedule type round-trips through upgrade + recreation (Gap 7); cron timezone end-to-end through `from-upgrade` recreation (F1); CLI exit-code harness exercising real `process.exit()` paths via child process (Gap 5).
 - **`AGENT_TEMPO_DRAIN_TIMEOUT_MS` env var removed (#921)** — undocumented internal knob (added only to speed up a subprocess test) removed; replaced by in-process `statusToExitCode()` pure function.
 - **CI: `test-tui` job no longer triggers on `workflow_dispatch` (#916, #921 follow)** — prevented "No test files found" failures on v2 branches after `tests/tui/` was deleted (#789).
 
