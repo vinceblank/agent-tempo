@@ -13,6 +13,7 @@
     "test/force-detach-recheck.test.ts",
     "test/upgrade-to-2.test.ts",
     "test/cutover-smoke.test.ts",
-    "test/session-boot-timeout.test.ts"
+    "test/session-boot-timeout.test.ts",
+    "test/upgrade-to-2-cli.test.ts"
   ]
 }

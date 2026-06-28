@@ -462,4 +462,8 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
       expect(intervalRecreated.firedCount, 'firedCount reset to 0 (was 2)').to.equal(0);
     });
   });
+
+  // Gap 1 (multi-ensemble round-trip) deferred to #772 follow-up.
+  // Cherry-pick from tempo-impl/796-ga-gate-p1 @ f92fb231 once
+  // unique-per-test host queues land (to avoid SlotKey conflicts).
 });
