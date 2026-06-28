@@ -749,7 +749,17 @@ export async function createWorkerWithSlotRetry(
   workerOpts: Parameters<typeof Worker.create>[0],
   retryOpts: CreateWorkerRetryOpts = {},
 ): Promise<Worker> {
-  workerOpts = { stickyQueueScheduleToStartTimeout: STICKY_SCHEDULE_TO_START_TIMEOUT, ...workerOpts };
+  // `shutdownGraceTime` bounds the graceful-drain window: after Worker.shutdown()
+  // is called, in-flight activities get 2s to finish before being force-cancelled.
+  // Without this, the drain is unbounded — on loaded CI runners where activity
+  // tasks stall or retry, `worker.runUntil()` / `runWorkerUntil()` hangs forever.
+  // 2s is generous for test stubs (which return immediately) and short enough to
+  // keep the overall suite fast even if a stray activity is in-flight at teardown.
+  workerOpts = {
+    stickyQueueScheduleToStartTimeout: STICKY_SCHEDULE_TO_START_TIMEOUT,
+    shutdownGraceTime: '2s',
+    ...workerOpts,
+  };
   const attempts = retryOpts.attempts ?? SLOT_RETRY_DEFAULT_ATTEMPTS;
   const baseMs = retryOpts.baseDelayMs ?? SLOT_RETRY_DEFAULT_BASE_MS;
   const factor = retryOpts.factor ?? SLOT_RETRY_DEFAULT_FACTOR;

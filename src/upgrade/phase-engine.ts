@@ -772,11 +772,24 @@ async function destroySessionWithFallback(
   timeoutMs = 15_000,
 ): Promise<void> {
   const handle = deps.client.workflow.getHandle(workflowId);
+
+  // Hoist the update promise so we can await its settlement even after the
+  // 15-second race fires. An abandoned (un-awaited) executeUpdate leaves a
+  // PollWorkflowExecutionUpdate RPC in-flight on the gRPC connection.
+  // testEnv.teardown() (and production CLI shutdown) blocks until all in-flight
+  // RPCs drain — each poll has a 60-second server-side timeout. Awaiting the
+  // promise AFTER terminate() lets Temporal fail the poll immediately (the
+  // server terminates the execution and returns an error to all pending polls),
+  // keeping the connection clean.
+  const updatePromise = handle.executeUpdate(destroyUpdate, {
+    args: [{ reason, terminatedBy: 'upgrade-to-2' }],
+  });
+
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      handle.executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] }),
+      updatePromise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           timedOut = true;
@@ -791,6 +804,10 @@ async function destroySessionWithFallback(
         : `[upgrade] destroy ${playerId} failed (continuing): ${errMsg(err)}`,
     );
     await handle.terminate(reason).catch(() => {});
+    // Await the dangling update promise so the PollWorkflowExecutionUpdate RPC
+    // settles before we return. terminate() causes the server to fail all pending
+    // polls for this execution, so this resolves almost immediately.
+    await updatePromise.catch(() => { /* expected: workflow terminated */ });
   } finally {
     clearTimeout(timer);
   }
