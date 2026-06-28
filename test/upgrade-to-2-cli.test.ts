@@ -137,13 +137,13 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   async function waitForCleanSlate(): Promise<void> {
     await pollWithTimeout(
       async () => (await enumerateEnsembleNames(deps())).length === 0,
-      30_000,
+      60_000, // 60 s — visibility lag from prior shard-1 tests can exceed 30 s (#772 follow-up)
       500,
     );
   }
 
   beforeEach(async function () {
-    this.timeout(45_000); // waitForCleanSlate polls up to 30 s
+    this.timeout(75_000); // waitForCleanSlate polls up to 60 s + 15 s setup buffer
     home = mkdtempSync(join(tmpdir(), 'tempo-gap5-cli-'));
     temporalAddress = getTestEnvServerAddress();
     if (!temporalAddress) {
@@ -204,7 +204,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C1: --dry-run ──────────────────────────────────────────────────────────
 
   it('C1: --dry-run exits 0 and prints "Dry-run complete"', async function () {
-    this.timeout(90_000); // waitForCleanSlate (30 s) + CLI dry-run (60 s cap)
+    this.timeout(90_000); // CLI dry-run (60 s cap) — beforeEach covers waitForCleanSlate separately
     // No sessions needed — dry-run connects and enumerates (finds nothing after
     // waitForCleanSlate) then exits before modifying anything.
     // No worker needed → `runCli` (sync) is safe here: the embedded Go server
@@ -218,7 +218,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C2: connection failure (exit 1) ───────────────────────────────────────
 
   it('C2: connection failure exits 1 with actionable "Could not connect" message', async function () {
-    this.timeout(50_000); // waitForCleanSlate (30 s) + CLI 12 s cap
+    this.timeout(30_000); // CLI 12 s cap + buffer — beforeEach covers waitForCleanSlate separately
     // Point at a port where no Temporal server is running. The CLI must catch
     // the connection error, print a helpful message, and exit 1 — same path as
     // the dynamic-import crash guard (both return 1 from upgradeToV2Command).
@@ -240,7 +240,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C3: version-floor refusal (exit 2) ────────────────────────────────────
 
   it('C3: version-floor refusal exits 2 — fixed "1.7.x" message (was "1.8.x")', async function () {
-    this.timeout(90_000); // waitForCleanSlate (30 s) + worker setup + CLI spawn (60 s cap)
+    this.timeout(90_000); // worker setup + CLI spawn (60 s cap) — beforeEach covers waitForCleanSlate separately
 
     await withWorkerAndGlobalMaestroActivities({}, async () => {
       // Defensive: terminate any leftover global maestro from a prior test.
@@ -309,7 +309,7 @@ describe('upgrade-to-2 CLI exit codes (#796 Gap 5)', function () {
   // ── C5: successful cutover (exit 0) ───────────────────────────────────────
 
   it('C5: successful full cutover exits 0 and prints "Cutover complete"', async function () {
-    this.timeout(120_000); // waitForCleanSlate (30 s) + worker setup + CLI upgrade (60 s cap)
+    this.timeout(120_000); // worker setup + CLI upgrade (60 s cap) — beforeEach covers waitForCleanSlate separately
     const ensemble = `${getTestEnsemble()}-gap5-success`;
 
     await withWorkerAndRecruitActivities(async () => {

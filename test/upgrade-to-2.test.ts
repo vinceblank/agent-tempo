@@ -469,7 +469,7 @@ describe('upgrade-to-2 cutover engine (#785)', function () {
   // discovers and captures all of them, and `runFromUpgrade` recreates each
   // independently with no cross-ensemble contamination.
   it('multi-ensemble round-trip: two ensembles captured + recreated independently', async function () {
-    this.timeout(120_000);
+    this.timeout(180_000); // two independent withWorkerAndRecruitActivities + round-trips (#772 unique queues add setup latency)
     const base = getTestEnsemble();
     const ensAlpha = `${base}-multi-alpha`;
     const ensBeta = `${base}-multi-beta`;
