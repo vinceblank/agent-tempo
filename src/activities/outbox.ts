@@ -251,6 +251,12 @@ export interface DeliverRestartInput {
   loadFromState?: boolean | string;
   /** #334 PR-2 — see {@link RestartOutboxEntry.transcript}. */
   transcript?: 'suppress' | 'replay';
+  /**
+   * #897 (D) — id of the originating `restart` outbox entry. Forwarded to
+   * `enqueueSpawn` as `originId` so the target workflow dedups the spawn — a
+   * re-driven `deliverRestart` (CAN-redrive / activity retry) can't double-spawn.
+   */
+  restartEntryId?: string;
 }
 
 export interface SpawnProcessInput {
@@ -1109,7 +1115,7 @@ export function createOutboxActivities(
      * outside the outbox pattern.
      */
     async deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult> {
-      const { ensemble, targetPlayerId, invokerPlayerId, force = false, host, fresh = false, contextMessages = 10, loadFromState, transcript } = input;
+      const { ensemble, targetPlayerId, invokerPlayerId, force = false, host, fresh = false, contextMessages = 10, loadFromState, transcript, restartEntryId } = input;
       try {
         const handle = await resolveSession(client, ensemble, targetPlayerId);
         if (!handle) {
@@ -1339,6 +1345,9 @@ export function createOutboxActivities(
               agentDefinitionPath: resolved.path,
               nativeResolvable: resolved.nativeResolvable,
             } : {}),
+            // #897 (D) — forward the originating restart-entry-id so the workflow
+            // dedups a re-driven deliverRestart (CAN-redrive / activity retry).
+            ...(restartEntryId !== undefined ? { originId: restartEntryId } : {}),
           }],
         });
 

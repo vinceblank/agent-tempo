@@ -49,13 +49,29 @@ export interface HardTerminateInput {
   workDir: string;
   /** Optional explicit logDir override for the central bridge log path. */
   logDir?: string;
+  /**
+   * #897 (C) — exact spawn pid recorded on the session's `spawnRecord` (from the
+   * `spawnProcess` activity result). When present, the kill targets THIS exact
+   * process tree instead of the name+ensemble command-line search — but only
+   * after the {@link sessionId} pid-reuse guard confirms the live process still
+   * carries the expected sessionId. Absent → fall back to the search path.
+   */
+  pid?: number;
+  /**
+   * #897 (C) — expected spawn sessionId, the pid-reuse guard for {@link pid}. The
+   * activity verifies the live process at `pid` still has this sessionId in its
+   * command line BEFORE killing, so a recycled pid (the OS reassigned it to an
+   * unrelated process after ours exited) is never killed. Required for the
+   * pid-exact path; without it the activity falls through to the search.
+   */
+  sessionId?: string;
 }
 
 export interface HardTerminateResult {
   /** PIDs that were signaled/taskkilled. Empty on the "nothing to do" path. */
   killedPids: number[];
-  /** Which code path produced the kill: PID-file lookup, command-line search, or no-op. */
-  strategy: 'pidfile' | 'search' | 'none';
+  /** Which code path produced the kill: exact pid, PID-file lookup, command-line search, or no-op. */
+  strategy: 'pid' | 'pidfile' | 'search' | 'none';
   /** Short human-readable notes recorded by the activity — surfaced in workflow logs. */
   notes: string[];
 }
@@ -70,6 +86,34 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
   const killedPids: number[] = [];
 
   log(`hardTerminate start — ensemble=${ensemble} player=${playerName} agent=${agent}`);
+
+  // ── #897 (C): exact pid path (pid-reuse-guarded) ──
+  // When the session recorded a spawn pid, kill THAT exact process tree — but only
+  // after confirming the live process at that pid still carries the expected
+  // sessionId in its command line. This guards against pid reuse: after our process
+  // exits, the OS can reassign its pid to an unrelated process, and a blind kill
+  // would take down a bystander. Requires `sessionId` (the guard); without it, or
+  // when the guard fails (process exited / pid reused), fall through to the existing
+  // name+ensemble search. Interactive Claude carries `--session-id <uuid>` in its
+  // command line; headless adapters keep the sessionId in env (not cmdline) → they
+  // miss the guard and fall through to the pidfile/search paths, as before.
+  if (typeof input.pid === 'number' && input.pid > 0 && input.sessionId) {
+    if (processCmdlineMatchesSessionId(input.pid, input.sessionId)) {
+      const killed = await killProcessTree(input.pid);
+      if (killed) killedPids.push(input.pid);
+      notes.push(
+        killed
+          ? `Killed pid ${input.pid} (exact sessionId match "${input.sessionId}").`
+          : `kill of pid ${input.pid} reported non-fatal (already gone?).`,
+      );
+      log(`hardTerminate done (pid) — killedPids=[${killedPids.join(',')}]`);
+      return { killedPids, strategy: 'pid', notes };
+    }
+    notes.push(
+      `pid ${input.pid} command line no longer carries sessionId "${input.sessionId}" ` +
+      `(process exited or pid was reused) — falling through to search.`,
+    );
+  }
 
   // ── Copilot bridge: PID file is authoritative ──
   if (agent === 'copilot') {
@@ -130,6 +174,46 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
 // ────────────────────────────────────────────────────────────────────────────────────────────
 // Platform helpers
 // ────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * #897 (C) — pid-reuse guard for the exact-pid kill path. Returns true iff the
+ * live process at `pid` has `sessionId` in its command line. After our process
+ * exits, the OS may reassign its pid to an unrelated process; this check ensures
+ * we only kill a pid that is still demonstrably OUR session (the spawn sessionId
+ * is in `claude --session-id <uuid>` for interactive; headless adapters keep it
+ * in env, so they won't match here and fall through to the search path).
+ * Never throws — any lookup failure conservatively returns false (do not kill).
+ */
+function processCmdlineMatchesSessionId(pid: number, sessionId: string): boolean {
+  // Defensive: sessionId is an opaque UUID-shaped token; refuse anything that
+  // could break the PowerShell expression or over-match.
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return false;
+  try {
+    let cmdline = '';
+    if (process.platform === 'win32') {
+      const psScript =
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue).CommandLine`;
+      cmdline = execFileSync('powershell', ['-NoProfile', '-Command', psScript], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      });
+    } else {
+      try {
+        // /proc/<pid>/cmdline is NUL-separated; normalize to spaces.
+        cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+      } catch {
+        cmdline = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+      }
+    }
+    return cmdline.includes(sessionId);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Verify that `pid` resolves to a process whose executable image name matches `expected`.

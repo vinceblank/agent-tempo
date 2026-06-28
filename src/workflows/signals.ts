@@ -263,6 +263,12 @@ export const enqueueSpawnUpdate = defineUpdate<
     nativeResolvable?: boolean;
     /** #131 Phase C — claude-api model id carried across restart. */
     model?: string;
+    /**
+     * #897 (D) — id of the originating `restart` outbox entry. The handler dedups
+     * on it so a re-driven `deliverRestart` (CAN-redrive / activity retry) can't
+     * enqueue a second spawn. Optional; recruit/migrate spawns omit it.
+     */
+    originId?: string;
   }]
 >('enqueueSpawn');
 
