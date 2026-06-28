@@ -10,7 +10,7 @@ agent-tempo <command> [options]
 |---------|-------------|
 | `agent-tempo` (no command) | Bare landing (#789, D2): auto-provision infrastructure (bootstrap), print live `status`, then point you at the operator surfaces (`command-center` board + web dashboard). Pass an ensemble name to scope the status. Replaced the deleted Terminal UI. |
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate every workflow. `--kill-shared-temporal` overrides the cross-profile guard and kills the Temporal server even if the other profile is active (#423). |
+| `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate workflows in the resolved ensemble; `--all-ensembles` extends termination to every ensemble (#907). `--kill-shared-temporal` overrides the cross-profile guard (#423) — but never kills a Cloud/remote Temporal server (non-loopback host, API key, or TLS cert configured; #907). |
 | `server` | Start the Temporal dev server and register search attributes |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
@@ -59,8 +59,9 @@ agent-tempo <command> [options]
 -d, --dir <path>              Target directory (default: cwd)
 --background                  Run Temporal in background (server only)
 --keep-mcp                    Preserve MCP config when tearing down (down only)
---destroy                     Also terminate every workflow (down only)
---kill-shared-temporal        Kill Temporal dev server even if the other profile (dev/prod) is active (down only, #423)
+--destroy                     Terminate workflows in the resolved ensemble, then tear down (down only; #907)
+--all-ensembles               With --destroy: terminate workflows across ALL ensembles, not just the resolved one (down only; #907)
+--kill-shared-temporal        Kill Temporal dev server even if the other profile (dev/prod) is active (down only, #423). Never kills a Cloud/remote server (#907).
 --lineup <name|file>          Load an ensemble lineup by name or file path (up)
 --no-hold                     Skip hold-on-startup: deliver lineup instructions immediately (up --lineup)
 --scenario <name>             Force every mock player in the lineup into scripted mode with this scenario (up --dev, dev mode only)
@@ -152,12 +153,17 @@ If the `claude` CLI is not available, falls back to creating `.mcp.json` in the 
 Full teardown — stops all sessions, the daemon, and Temporal, then removes MCP config:
 
 ```bash
-agent-tempo down                  # full teardown (current ensemble)
-agent-tempo down --all            # stop all ensembles, daemon, and Temporal
-agent-tempo down --destroy -y     # terminate every workflow, then tear down (skip confirmation)
-agent-tempo down --keep-mcp       # preserve MCP config
-agent-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
+agent-tempo down                         # full teardown (current ensemble)
+agent-tempo down --all                   # stop all ensembles, daemon, and Temporal
+agent-tempo down --destroy -y            # terminate workflows in resolved ensemble, then tear down
+agent-tempo down --destroy --all-ensembles -y  # terminate workflows in ALL ensembles, then tear down (#907)
+agent-tempo down --keep-mcp              # preserve MCP config
+agent-tempo down --keep-daemon           # stop sessions and Temporal, but leave daemon running
 ```
+
+`--destroy` scopes workflow termination to the **resolved ensemble** (`--ensemble` flag > positional > env > `default`). Pass `--all-ensembles` to extend termination across every ensemble, which prompts a louder confirmation (#907).
+
+`--kill-shared-temporal` overrides the cross-profile guard and kills a local Temporal dev server even if the other profile is active (#423). It does **not** stop a Cloud or remote Temporal server — `down` categorically refuses to touch a server when a non-loopback host, API key, or TLS cert/key is configured, regardless of flags (#907).
 
 When `--destroy` is passed and Temporal is not yet running, `down` starts a temporary Temporal
 dev server (same port and database as `up`), runs workflow terminations, then shuts it down
