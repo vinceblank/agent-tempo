@@ -392,8 +392,9 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         expect(straggler!.entryType, 'straggler entry type=cue').to.equal('cue');
 
         // 1.x sessions destroyed by upgrade engine.
-        await stuckSession.result();
-        await peerSession.result();
+        // Use bounded waitForInvisibility rather than result() — result() has
+        // no timeout and hangs indefinitely if executeUpdate(destroyUpdate) fails
+        // silently on a slow CI runner (the error is caught in destroyEnsemble).
         await waitForInvisibility(ensemble);
 
         // ── Phase C: from-upgrade — straggler data survives in consumed.json ──
