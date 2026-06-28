@@ -45,6 +45,39 @@ function promptYesNo(question: string): Promise<boolean> {
   });
 }
 
+/**
+ * Maps an upgrade result status to a process exit code, printing the
+ * appropriate user-facing message as a side effect.
+ *
+ * Exported so tests can verify the status → exit-code mapping directly
+ * without going through the full CLI lifecycle (dynamic imports, Temporal
+ * connection, subprocess).
+ */
+export function statusToExitCode(
+  status: 'done' | 'dry-run' | 'aborted' | 'refused' | 'drain-stopped' | (string & {}),
+): number {
+  switch (status) {
+    case 'done':
+      out.success('Cutover complete — all workflows torn down, snapshot stamped `done`.');
+      return 0;
+    case 'dry-run':
+      out.log('Dry-run complete. Re-run without --dry-run to perform the cutover.');
+      return 0;
+    case 'aborted':
+      out.log('Cutover aborted — no changes were made.');
+      return 0;
+    case 'refused':
+      out.error('Cutover refused — one or more daemons are below the 1.7.x version floor.');
+      return 2;
+    case 'drain-stopped':
+      out.warn('Cutover stopped at DRAIN — outbox entries are still pending.');
+      out.log('  Re-run once they clear, or pass --force-drain to proceed (stragglers recorded, not delivered).');
+      return 3;
+    default:
+      return 0;
+  }
+}
+
 export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number> {
   const config = getConfig(opts);
 
@@ -107,26 +140,7 @@ export async function upgradeToV2Command(opts: UpgradeToV2Opts): Promise<number>
     );
 
     console.log();
-    switch (result.status) {
-      case 'done':
-        out.success('Cutover complete — all workflows torn down, snapshot stamped `done`.');
-        return 0;
-      case 'dry-run':
-        out.log('Dry-run complete. Re-run without --dry-run to perform the cutover.');
-        return 0;
-      case 'aborted':
-        out.log('Cutover aborted — no changes were made.');
-        return 0;
-      case 'refused':
-        out.error('Cutover refused — one or more daemons are below the 1.8.x version floor.');
-        return 2;
-      case 'drain-stopped':
-        out.warn('Cutover stopped at DRAIN — outbox entries are still pending.');
-        out.log('  Re-run once they clear, or pass --force-drain to proceed (stragglers recorded, not delivered).');
-        return 3;
-      default:
-        return 0;
-    }
+    return statusToExitCode(result.status);
   } catch (err) {
     out.error(`Cutover failed: ${errMsg(err)}`);
     out.log(`  If a snapshot was written (~/.agent-tempo/upgrade-snapshot-v1.json), re-run to resume from where it stopped.`);
