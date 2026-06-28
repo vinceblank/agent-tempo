@@ -343,6 +343,40 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // (Soloist had no undelivered cues in this fixture — the key property is that
         // from-upgrade doesn't auto-redeliver them even when captured by the engine.)
         expect(fromResult.undeliveredCues).to.be.an('array');
+
+        // ── Comprehensive teardown: terminate every workflow this test created ──
+        //
+        // runFromUpgrade creates a new soloist (attached phase — heartbeat timer
+        // running!), conductor, scheduler, and maestro — all on the shared TASK_QUEUE.
+        // If left Running, their workflow tasks contend with the NEXT test's
+        // executeUpdate/query calls, causing 60s+ UPDATE long-poll stalls.
+        //
+        // Terminate by KNOWN IDs first; visibility sweep as defense-in-depth.
+        console.log(`[teardown:round-trip] terminate-all @ ${Date.now()}`);
+        const roundTripKnownIds = [
+          sessionWorkflowId(ensemble, SOLOIST_PLAYER_ID),
+          conductorWorkflowId(ensemble),
+          schedulerWorkflowId(ensemble),
+          maestroWorkflowId(ensemble),
+        ];
+        await Promise.allSettled(
+          roundTripKnownIds.map((wfId) =>
+            getClient()
+              .workflow.getHandle(wfId)
+              .terminate('round-trip-test-cleanup')
+              .catch(() => {}),
+          ),
+        );
+        console.log(`[teardown:round-trip] known-ids-terminated @ ${Date.now()}`);
+        for await (const wf of getClient().workflow.list({
+          query: `AgentTempoEnsemble = "${ensemble}" AND ExecutionStatus = "Running"`,
+        })) {
+          await getClient()
+            .workflow.getHandle(wf.workflowId)
+            .terminate('round-trip-test-cleanup')
+            .catch(() => {});
+        }
+        console.log(`[teardown:round-trip] visibility-sweep-done @ ${Date.now()}`);
       });
     },
   );
