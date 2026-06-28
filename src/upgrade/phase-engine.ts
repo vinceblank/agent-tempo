@@ -737,12 +737,7 @@ export async function destroyEnsemble(deps: UpgradeDeps, ensemble: string): Prom
   const conductorPresent = sessions.some((s) => s.workflowId === conductorWfId);
 
   await Promise.allSettled(
-    peers.map((s) =>
-      deps.client.workflow
-        .getHandle(s.workflowId)
-        .executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] })
-        .catch((err) => deps.log(`[upgrade] destroy ${s.playerId} failed (continuing): ${errMsg(err)}`)),
-    ),
+    peers.map((s) => destroySessionWithFallback(deps, s.workflowId, s.playerId, reason)),
   );
 
   await Promise.allSettled([
@@ -751,10 +746,53 @@ export async function destroyEnsemble(deps: UpgradeDeps, ensemble: string): Prom
   ]);
 
   if (conductorPresent) {
-    await deps.client.workflow
-      .getHandle(conductorWfId)
-      .executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] })
-      .catch((err) => deps.log(`[upgrade] destroy conductor failed (continuing): ${errMsg(err)}`));
+    await destroySessionWithFallback(deps, conductorWfId, 'conductor', reason);
+  }
+}
+
+/**
+ * Best-effort destroyUpdate with a 15-second client-side deadline and an
+ * immediate terminate() fallback.
+ *
+ * `executeUpdate(destroyUpdate)` uses long-poll internally: the
+ * `PollWorkflowExecutionUpdate` RPC has a 60-second server-side timeout.
+ * On a heavily loaded CI runner, if the workflow task isn't dispatched
+ * within that window, the client re-polls and the call can hang for 60-90s.
+ * Racing against a 15s timer gives the graceful path enough headroom for the
+ * hardTerminateAttachment activity (5s scheduleToCloseTimeout) while bounding
+ * the worst case to 15s per session. The detached executeUpdate promise is
+ * abandoned; the workflow is already Terminated so its eventual settlement
+ * is harmless.
+ */
+async function destroySessionWithFallback(
+  deps: UpgradeDeps,
+  workflowId: string,
+  playerId: string,
+  reason: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const handle = deps.client.workflow.getHandle(workflowId);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      handle.executeUpdate(destroyUpdate, { args: [{ reason, terminatedBy: 'upgrade-to-2' }] }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`destroyUpdate timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    deps.log(
+      timedOut
+        ? `[upgrade] destroy ${playerId} timed out — terminating directly: ${errMsg(err)}`
+        : `[upgrade] destroy ${playerId} failed (continuing): ${errMsg(err)}`,
+    );
+    await handle.terminate(reason).catch(() => {});
+  } finally {
+    clearTimeout(timer);
   }
 }
 

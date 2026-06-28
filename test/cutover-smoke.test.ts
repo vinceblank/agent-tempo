@@ -49,6 +49,7 @@ import {
   schedulerWorkflowId,
   sessionWorkflowId,
   conductorWorkflowId,
+  maestroWorkflowId,
 } from '../src/config';
 import {
   savePlayerStateUpdate,
@@ -56,6 +57,9 @@ import {
   getMetadataQuery,
   playerStateQuery,
   claimAttachmentUpdate,
+  setPausedSignal,
+  pausedQuery,
+  submitOutboxUpdate,
 } from '../src/workflows/signals';
 import { addScheduleSignal, getSchedulesQuery } from '../src/workflows/scheduler-signals';
 import type { ScheduleEntry } from '../src/types';
@@ -82,7 +86,11 @@ const SCHEDULE_TZ = 'America/New_York';
 
 describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function () {
   before(setupSharedEnv);
-  after(teardownTestEnv);
+  after(async function teardownWithInstrumentation() {
+    console.log(`[teardown:cutover-smoke] after() start @ ${Date.now()}`);
+    await teardownTestEnv();
+    console.log(`[teardown:cutover-smoke] after() done @ ${Date.now()}`);
+  });
 
   // Fresh temp home per test — isolates snapshot files from other suites.
   let home: string;
@@ -338,6 +346,194 @@ describe('cutover smoke: full 1.x → 2.0 round-trip (#796 beta.1)', function ()
         // (Soloist had no undelivered cues in this fixture — the key property is that
         // from-upgrade doesn't auto-redeliver them even when captured by the engine.)
         expect(fromResult.undeliveredCues).to.be.an('array');
+
+        // ── Comprehensive teardown: terminate every workflow this test created ──
+        //
+        // runFromUpgrade creates a new soloist (attached phase — heartbeat timer
+        // running!), conductor, scheduler, and maestro — all on the shared TASK_QUEUE.
+        // If left Running, their workflow tasks contend with the NEXT test's
+        // executeUpdate/query calls, causing 60s+ UPDATE long-poll stalls.
+        //
+        // Terminate by KNOWN IDs first; visibility sweep as defense-in-depth.
+        console.log(`[teardown:round-trip] terminate-all @ ${Date.now()}`);
+        const roundTripKnownIds = [
+          sessionWorkflowId(ensemble, SOLOIST_PLAYER_ID),
+          conductorWorkflowId(ensemble),
+          schedulerWorkflowId(ensemble),
+          maestroWorkflowId(ensemble),
+        ];
+        await Promise.allSettled(
+          roundTripKnownIds.map((wfId) =>
+            getClient()
+              .workflow.getHandle(wfId)
+              .terminate('round-trip-test-cleanup')
+              .catch(() => {}),
+          ),
+        );
+        console.log(`[teardown:round-trip] known-ids-terminated @ ${Date.now()}`);
+        for await (const wf of getClient().workflow.list({
+          query: `AgentTempoEnsemble = "${ensemble}" AND ExecutionStatus = "Running"`,
+        })) {
+          await getClient()
+            .workflow.getHandle(wf.workflowId)
+            .terminate('round-trip-test-cleanup')
+            .catch(() => {});
+        }
+        console.log(`[teardown:round-trip] visibility-sweep-done @ ${Date.now()}`);
+      });
+    },
+  );
+
+  it(
+    'force-drain straggler round-trip: stragglers in snapshot survive to consumed.json and are distinct from inbox cues',
+    async function () {
+      this.timeout(90_000);
+      const ensemble = `${getTestEnsemble()}-forcedrain-rt`;
+
+      await withWorkerAndRecruitActivities(async () => {
+        console.log(`[straggler:A1] worker-ready @ ${Date.now()}`);
+        // ── Phase A: 1.x ensemble with a permanently-stuck outbox entry ──
+        // Pause A's dispatch BEFORE enqueueing so the cue entry can never drain —
+        // this simulates a real-world stuck adapter mid-delivery.
+        const stuckSession = await startSession({
+          metadata: playerMetadata({ ensemble, playerId: 'stuck' }),
+        });
+        console.log(`[straggler:A2] stuckSession started @ ${Date.now()}`);
+        const peerSession = await startSession({
+          metadata: playerMetadata({ ensemble, playerId: 'peer' }),
+        });
+        console.log(`[straggler:A3] peerSession started @ ${Date.now()}`);
+
+        await stuckSession.signal(setPausedSignal, true);
+        console.log(`[straggler:A4] signal(paused) sent @ ${Date.now()}`);
+        await pollWithTimeout(
+          async () => (await stuckSession.query(pausedQuery)) === true,
+          10_000,
+          50,
+        );
+        console.log(`[straggler:A5] pausedQuery confirmed @ ${Date.now()}`);
+        console.log(`[straggler:A6] executeUpdate(submitOutbox) START @ ${Date.now()}`);
+        await stuckSession.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'cue', targetPlayerId: 'peer', message: 'this will straggle' }],
+        });
+        console.log(`[straggler:A6] executeUpdate(submitOutbox) DONE @ ${Date.now()}`);
+
+        await waitForVisibility(ensemble);
+        console.log(`[straggler:A7] waitForVisibility done @ ${Date.now()}`);
+
+        // ── Phase B: upgrade with --force-drain (proceeds past the stuck outbox) ──
+        console.log(`[straggler:B1] runUpgradeToV2 START @ ${Date.now()}`);
+        const upgradeResult = await runUpgradeToV2(upgradeDeps(), {
+          yes: true,
+          forceDrain: true,
+          drainTimeoutMs: 1_500,
+          drainPollIntervalMs: 50,
+        });
+        console.log(`[straggler:B1] runUpgradeToV2 DONE status=${upgradeResult.status} @ ${Date.now()}`);
+
+        expect(upgradeResult.status, 'upgrade completed with force-drain').to.equal('done');
+
+        const snapPath = snapshotPath(home);
+        const snap = readSnapshot(home)!;
+        const ens = snap.ensembles.find((e) => e.name === ensemble)!;
+
+        // Straggler captured in snapshot before destroy.
+        expect(ens.forceDrainedStragglers, 'stragglers in snapshot').to.exist;
+        const straggler = ens.forceDrainedStragglers!.find((s) => s.playerId === 'stuck');
+        expect(straggler, 'stuck player straggler captured').to.exist;
+        expect(straggler!.entryType, 'straggler entry type=cue').to.equal('cue');
+
+        // 1.x sessions destroyed by upgrade engine.
+        // Use bounded waitForInvisibility rather than result() — result() has
+        // no timeout and hangs indefinitely if executeUpdate(destroyUpdate) fails
+        // silently on a slow CI runner (the error is caught in destroyEnsemble).
+        console.log(`[straggler:C1] waitForInvisibility START @ ${Date.now()}`);
+        await waitForInvisibility(ensemble);
+        console.log(`[straggler:C1] waitForInvisibility DONE @ ${Date.now()}`);
+
+        // ── Phase C: from-upgrade — straggler data survives in consumed.json ──
+        console.log(`[straggler:C2] runFromUpgrade START @ ${Date.now()}`);
+        const fromResult = await runFromUpgrade(getClient(), {
+          home,
+          hostname: 'test-host',
+          taskQueue: TASK_QUEUE,
+          temporalAddress: 'localhost:7233',
+          temporalNamespace: 'default',
+        });
+        console.log(`[straggler:C2] runFromUpgrade DONE ok=${fromResult.ok} @ ${Date.now()}`);
+
+        expect(fromResult.ok, 'from-upgrade ok').to.be.true;
+        expect(fromResult.snapshotFound, 'snapshot found').to.be.true;
+        expect(fromResult.failures, 'no recreation failures').to.be.empty;
+
+        // Snapshot archived on success.
+        expect(existsSync(snapPath), 'original snapshot removed after archive').to.be.false;
+        const consumedPath = join(home, CONSUMED_SNAPSHOT_FILENAME);
+        expect(existsSync(consumedPath), 'consumed snapshot archived').to.be.true;
+
+        // Straggler data preserved in the consumed snapshot for operator review.
+        // This is the contract: the operator reads .consumed.json to triage stuck
+        // outbox entries; they are NOT surfaced through fromResult.undeliveredCues
+        // (which is inbox-only, never outbox stragglers).
+        const consumedRaw = await import('fs').then((fs) => fs.readFileSync(consumedPath, 'utf8'));
+        const consumed = JSON.parse(consumedRaw) as typeof snap;
+        const consumedEns = consumed.ensembles.find((e) => e.name === ensemble)!;
+        expect(
+          consumedEns.forceDrainedStragglers,
+          'straggler data in consumed snapshot for operator review',
+        ).to.exist;
+        expect(
+          consumedEns.forceDrainedStragglers!.length,
+          'at least one straggler preserved',
+        ).to.be.greaterThan(0);
+
+        // KEY DISTINCTION: outbox stragglers ≠ inbox undelivered cues.
+        // fromResult.undeliveredCues pulls from player.undeliveredMessages (inbox);
+        // forceDrainedStragglers tracks stuck OUTBOX dispatch — a separate operator concern.
+        // No inbox cues were sent to stuck/peer in this fixture, so the array is empty.
+        expect(
+          fromResult.undeliveredCues,
+          'fromResult.undeliveredCues is inbox-only, not outbox stragglers',
+        ).to.have.lengthOf(0);
+
+        // ── Comprehensive teardown: terminate every workflow this test created ──
+        //
+        // Server-side terminate() needs no worker and cancels all pending tasks
+        // immediately. This ensures:
+        //   (a) The worker drain (after withWorkerAndRecruitActivities returns)
+        //       has no in-flight workflow tasks keeping it alive.
+        //   (b) testEnv.teardown() (mochaGlobalTeardown) can shut down the
+        //       embedded Temporal server without blocking on Running workflows
+        //       with open long-poll connections.
+        //
+        // Terminate by KNOWN IDs first — these are available immediately without
+        // depending on the eventually-consistent visibility index. Then sweep by
+        // ensemble SA as defense-in-depth for any workflow we may have missed.
+        console.log(`[teardown:straggler] terminate-all @ ${Date.now()}`);
+        const knownIds = [
+          stuckSession.workflowId,
+          peerSession.workflowId,
+          maestroWorkflowId(ensemble),
+          schedulerWorkflowId(ensemble),
+          conductorWorkflowId(ensemble),
+        ];
+        await Promise.allSettled(
+          knownIds.map((wfId) =>
+            getClient().workflow.getHandle(wfId).terminate('straggler-test-cleanup').catch(() => {}),
+          ),
+        );
+        console.log(`[teardown:straggler] known-ids-terminated @ ${Date.now()}`);
+        // Visibility sweep — catches any additional runFromUpgrade skeleton (e.g.
+        // player sessions). Eventually consistent; IDs above cover the critical ones.
+        for await (const wf of getClient().workflow.list({
+          query: `AgentTempoEnsemble = "${ensemble}" AND ExecutionStatus = "Running"`,
+        })) {
+          await getClient()
+            .workflow.getHandle(wf.workflowId)
+            .terminate('straggler-test-cleanup')
+            .catch(() => {});
+        }
+        console.log(`[teardown:straggler] visibility-sweep-done @ ${Date.now()}`);
       });
     },
   );
