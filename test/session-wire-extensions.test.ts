@@ -31,6 +31,7 @@ import {
   getMessagingStateQuery,
   getActivityStateQuery,
   getLeaseStateQuery,
+  getCoarseActivityQuery,
   getWireMetaQuery,
   claimAttachmentUpdate,
   forceDetachUpdate,
@@ -205,17 +206,20 @@ describe('session wire extensions (#399 W2)', function () {
     it('initial state matches the standalone queries field-for-field', async function () {
       this.timeout(10_000);
       const handle = await startFresh(`wiremeta-init-${Date.now()}`);
-      const [combined, runId, messaging, lease] = await Promise.all([
+      const [combined, runId, messaging, lease, coarse] = await Promise.all([
         handle.query(getWireMetaQuery),
         handle.query(getRunIdQuery),
         handle.query(getMessagingStateQuery),
         handle.query(getLeaseStateQuery),
+        handle.query(getCoarseActivityQuery),
       ]);
       expect(combined.runId).to.equal(runId);
       expect(combined.messaging).to.deep.equal(messaging);
       expect(combined.lease).to.deep.equal(lease);
-      // Fresh session: no heartbeat piggyback yet → coarse is idle.
-      expect(combined.coarse).to.deep.equal({ currentTool: null });
+      // #937 fast-follow (d): cross-check `coarse` against the LIVE
+      // standalone query, not a static literal — parity must hold no
+      // matter what the heartbeat piggyback has (or hasn't) populated.
+      expect(combined.coarse).to.deep.equal(coarse);
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
     });
@@ -235,14 +239,17 @@ describe('session wire extensions (#399 W2)', function () {
       expect(combined.messaging.received).to.equal(2);
       expect(combined.messaging.sent).to.equal(0);
 
-      // Cross-check against the standalone pair — both surfaces stay
+      // Cross-check against the standalone queries — both surfaces stay
       // served (stable wire protocol; older daemons still poll them).
-      const [messaging, lease] = await Promise.all([
+      // Coarse included per #937 fast-follow (d): live query, not literal.
+      const [messaging, lease, coarse] = await Promise.all([
         handle.query(getMessagingStateQuery),
         handle.query(getLeaseStateQuery),
+        handle.query(getCoarseActivityQuery),
       ]);
       expect(combined.messaging).to.deep.equal(messaging);
       expect(combined.lease).to.deep.equal(lease);
+      expect(combined.coarse).to.deep.equal(coarse);
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
