@@ -24,6 +24,19 @@ const log = (...args: unknown[]) => console.error('[agent-tempo:daemon]', ...arg
 
 export const DAEMON_PID_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.pid');
 export const DAEMON_LOG_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.log');
+
+/**
+ * Size threshold that triggers log rotation on daemon boot. `daemon.log` is
+ * a single append-only file for the life of the daemon (no external log
+ * shipper to coordinate with — the daemon is its only writer), so simple
+ * size-based rotation at boot is sufficient; no need for a logging library.
+ * 50 MB keeps a single file's `daemon logs` tail cheap while still holding
+ * many hours of a chatty daemon's output.
+ */
+export const DAEMON_LOG_MAX_BYTES = 50 * 1024 * 1024;
+
+/** How many rotated generations to retain (`daemon.log.1` .. `.{N}`). */
+export const DAEMON_LOG_ROTATE_KEEP = 3;
 /**
  * Path to the daemon heartbeat file. The running daemon touches this file
  * on a {@link HEARTBEAT_INTERVAL_MS} cadence so `daemon status` can
@@ -459,6 +472,64 @@ async function waitForDaemonPid(timeoutMs: number): Promise<number> {
   throw new Error('Daemon did not start within timeout. Check logs: ' + DAEMON_LOG_PATH);
 }
 
+/**
+ * Size-based rotation for `daemon.log`, run once at daemon boot (before the
+ * append handle is opened for the new process). If the current log exceeds
+ * `maxBytes`, shifts `daemon.log.{N-1}` → `daemon.log.{N}` down the chain
+ * (dropping the oldest generation beyond `keep`), then renames the current
+ * `daemon.log` → `daemon.log.1`. The next `fs.openSync(logPath, 'a')` then
+ * starts a fresh file.
+ *
+ * No-ops silently when the log doesn't exist yet (fresh install) or is
+ * under the threshold. Rotation failures (e.g. a stale reader holding a
+ * Windows file lock) are logged and swallowed — never block daemon startup
+ * over a log-hygiene concern.
+ *
+ * Exported for unit testing with injectable fs functions.
+ */
+export function rotateLogIfLarge(
+  logPath: string = DAEMON_LOG_PATH,
+  maxBytes: number = DAEMON_LOG_MAX_BYTES,
+  keep: number = DAEMON_LOG_ROTATE_KEEP,
+  deps: {
+    statSync?: typeof fs.statSync;
+    renameSync?: typeof fs.renameSync;
+    unlinkSync?: typeof fs.unlinkSync;
+    existsSync?: typeof fs.existsSync;
+  } = {},
+): void {
+  const stat = deps.statSync ?? fs.statSync;
+  const rename = deps.renameSync ?? fs.renameSync;
+  const unlink = deps.unlinkSync ?? fs.unlinkSync;
+  const exists = deps.existsSync ?? fs.existsSync;
+
+  let size: number;
+  try {
+    size = stat(logPath).size;
+  } catch {
+    return; // no log file yet — nothing to rotate
+  }
+  if (size < maxBytes) return;
+
+  try {
+    // Drop the oldest generation if we're at the cap, then shift the rest
+    // down: .{keep-1} -> .{keep}, ..., .1 -> .2.
+    const oldest = `${logPath}.${keep}`;
+    if (exists(oldest)) {
+      try { unlink(oldest); } catch { /* best-effort */ }
+    }
+    for (let gen = keep - 1; gen >= 1; gen--) {
+      const from = `${logPath}.${gen}`;
+      const to = `${logPath}.${gen + 1}`;
+      if (exists(from)) rename(from, to);
+    }
+    rename(logPath, `${logPath}.1`);
+    log(`Rotated daemon.log (was ${Math.round(size / (1024 * 1024))}MB, threshold ${Math.round(maxBytes / (1024 * 1024))}MB)`);
+  } catch (err) {
+    log('Log rotation failed (non-fatal; continuing to append):', err instanceof Error ? err.message : String(err));
+  }
+}
+
 export async function startDaemon(config: Config): Promise<number> {
   // Check if already running
   const status = getDaemonStatus();
@@ -514,6 +585,10 @@ export async function startDaemon(config: Config): Promise<number> {
       log(`Daemon already running (pid ${recheck.pid})`);
       return recheck.pid;
     }
+
+    // Rotate before opening — keeps the append handle bounded to a fresh
+    // (or recently-rotated) file rather than growing forever.
+    rotateLogIfLarge();
 
     // Open log file for daemon stdout/stderr
     const logFd = fs.openSync(DAEMON_LOG_PATH, 'a');
