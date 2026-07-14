@@ -219,44 +219,101 @@ Write-Output "  Trigger: every 5 minutes (idempotent no-op when healthy)"
 # succeeded, Get-ScheduledTask reported the task as valid, Start-ScheduledTask
 # reported the task State as "Running" — and NOTHING actually launched. No
 # error anywhere in the install path. The only way to catch this class of
-# bug is to actually trigger the task and confirm a real daemon process
-# exists afterward — a "the task object looks fine" check is not sufficient.
+# bug is to actually trigger the task and confirm something real happened —
+# "the task object looks fine" is not sufficient.
 #
-# Note on interpreting a PASS here when a daemon was ALREADY running before
-# this script ran: `daemon start --foreground` hits the existing
-# "already-running" PID-file check (see evaluateStartPreflight in
-# src/cli/daemon-command.ts) and returns near-instantly without becoming the
-# tracked process — so this self-check still confirms end-to-end health
-# (task exists, resolves to a real executable, invocation doesn't error),
-# but does NOT re-prove the launch-from-cold path in that specific case. A
-# full cold-start proof requires the daemon to actually be down when this
-# runs, which `agent-tempo daemon install` does not force (it should not
-# stop a healthy daemon just to test itself).
+# TWO DISTINCT SCENARIOS, and QA correctly flagged (#941 review) that the
+# first version of this check collapsed them into one wrong test:
+#
+#  - Daemon already running (the COMMON case — `daemon install` is usually
+#    run against a healthy daemon, not a cold machine): `daemon start
+#    --foreground` correctly hits the EXISTING "already-running" PID-file
+#    check (evaluateStartPreflight, src/cli/daemon-command.ts) and returns
+#    near-instantly WITHOUT spawning anything new. That is CORRECT behavior,
+#    not a failure — a naive "require a NEW pid" check would false-FAIL here
+#    every time, blocking normal `daemon install` usage. What we CAN still
+#    verify: the task actually ran (not stuck in a broken "Running" limbo
+#    the way bug-2674 produced) and exited cleanly (LastTaskResult 0) —
+#    proving binary resolution + invocation both work, though NOT a full
+#    cold-start proof (the daemon was never actually down during this run).
+#
+#  - Daemon NOT running (the cold-start case — also how bug-2674 was
+#    actually discovered live): the task's action SHOULD spawn a genuinely
+#    new tracked daemon process. Snapshot pre-existing daemon pids BEFORE
+#    triggering, then require the post-trigger match to be a pid NOT in
+#    that snapshot — this is what QA's fix requires, and what actually
+#    distinguishes "the task launched something" from "something happened
+#    to already be running" (the exact false-pass QA caught in the
+#    already-running branch above, before this scenario split existed).
 Write-Output ""
-Write-Output "Verifying the daemon task actually launches a process..."
+Write-Output "Verifying the daemon task actually functions..."
+
+$daemonPidFile = Join-Path $env:USERPROFILE '.agent-tempo\daemon.pid'
+$wasRunningBefore = Test-Path $daemonPidFile
+$preExistingPids = @(
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'dist[\\/]daemon\.js' } |
+    Select-Object -ExpandProperty ProcessId
+)
+
 Start-ScheduledTask -TaskName $TaskName
 $verified = $false
-$verifiedPid = $null
-for ($i = 0; $i -lt 15; $i++) {
-  Start-Sleep -Seconds 2
-  $proc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'dist[\\/]daemon\.js' } |
-    Select-Object -First 1
-  if ($proc) {
-    $verified = $true
-    $verifiedPid = $proc.ProcessId
-    break
+
+if ($wasRunningBefore) {
+  # Already-healthy case: verify clean completion, not a new process.
+  for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($info -and $info.LastTaskResult -eq 0) {
+      $taskObj = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      if ($taskObj -and $taskObj.State -ne 'Running') {
+        $verified = $true
+        break
+      }
+    }
   }
-}
-if ($verified) {
-  Write-Output "Self-check PASSED: daemon process confirmed running after Start-ScheduledTask (pid $verifiedPid)."
+  if ($verified) {
+    Write-Output ("Self-check PASSED (daemon was already running before this check - task invocation " +
+      "completed cleanly, LastTaskResult=0). NOTE: this does NOT prove the cold-start launch path; the " +
+      "daemon was never actually down during this check.")
+  } else {
+    Write-Error (
+      "Self-check FAILED: task -TaskName '$TaskName' did not complete cleanly (LastTaskResult=0, State " +
+      "not Running) within 30s of Start-ScheduledTask, even though a daemon was already running beforehand. " +
+      "The task may be stuck (known cause: Get-Command resolving to a non-executable shim like .ps1 instead " +
+      "of .cmd - already fixed once, but re-verify the resolved binary path above is a real .cmd/.exe). " +
+      "Do NOT assume supervision is working until this passes."
+    )
+    exit 1
+  }
 } else {
-  Write-Error (
-    "Self-check FAILED: no daemon process found within 30s of Start-ScheduledTask -TaskName '$TaskName'. " +
-    "The task registered without error but may not actually be able to launch the daemon " +
-    "(known cause: Get-Command resolving to a non-executable shim like .ps1 instead of .cmd - " +
-    "already fixed once, but re-verify the resolved binary path above is a real .cmd/.exe, not .ps1). " +
-    "Do NOT assume supervision is working until this passes."
-  )
-  exit 1
+  # Cold-start case: require a genuinely NEW daemon process, excluding the
+  # pre-existing snapshot (QA finding on #941 gate — the naive "any matching
+  # process" check false-passed here too, in the rarer case this branch
+  # didn't previously exist to separate out).
+  $verifiedPid = $null
+  for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    $proc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match 'dist[\\/]daemon\.js' -and ($preExistingPids -notcontains $_.ProcessId) } |
+      Select-Object -First 1
+    if ($proc) {
+      $verified = $true
+      $verifiedPid = $proc.ProcessId
+      break
+    }
+  }
+  if ($verified) {
+    Write-Output "Self-check PASSED: NEW daemon process confirmed running after Start-ScheduledTask (pid $verifiedPid)."
+  } else {
+    Write-Error (
+      "Self-check FAILED: no NEW daemon process appeared within 30s of Start-ScheduledTask -TaskName " +
+      "'$TaskName' (no daemon was running before this check, so this IS a genuine cold-start proof failure). " +
+      "The task registered without error but may not actually be able to launch the daemon " +
+      "(known cause: Get-Command resolving to a non-executable shim like .ps1 instead of .cmd - " +
+      "already fixed once, but re-verify the resolved binary path above is a real .cmd/.exe, not .ps1). " +
+      "Do NOT assume supervision is working until this passes."
+    )
+    exit 1
+  }
 }
