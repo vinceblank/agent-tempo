@@ -12,6 +12,28 @@
 # Environment variables (Temporal connection overrides) can be added via
 # EnvironmentFile or Environment= lines here — by default the daemon reads
 # ~/.agent-tempo/config.json or falls back to temporal CLI config.
+#
+# CRITICAL — `--foreground` MUST actually run the daemon in-process (fixed
+# in the same change that added Restart=always below). `Type=simple` means
+# systemd tracks the ExecStart process directly, with the default
+# `KillMode=control-group`: prior to the --foreground fix, `daemon start
+# --foreground` silently behaved exactly like a plain `daemon start` — it
+# forked the REAL daemon as a detached grandchild and exited almost
+# instantly. systemd saw that as a completed unit and, per KillMode=
+# control-group, would tear down the entire cgroup including the detached
+# grandchild it had just spawned — `daemon install` on Linux was plausibly
+# WORSE than not installing at all. This is safe now that --foreground
+# blocks for the daemon's actual lifetime.
+#
+# Restart=always (not on-failure): `systemctl --user stop agent-tempo` is
+# tracked by systemd as an operator-requested stop and does NOT trigger a
+# restart under ANY Restart= policy, including `always` — so `daemon stop`
+# on Linux should route through `systemctl --user stop agent-tempo` (not a
+# raw kill of the pid) to get that exemption. `always` (vs `on-failure`)
+# means an operator sending a raw SIGTERM/SIGKILL directly to the daemon
+# process (bypassing systemctl) still gets restarted — matches the
+# exit-code contract's intent that only a systemctl-mediated stop is "don't
+# restart."
 
 [Unit]
 Description=agent-tempo daemon (Temporal workers + reconcile loop)
@@ -22,8 +44,8 @@ Wants=network-online.target
 Type=simple
 ExecStart=/usr/bin/env agent-tempo daemon start --foreground
 ExecStop=/usr/bin/env agent-tempo daemon stop
-Restart=on-failure
-RestartSec=10s
+Restart=always
+RestartSec=5s
 # Prevent runaway restart loops from a broken config file.
 StartLimitIntervalSec=120
 StartLimitBurst=5
