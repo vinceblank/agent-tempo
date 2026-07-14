@@ -113,6 +113,40 @@ export async function createWorkers(
   const SHUTDOWN_GRACE_TIME = '10s';
   const SHUTDOWN_FORCE_TIME = '15s';
 
+  /**
+   * PR-A of the 2026-07-13 daemon-resilience program (architect ruling
+   * `docs/research/daemon-resilience-architect-ruling.md` §1, PR-A).
+   *
+   * `isolateExecutionTimeout` is the vm-script deadline for a SINGLE call
+   * into the workflow sandbox (activation or query). The SDK default is 5s —
+   * exactly the `Script execution timed out after 5000ms` that started the
+   * 2026-07-13 escalation: ~20 q/s of visibility-driven queries share ONE
+   * workflow V8 thread, so a query against a large never-CAN'd history can
+   * be starved past 5s even though nothing is wrong with the workflow code.
+   * The blown deadline fails the workflow task, invalidates the sticky
+   * cache, forces a full-history replay, starves the thread further, and
+   * eventually escalated to a fatal Core error that killed the daemon.
+   *
+   * 30s absorbs the stall instead of amplifying it. Pairs with the
+   * `WORKFLOW_TASK_TIMEOUT = '30s'` start option in `src/constants.ts` —
+   * the two budgets should move together.
+   *
+   * Deliberately NOT flipping `reuseV8Context: false` to buy a second
+   * workflow thread — ruling §4.6: that trades a query-starvation outage
+   * for an OOM outage (fresh V8 context per cached workflow on a daemon
+   * already observed at 919 MB rss).
+   *
+   * The option exists at runtime (user options are spread AFTER the SDK
+   * defaults in `addDefaultWorkerOptions`) but is absent from the public
+   * `WorkerOptions` type ("not exposed at the moment" — worker-options.d.ts),
+   * hence the widening below. Takes effect for ALL workflows on daemon
+   * restart (worker-side, unlike the per-run workflowTaskTimeout).
+   */
+  const ISOLATE_EXECUTION_TIMEOUT = '30s';
+  const isolateTimeoutOpts = {
+    isolateExecutionTimeout: ISOLATE_EXECUTION_TIMEOUT,
+  } as Partial<Parameters<typeof Worker.create>[0]>;
+
   const sharedWorker = await Worker.create({
     connection,
     namespace: config.temporalNamespace,
@@ -121,6 +155,7 @@ export async function createWorkers(
     workflowBundle,
     shutdownGraceTime: SHUTDOWN_GRACE_TIME,
     shutdownForceTime: SHUTDOWN_FORCE_TIME,
+    ...isolateTimeoutOpts,
     activities: {
       ...scheduleActivities,
       ...maestroActivities,

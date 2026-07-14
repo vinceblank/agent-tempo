@@ -12,6 +12,7 @@ import { createTemporalConnection } from './connection';
 import { isDaemonRunning, startDaemon } from './cli/daemon';
 import { SessionInput } from './types';
 import { getGitInfo } from './git-info';
+import { WORKFLOW_TASK_TIMEOUT } from './constants';
 // #450 self-bootstrap path uses the typed default-part helper for the
 // player-type-aware fallback string. Lives here (not in server-tools) because
 // it's invoked at MCP-server boot time before the tool surface lands.
@@ -196,6 +197,7 @@ async function main() {
   const startedHandle = await client.workflow.start('agentSessionWorkflow', {
     workflowId,
     taskQueue: config.taskQueue,
+    workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // No execution timeout — workflows live until terminated status or stale detection.

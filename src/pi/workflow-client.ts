@@ -32,7 +32,7 @@ import {
   pendingIntakeQuery,
   type PendingIntake,
 } from '../workflows/signals';
-import { PROTOCOL_VERSION } from '../constants';
+import { PROTOCOL_VERSION, WORKFLOW_TASK_TIMEOUT } from '../constants';
 import type {
   AttachmentToken,
   DetachReason,
@@ -180,6 +180,7 @@ export class PiWorkflowClient {
     this.wfHandle = await this.client.workflow.start('agentSessionWorkflow', {
       workflowId: this.workflowId,
       taskQueue: this.config.taskQueue,
+      workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
       workflowIdConflictPolicy: 'USE_EXISTING',
       args: [{ metadata: this.metadata, phase: 'booting' }],
       // T0.5 (#747) / QA finding on #757 — seed the memo at birth like the

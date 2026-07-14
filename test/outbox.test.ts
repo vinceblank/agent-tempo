@@ -27,7 +27,13 @@ import {
 // CI runners. Sized at ~5× the prior `sleep()` they replace, except where
 // the prior code used a longer manual poll loop (FAILURE_RETRIES sites).
 const POLL_DELIVERY_MS = 10_000;          // was sleep(2000) — cue/report/stop/detach/destroy/notification
-const POLL_RECRUIT_MS = 15_000;           // was sleep(3000) — recruit/restart/broadcast
+const POLL_RECRUIT_MS = 60_000;           // was sleep(3000) — recruit/restart/broadcast.
+// 60s (not the original 15s): recruit paths start workflows through the PRODUCTION
+// start site (startRecruitedSession), which since PR-A carries workflowTaskTimeout=30s
+// (WORKFLOW_TASK_TIMEOUT, src/constants.ts). Per the #777 standing rule the poll budget
+// must STRICTLY dominate (≥2×) the longest server-side bounded wait in the awaited
+// path — a stalled WFT now re-dispatches after up to 30s, so 15s would give up at
+// exactly the moment the task recovers (the #178→#181 flake shape).
 const POLL_FAILURE_RETRIES_CUE_MS = 30_000;    // was 30×sleep(1000) — failure handling
 const POLL_FAILURE_RETRIES_REPORT_MS = 40_000; // was 40×sleep(1000) — report delivery failure
 
@@ -454,7 +460,7 @@ describe('outbox', function () {
 
     describe('broadcast delivery', function () {
       it('delivers a broadcast message to all 3 target sessions via outbox fan-out', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const ensemble = `broadcast-${Date.now()}`;
 
         const sender = await startSession({
@@ -532,7 +538,7 @@ describe('outbox', function () {
 
     describe('restart delivery (PR-D, shared)', function () {
       it('dispatches deliverRestart and marks entry delivered', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
 
@@ -564,7 +570,7 @@ describe('outbox', function () {
 
     describe('recruit delivery (shared)', function () {
       it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const ensemble = `recruit-${Date.now()}`;
 
         // Pass temporalConfig so startRecruitedSession creates the recruited workflow
@@ -642,7 +648,7 @@ describe('outbox', function () {
       });
 
       it('recruit without initialMessage starts session with empty inbox', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const ensemble = `recruit2-${Date.now()}`;
 
         const handle = await startSession({
@@ -703,7 +709,7 @@ describe('outbox', function () {
   describe('recruit-capture flavor', function () {
     describe('restart delivery (PR-D, capture)', function () {
       it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const spawnInputs: Array<Record<string, unknown>> = [];
         await withWorkerAndRecruitCapture(spawnInputs, async () => {
           const ensemble = `fresh-sid-${Date.now()}`;
@@ -765,7 +771,7 @@ describe('outbox', function () {
       });
 
       it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         // Pre-#306 this case was the inverse of the test above: a non-fresh
         // restart was supposed to preserve the stored sessionId and pass
         // `resume: true` so Claude Code could `--resume <uuid>` against the
@@ -839,7 +845,7 @@ describe('outbox', function () {
 
     describe('recruit delivery (capture)', function () {
       it('forwards claudeBin from outbox entry to spawnProcess', async function () {
-        this.timeout(45_000);
+        this.timeout(90_000); // ≥POLL_RECRUIT_MS(60s)+headroom — see #777 note on POLL_RECRUIT_MS
         const spawnInputs: Array<Record<string, unknown>> = [];
         await withWorkerAndRecruitCapture(spawnInputs, async () => {
           const ensemble = `recruit-bin-${Date.now()}`;

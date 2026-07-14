@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Cron } from 'croner';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
+import { WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { parseDuration } from '../utils/duration';
 import { resolveSession } from './resolve';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
@@ -159,6 +160,7 @@ function buildScheduleCreateTool(
           await client.workflow.start('agentSchedulerWorkflow', {
             workflowId: wfId,
             taskQueue: config.taskQueue,
+            workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
             args: [{ ensemble: config.ensemble, entries: [scheduleEntry] }],
             workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
             searchAttributes: {

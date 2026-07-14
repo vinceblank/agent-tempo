@@ -31,7 +31,7 @@ import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfi
 // #700 P1 — infra bootstrap moved to a shared helper (CLI `up` + `/ensemble-up`).
 import { ensureInfra, isTemporalReachable, registerSearchAttributes, DEFAULT_DB_PATH } from './ensure-infra';
 import { createTempoClient } from '../client';
-import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyDirective } from '../constants';
+import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyDirective, WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
 import * as out from './output';
 
@@ -48,6 +48,8 @@ async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: s
     await client.workflow.start('agentMaestroWorkflow', {
       workflowId: wfId,
       taskQueue: config.taskQueue,
+      workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
+
       // T0.1 (#748) — thread the cost profile so cloud maestros use the V2
       // refresh + stretched/presence-gated cadence. Already-running
       // maestros keep their old input until destroy/recreate or idle-exit.
@@ -181,6 +183,7 @@ async function seedConductorWorkflow(args: {
   await client.workflow.start('agentSessionWorkflow', {
     workflowId: conductorWfId,
     taskQueue: config.taskQueue,
+    workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
     args: [conductorInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
@@ -300,6 +303,7 @@ async function applyLineupPlayersAndSchedules(args: {
       await client.workflow.start('agentSessionWorkflow', {
         workflowId: playerWfId,
         taskQueue: config.taskQueue,
+        workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
         args: [playerInput],
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
         // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
@@ -405,6 +409,7 @@ async function applyLineupPlayersAndSchedules(args: {
           await client.workflow.start('agentSchedulerWorkflow', {
             workflowId: schedulerWfId,
             taskQueue: config.taskQueue,
+            workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
             args: [{ ensemble, entries: [entry] }],
             workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
             searchAttributes: {
