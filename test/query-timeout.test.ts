@@ -186,6 +186,81 @@ describe('queryHandleWithTimeout (#433)', function () {
     expect(result).to.equal('ok');
   });
 
+  // ── Daemon-resilience PR-B — evict-on-timeout (architect amendment) ──
+
+  it('evicts the dedup slot when the timeout fires — next call issues a NEW underlying RPC', async function () {
+    // Pre-PR-B behavior: the never-settling promise stayed in the map, so
+    // every subsequent poll tick re-attached a Promise.race reaction to the
+    // SAME immortal promise — the unbounded reaction chain behind the
+    // 180→919MB daemon rss climb (docs/research/daemon-query-timeout-rca.md).
+    const h = makeMockHandle('wf-evict', {
+      slowQuery: () => new Promise(() => {}), // never settles
+    });
+    let caught: unknown;
+    try {
+      await queryHandleWithTimeout(h as never, slowQuery, { timeoutMs: 20 });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(QueryTimeoutError);
+    expect(h.calls).to.deep.equal(['slowQuery']);
+
+    // The slot was evicted on timeout → a fresh call must issue a fresh
+    // underlying RPC instead of re-joining the dead one.
+    let caught2: unknown;
+    try {
+      await queryHandleWithTimeout(h as never, slowQuery, { timeoutMs: 20 });
+    } catch (err) {
+      caught2 = err;
+    }
+    expect(caught2).to.be.instanceOf(QueryTimeoutError);
+    expect(h.calls).to.deep.equal(['slowQuery', 'slowQuery']);
+  });
+
+  it('a late settle of a timed-out RPC does not evict the newer entry', async function () {
+    // Sequence: call 1 times out (entry evicted, but its RPC is still
+    // pending) → call 2 creates a NEW entry → call 1's old RPC finally
+    // settles. The old RPC's cleanup must NOT delete call 2's live entry —
+    // otherwise call 3 would duplicate call 2's in-flight RPC.
+    let resolveFirst: ((v: string) => void) | undefined;
+    let secondCallCount = 0;
+    const h = makeMockHandle('wf-late-settle', {});
+    h.query = async (def: { name: string }): Promise<string> => {
+      h.calls.push(def.name);
+      if (h.calls.length === 1) {
+        return new Promise<string>((resolve) => { resolveFirst = resolve; });
+      }
+      secondCallCount++;
+      return new Promise<string>(() => {}); // second RPC: pending
+    };
+
+    // Call 1 — times out, evicts its own entry.
+    let caught: unknown;
+    try {
+      await queryHandleWithTimeout(h as never, slowQuery, { timeoutMs: 20 });
+    } catch (err) { caught = err; }
+    expect(caught).to.be.instanceOf(QueryTimeoutError);
+
+    // Call 2 — occupies the slot with a new pending RPC (don't await).
+    const second = queryHandleWithTimeout(h as never, slowQuery, { timeoutMs: 5000 });
+    expect(secondCallCount).to.equal(1);
+
+    // Old RPC settles late — its identity-guarded cleanup must be a no-op.
+    resolveFirst!('stale');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Call 3 — must JOIN call 2's in-flight entry, not create a third RPC.
+    const third = queryHandleWithTimeout(h as never, slowQuery, { timeoutMs: 5000 });
+    expect(secondCallCount).to.equal(1);
+    expect(h.calls).to.deep.equal(['slowQuery', 'slowQuery']);
+
+    // Avoid dangling assertions — let both racers time out... they won't
+    // (5s) before the test ends; silence unhandled-rejection noise instead.
+    second.catch(() => {});
+    third.catch(() => {});
+    __resetInflightQueriesForTests();
+  });
+
   it('does not leave the timeout timer running after the RPC wins the race', async function () {
     // Indirect signal: if the timer is leaked, it will fire after our
     // assertion completes and throw an unhandled rejection. Mocha's

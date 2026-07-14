@@ -24,10 +24,13 @@
  * cancelled in this SDK version. Instead we **dedupe in-flight queries** by
  * `(workflowId, queryName)` so the AggregateRunner firing every 750ms against
  * the same hung session doesn't accumulate one new dangling promise per tick
- * — it gets the *same* shared promise back. Total memory cost is bounded by
- * `unique-hung-workflows × distinct-queries-per-workflow` (typically <50
- * entries even in degenerate fleets), and every entry is reclaimed when the
- * RPC settles (workflow closes, namespace evicted, daemon restart). When
+ * — it gets the *same* shared promise back. Entries are reclaimed when the
+ * RPC settles, and — daemon-resilience PR-B — **evicted when the timeout
+ * fires**: under sustained worker starvation a never-settling shared promise
+ * would otherwise accumulate one unreclaimable `Promise.race` reaction per
+ * poll tick forever (the observed 180→919 MB daemon rss climb on 2026-07-14,
+ * docs/research/daemon-query-timeout-rca.md). Eviction trades bounded RPC
+ * abandonment (one per timeout window) for an unbounded reaction chain. When
  * `@temporalio/client` adds AbortSignal support, swap the race for a real
  * cancellation and drop the dedup map.
  *
@@ -140,7 +143,13 @@ export async function queryHandleWithTimeout<Ret, Args extends unknown[] = []>(
     ).finally(() => {
       // Free the slot once the RPC settles — success or failure both clear.
       // Multiple racing callers all see the same settled value.
-      inflightQueries.delete(key);
+      // Identity-guarded: if this entry was already evicted on timeout
+      // (below) and a NEWER RPC now occupies the slot, a late settle of
+      // the old RPC must not delete the new entry out from under its
+      // callers.
+      if (inflightQueries.get(key) === underlying) {
+        inflightQueries.delete(key);
+      }
     });
     inflightQueries.set(key, underlying as Promise<unknown>);
   }
@@ -156,6 +165,25 @@ export async function queryHandleWithTimeout<Ret, Args extends unknown[] = []>(
 
   try {
     return await Promise.race([underlying, timeoutPromise]);
+  } catch (err) {
+    if (err instanceof QueryTimeoutError) {
+      // Daemon-resilience PR-B (architect amendment to #433): EVICT the
+      // dedup entry when the timeout fires. Under sustained worker
+      // starvation the shared never-settling promise otherwise stays in
+      // the map indefinitely, and every subsequent poll tick attaches a
+      // fresh `Promise.race` reaction (plus the caller's async
+      // continuation) to it — reaction records on a pending promise are
+      // unreclaimable, which is the observed 180→919 MB daemon rss climb
+      // (docs/research/daemon-query-timeout-rca.md). Evicting caps the
+      // pile-up at one abandoned RPC per timeout window instead of an
+      // unbounded reaction chain on a single immortal promise. The
+      // identity check keeps a slower racer's timeout from evicting a
+      // newer entry that already replaced this one.
+      if (inflightQueries.get(key) === underlying) {
+        inflightQueries.delete(key);
+      }
+    }
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
