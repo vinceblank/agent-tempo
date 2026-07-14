@@ -4,9 +4,11 @@ description: |
   real LLM. When `alice` receives a "ship feature <topic>" cue, she splits the
   task: cues `bob` for implementation, `carol` for review, then reports an
   "in flight" update to the conductor. After a 2 s simulated thinking window
-  she fires a "shipped" report. The dashboard should render two outbox
-  branches under alice's audit trail and inbound cues on both bob's and
-  carol's rosters.
+  she reports that dispatch is complete but downstream evidence is still
+  pending. The scenario deliberately does not emit a `result`: outbound cues
+  prove delivery, not that bob implemented or carol reviewed the feature.
+  The dashboard should render two outbox branches under alice's audit trail
+  and inbound cues on both bob's and carol's rosters.
 
   Pair this with a `tempo-mock-jam`-shaped lineup (3 mock players named
   alice / bob / carol). Drive with: `agent-tempo --dev cue alice "ship
@@ -28,8 +30,8 @@ rules:
           text: "split '$message' into bob (impl) + carol (review); both notified"
       - delayMs: 2000
       - report:
-          type: "result"
-          text: "$message handoff complete — bob + carol coordinating downstream"
+          type: "update"
+          text: "$message dispatched — awaiting bob's implementation evidence and carol's review verdict"
 
   - when: "*"
     do:

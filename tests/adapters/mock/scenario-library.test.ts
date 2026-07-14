@@ -59,4 +59,16 @@ describe('scenarios/ library — every shipped YAML parses', () => {
       expect(scenario.name, `${file} should declare name: "${stem}"`).toBe(stem);
     }
   });
+
+  it('multi-player handoff does not report completion before downstream evidence', () => {
+    const yamlText = readFileSync(resolve(SCENARIOS_DIR, 'multi-player-handoff.yaml'), 'utf8');
+    const scenario = parseScenario(yamlText);
+    const handoffRule = scenario.rules.find((rule) => rule.when === 'ship feature');
+    const reportTypes = handoffRule?.do.flatMap((action) =>
+      'report' in action ? [action.report.type] : [],
+    );
+
+    expect(reportTypes).toContain('update');
+    expect(reportTypes).not.toContain('result');
+  });
 });
