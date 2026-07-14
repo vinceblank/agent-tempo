@@ -19,6 +19,7 @@ import {
   isDevMode,
 } from '../config';
 import { DAEMON_PORT_PATH, readPortFile } from '../http/port-file';
+import { writeLastExitSync } from '../utils/last-exit';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:daemon]', ...args);
 
@@ -193,7 +194,25 @@ export function getDaemonStatus(): DaemonStatus {
   if (isPidAlive(pid)) {
     return { running: true, pid, heartbeatAge: readHeartbeatAge() };
   }
-  // Process is dead — clean up stale PID file.
+
+  // Process is dead — this is a STALE-PID detection. Capture the
+  // last-exit marker BEFORE anything else: `daemon.heartbeat`'s mtime is
+  // the only surviving evidence of when service was actually lost, and it
+  // gets destroyed the moment the next `startDaemon()` boots a replacement
+  // (the daemon truncates its own heartbeat file on boot). First-writer-
+  // wins (see src/utils/last-exit.ts) — if the daemon already explained its
+  // own death (worker-give-up, drain-timeout, ...), this is a no-op; it
+  // only fires for crash classes that never reached their own exit handler
+  // (OOM-kill, `taskkill`, power loss).
+  writeLastExitSync({
+    reason: 'stale-pid-unexplained',
+    restarts: 0,
+    at: new Date().toISOString(),
+    pid,
+    lastHeartbeatAt: readHeartbeatIsoTimestamp(),
+  });
+
+  // Clean up stale PID file.
   try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
   return { running: false };
 }
@@ -214,6 +233,22 @@ function readHeartbeatAge(): number | null {
     return age >= 0 ? age : 0;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Read `daemon.heartbeat`'s mtime as an ISO-8601 UTC string, or `undefined`
+ * if the file doesn't exist / can't be stat'd. Used ONLY by the stale-pid
+ * last-exit writer in {@link getDaemonStatus} — see the load-bearing
+ * write-site constraint documented on `DaemonLastExit.lastHeartbeatAt`
+ * (src/utils/last-exit.ts): this must be captured at stale-PID-detection
+ * time, before the next `startDaemon()` truncates the heartbeat file.
+ */
+function readHeartbeatIsoTimestamp(): string | undefined {
+  try {
+    return fs.statSync(DAEMON_HEARTBEAT_PATH).mtime.toISOString();
+  } catch {
+    return undefined;
   }
 }
 
