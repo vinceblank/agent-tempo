@@ -35,6 +35,7 @@ import {
   isPermissionError,
 } from './sa-preflight';
 import { isDaemonRunning, startDaemon, getDaemonStatus } from './daemon';
+import { readAndClearLastExit, type DaemonLastExit } from '../utils/last-exit';
 import * as out from './output';
 
 /** SQLite db file for the bundled Temporal dev server (same path `up()` uses). */
@@ -205,6 +206,68 @@ const defaultDeps: EnsureInfraDeps = {
   getDaemonStatus,
 };
 
+/** Human label per {@link DaemonLastExit.reason} — used by {@link formatLastExitNotice}. */
+const REASON_LABEL: Record<DaemonLastExit['reason'], string> = {
+  'worker-give-up': 'a worker gave up after repeated restarts',
+  'boot-guard-refused': 'a boot-guard check refused to start',
+  'unhandled-fatal': 'an unhandled fatal error',
+  'drain-timeout': 'shutdown drain timed out',
+  'stale-pid-unexplained': 'an unexplained crash (no self-reported cause — OOM-kill, forced termination, or power loss are common causes)',
+};
+
+/** Pretty-print a millisecond duration as `Xh Ym` / `Xm Ys` / `Xs`. */
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return 'an unknown duration';
+  const totalSec = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Render a {@link DaemonLastExit} marker into the one-shot CLI notice.
+ * Exported for unit testing without a live daemon or filesystem.
+ */
+export function formatLastExitNotice(marker: DaemonLastExit, now: number = Date.now()): string {
+  const reasonText = REASON_LABEL[marker.reason] ?? marker.reason;
+  const restartsText = marker.restarts > 0 ? `, ${marker.restarts} restart${marker.restarts === 1 ? '' : 's'}` : '';
+  const workerText = marker.worker ? ` (${marker.worker} worker)` : '';
+  const fatalText = marker.lastFatalMessage ? ` — "${marker.lastFatalMessage.split('\n')[0]}"` : '';
+
+  let downtimeText = '';
+  if (marker.lastHeartbeatAt) {
+    const lastHeartbeatMs = Date.parse(marker.lastHeartbeatAt);
+    if (Number.isFinite(lastHeartbeatMs)) {
+      downtimeText = ` — down ~${formatDurationMs(now - lastHeartbeatMs)}`;
+    }
+  }
+
+  return (
+    `⚠ agent-tempo daemon crashed${workerText}${downtimeText}: ${reasonText}${restartsText}${fatalText} ` +
+    `(at ${marker.at}). Schedules/cues did not fire during the downtime — now restarted.`
+  );
+}
+
+/**
+ * Check for a `daemon.last-exit.json` marker and print a one-shot notice if
+ * present, then clear it. Exported for unit testing (inject `deps`); the
+ * `ensureInfra()` call site below uses the real filesystem-backed default.
+ * Never throws — {@link readAndClearLastExit} already degrades a malformed
+ * marker to `null` rather than propagating, and this wrapper adds no new
+ * failure surface (just a `console`/`out.warn` call).
+ */
+export function printLastExitNoticeIfAny(
+  deps: { readAndClearLastExit?: () => DaemonLastExit | null; warn?: (msg: string) => void } = {},
+): void {
+  const read = deps.readAndClearLastExit ?? readAndClearLastExit;
+  const warn = deps.warn ?? out.warn;
+  const marker = read();
+  if (marker) warn(formatLastExitNotice(marker));
+}
+
 /**
  * Bring local infra up (CONNECT-ONLY — never registers MCP). Order: Temporal →
  * search attributes → agent types → daemon (SA MUST precede the daemon, which
@@ -248,6 +311,15 @@ export async function ensureInfra(
     daemon = 'started';
     onStep({ step: 'daemon', status: 'started', detail: `pid ${pid}` });
   }
+
+  // 5. One-shot crash notice — surfaces (and clears) a `daemon.last-exit.json`
+  // marker left by a prior abnormal exit. Runs after the daemon is confirmed
+  // up/started (not gated on `daemon === 'started'`): a marker can exist even
+  // when THIS invocation found an already-healthy daemon (e.g. the periodic
+  // Windows Scheduled Task re-trigger — PR-C — restarted it between CLI
+  // invocations, and this is simply the first CLI call since). See
+  // docs/design/daemon-last-exit-schema.md.
+  printLastExitNoticeIfAny();
 
   return { config, temporal, daemon };
 }

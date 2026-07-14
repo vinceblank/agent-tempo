@@ -200,6 +200,29 @@ describe('daemon management', function () {
       expect(result).to.be.false;
       expect(fs.existsSync(DAEMON_PID_PATH)).to.be.false;
     });
+
+    // Regression test for QA finding on #934 gate 4: `killer()` sends the
+    // signal and returns immediately — it does NOT wait for the process to
+    // exit. If the PID file were unlinked AFTER the kill signal (the
+    // pre-fix order), a concurrent `getDaemonStatus()` call could observe
+    // "PID file present + process already dead" in that window and
+    // misclassify a deliberate, requested stop as a crash (writing a false
+    // `stale-pid-unexplained` last-exit marker for a clean shutdown, which
+    // is supposed to write nothing at all — see src/utils/last-exit.ts).
+    // Asserting the PID file is gone BEFORE the killer is invoked pins the
+    // fix: a racing getDaemonStatus() can only ever observe "no PID file"
+    // (harmless) during a stop-in-progress, never "present + dead".
+    it('unlinks the PID file BEFORE sending the kill signal (#934 gate 4 fix)', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid); // tracked = current process (alive)
+      let pidFileExistedWhenKillerRan: boolean | null = null;
+      const killer = () => {
+        pidFileExistedWhenKillerRan = fs.existsSync(DAEMON_PID_PATH);
+      };
+
+      stopDaemon({ ...noopOpts, killer });
+
+      expect(pidFileExistedWhenKillerRan).to.equal(false);
+    });
   });
 
   // ── Zombie-reaping (this PR) ──
