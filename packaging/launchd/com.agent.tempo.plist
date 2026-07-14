@@ -12,6 +12,22 @@
 
   User-level only (no sudo). `RunAtLoad` + `KeepAlive` bounce the daemon
   if it crashes; `ThrottleInterval` guards against restart loops.
+
+  CRITICAL — `--foreground` MUST actually run the daemon in-process (fixed
+  alongside the KeepAlive change below). Prior to that fix, `daemon start
+  --foreground` silently behaved exactly like a plain `daemon start`: it
+  forked the real daemon as a detached grandchild and the tracked
+  ProgramArguments process exited almost instantly, so `KeepAlive` bounced a
+  process that had already done its job — the REAL daemon, now orphaned
+  from launchd entirely, could crash hours later with nobody watching.
+
+  `KeepAlive` is the DICT form (SuccessfulExit=false), not the bare `true`
+  used pre-fix: bare `true` relaunches on ANY exit, including the clean
+  exit 0 the daemon returns on a requested `daemon stop` — fighting an
+  operator-initiated stop with an immediate respawn. SuccessfulExit=false
+  means "relaunch only when the last exit was NOT successful (non-zero)",
+  matching the exit-code contract (0 = clean shutdown, don't restart; 1 =
+  abnormal, restart).
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -32,7 +48,10 @@
   <true/>
 
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
 
   <key>ThrottleInterval</key>
   <integer>10</integer>

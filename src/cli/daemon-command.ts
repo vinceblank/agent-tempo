@@ -20,12 +20,12 @@
  * If you add an import here that transitively leaks Temporal deps, that
  * test will fail.
  */
-import { existsSync, readFileSync, mkdirSync, unlinkSync, copyFileSync, statSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, unlinkSync, copyFileSync, statSync, openSync, writeSync, readSync, closeSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import * as http from 'http';
-import { CliOverrides, getConfig } from '../config';
+import { CliOverrides, Config, getConfig, ENV, isDevMode } from '../config';
 import { readPortFile } from '../http/port-file';
 import {
   isDaemonRunning,
@@ -39,6 +39,8 @@ import {
   resolveDaemonPort,
   findPortOwnerPid,
   classifyPortDivergence,
+  rotateLogIfLarge,
+  assertDaemonPortFree,
   DAEMON_PID_PATH,
   DAEMON_LOG_PATH,
   HEARTBEAT_INTERVAL_MS,
@@ -120,6 +122,19 @@ export interface DaemonOpts extends CliOverrides {
    * scripts where idempotent-start is required (see `daemon status` first).
    */
   force?: boolean;
+  /**
+   * Only meaningful for the `start` subcommand. Runs the daemon IN this
+   * process (via a dynamic-imported `runDaemon()`) instead of spawning a
+   * detached grandchild. This is what makes external process supervision
+   * (systemd/launchd/Windows Task Scheduler — see `daemon install`) actually
+   * work: a supervisor tracks the process it launched, and prior to this
+   * flag `daemon start --foreground` silently behaved exactly like a plain
+   * `daemon start` — the supervisor's tracked process exited almost
+   * instantly after spawning the real (untracked, detached) daemon, so a
+   * later mid-session crash of the real daemon went completely unobserved.
+   * See docs/research/daemon-resilience-architect-ruling.md §4.1.
+   */
+  foreground?: boolean;
 }
 
 export async function daemon(opts: DaemonOpts): Promise<void> {
@@ -176,6 +191,13 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
             // dead pid; this handles the rarer "file exists, contents
             // unparseable OR fs error" branch.
             try { unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+          }
+          if (opts.foreground) {
+            // Runs the daemon in THIS process and never returns until it
+            // exits — the caller (a process supervisor, or a foreground
+            // terminal invocation) owns the exit code. See runForegroundDaemon.
+            await runForegroundDaemon(config);
+            return;
           }
           out.log('Starting daemon...');
           try {
@@ -336,8 +358,9 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 
     default:
       out.error('Usage: agent-tempo daemon <start|stop|status|stats|logs|install|uninstall>');
-      out.log(`\n  ${out.dim('agent-tempo daemon start [--force]')}  Start the worker daemon`);
+      out.log(`\n  ${out.dim('agent-tempo daemon start [--force] [--foreground]')}  Start the worker daemon`);
       out.log(`  ${out.dim('                           --force: skip orphan-process check + clear stale pid file')}`);
+      out.log(`  ${out.dim('                           --foreground: run in THIS process (for process supervisors — see `daemon install`)')}`);
       out.log(`  ${out.dim('agent-tempo daemon stop')}              Stop the worker daemon`);
       out.log(`  ${out.dim('agent-tempo daemon status')}            Check daemon status + heartbeat + orphans`);
       out.log(`  ${out.dim('agent-tempo daemon stats')}             Show memory + uptime + ensemble count`);
@@ -351,7 +374,134 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
   void config;
 }
 
+/**
+ * Run the daemon IN THIS PROCESS (`daemon start --foreground`) instead of
+ * spawning a detached grandchild — the fix for the universal `--foreground`
+ * bug (architect ruling §4.1): a process supervisor (systemd/launchd/Windows
+ * Task Scheduler) only tracks — and can only restart-on-crash — the process
+ * it directly launched. Before this, `--foreground` was silently ignored,
+ * so the supervisor's tracked process exited almost instantly after spawning
+ * the real, detached, unsupervised daemon; a LATER mid-session crash of that
+ * real daemon went completely unobserved. This function makes the tracked
+ * process BE the daemon.
+ *
+ * Two obligations this function owns that the detached path (`startDaemon`,
+ * `./daemon.ts`) gets for free from the OS:
+ *
+ *  1. **Log capture.** There is no parent process redirecting stdout/stderr
+ *     into `daemon.log` — that redirection is `spawn()`'s `stdio: [...,
+ *     logFd, logFd]` option, which doesn't apply to an in-process run. This
+ *     function rotates (honoring the existing 50MB/3-generation policy —
+ *     same call as the detached path) and opens the log file itself, then
+ *     redirects `process.stdout`/`process.stderr` writes into it.
+ *     `console.log`/`console.error` (used throughout `src/daemon.ts`) write
+ *     through `process.stdout.write`/`process.stderr.write`, so patching
+ *     those two functions is sufficient. Without this, daemon output would
+ *     silently diverge per supervisor: the systemd journal, launchd's
+ *     `StandardOutPath`, or — on Windows Task Scheduler, which offers no
+ *     equivalent at all — nowhere.
+ *
+ *  2. **Config propagation.** `runDaemon()` (`src/daemon.ts`) resolves its
+ *     own config fresh via `getConfig({})`, reading directly from
+ *     `process.env` — the same contract the detached path relies on via its
+ *     explicit spawn-time `env` object. Since this is the SAME process,
+ *     whatever CLI-flag overrides are already folded into the `config`
+ *     passed here are re-projected onto `process.env` before calling
+ *     `runDaemon()`, so it sees them too.
+ *
+ * `runDaemon` is loaded via a DYNAMIC import, inside this function only —
+ * this file (`daemon-command.ts`) is pinned by CLAUDE.md as "crash-proof,
+ * no Temporal deps" (see the file's top-of-module doc comment and
+ * `test/daemon-command-isolation.test.ts`), and `../daemon` transitively
+ * pulls in the full Temporal SDK + workflow bundle. A static import here
+ * would violate that boundary for every OTHER `daemon` subcommand, not just
+ * `start --foreground`. Precedent: `upgrade-to-2-command.ts`.
+ *
+ * Does not implement the detached path's start-lock (`DAEMON_LOCK_PATH`) —
+ * that lock exists to dedupe concurrent SPAWN attempts racing before a PID
+ * file exists, which isn't the shape of this path: `--foreground` is meant
+ * to be the ONE long-running supervised process per profile, and the
+ * `evaluateStartPreflight` → `getDaemonStatus()` check in the caller already
+ * refuses to launch a second foreground instance once a PID file shows a
+ * live daemon. The port pre-flight (`assertDaemonPortFree`) is still run
+ * here, since that's the check that actually prevents two daemons (this one
+ * and, e.g., a stale detached one) from colliding on the same port.
+ *
+ * Resolves the process's exit code via `runDaemon()`'s return value and
+ * calls `process.exit()` directly — this function never returns normally.
+ */
+async function runForegroundDaemon(config: Config): Promise<void> {
+  try {
+    await assertDaemonPortFree();
+  } catch (err: any) {
+    out.error(err.message || String(err));
+    process.exit(1);
+  }
+
+  // Rotate BEFORE opening the append handle — same policy + ordering as
+  // startDaemon()'s detached path.
+  rotateLogIfLarge();
+
+  // Redirect this process's stdout/stderr into daemon.log so output lands
+  // in the same place regardless of which supervisor (or none) launched us.
+  try {
+    const logFd = openSync(DAEMON_LOG_PATH, 'a');
+    const writeToLog = (chunk: any, encoding?: any, cb?: any): boolean => {
+      try {
+        const buf: Buffer = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(String(chunk), (typeof encoding === 'string' ? encoding : 'utf8') as BufferEncoding);
+        writeSync(logFd, buf);
+      } catch {
+        // Best-effort — a log-write failure must never crash the daemon.
+      }
+      const doneCb = typeof encoding === 'function' ? encoding : cb;
+      if (typeof doneCb === 'function') doneCb();
+      return true;
+    };
+    (process.stdout as unknown as { write: typeof writeToLog }).write = writeToLog;
+    (process.stderr as unknown as { write: typeof writeToLog }).write = writeToLog;
+  } catch {
+    // Non-fatal — the daemon still runs, just without captured output
+    // (falls through to whatever the inherited stdio happens to be).
+  }
+
+  // Re-project the resolved config onto process.env — `runDaemon()` reads
+  // its own config fresh via `getConfig({})` (same contract the detached
+  // path relies on via its explicit spawn-time env object).
+  process.env[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
+  process.env[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
+  process.env[ENV.TASK_QUEUE] = config.taskQueue;
+  if (config.temporalApiKey) process.env[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) process.env[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) process.env[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+
+  const { runDaemon } = await import('../daemon');
+  const code = await runDaemon();
+  process.exit(code);
+}
+
 async function daemonInstall(): Promise<void> {
+  // Dev mode must NEVER install prod supervision (architect ruling §4.5):
+  // the systemd unit / launchd plist / Windows Scheduled Task all hardcode
+  // a single well-known label/name (`agent-tempo-daemon`,
+  // `com.agent.tempo`) with no profile-awareness — installing from a `--dev`
+  // invocation would register a supervisor that runs the WRONG profile's
+  // config (dev's ~/.agent-tempo-dev/ home, dev port, dev namespace) under
+  // a name that looks like the prod supervisor, fighting the real prod
+  // daemon over the shared `agent-tempo` binary's ports/PID files the next
+  // time either profile boots. Per-profile-named units are a bigger scope
+  // than this PR — refuse outright rather than silently install something
+  // that conflicts with prod.
+  if (isDevMode()) {
+    out.error(
+      'daemon install is not supported in dev mode (`--dev`). Process supervision installs a ' +
+      'single system-wide unit/task that would target the dev profile\'s config — install from ' +
+      'a normal (non-dev) invocation instead.',
+    );
+    process.exit(1);
+  }
+
   const platform = process.platform;
   if (platform === 'linux') {
     const src = packagingFile('systemd', 'agent-tempo.service');

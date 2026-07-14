@@ -4,6 +4,8 @@
  * Pure formatting + injectable-deps tests — no Temporal, no filesystem.
  */
 import { expect } from 'chai';
+import * as fs from 'fs';
+import * as path from 'path';
 import { formatLastExitNotice, printLastExitNoticeIfAny } from '../src/cli/ensure-infra';
 import type { DaemonLastExit } from '../src/utils/last-exit';
 
@@ -84,5 +86,33 @@ describe('printLastExitNoticeIfAny', function () {
     });
     expect(messages).to.have.length(1);
     expect(messages[0]).to.include('drain');
+  });
+});
+
+describe('ensureInfra() step ordering — crash notice before install hint', function () {
+  // Regression pin for the rebase conflict noted in PR-C review (#935): both
+  // `printLastExitNoticeIfAny()` (marker PR, #934) and `printInstallHintIfNeeded()`
+  // (PR-C) hook the SAME point in `ensureInfra()`'s bootstrap sequence, and a
+  // rebase/merge could silently swap their order. The crash notice must run
+  // FIRST — it's strictly higher priority than a "you should install
+  // supervision" nudge, and if the hint printed first an operator's eye could
+  // land on the nudge with the actual crash message reading as buried
+  // underneath it. `ensureInfra()`'s two calls aren't behind the injectable
+  // `EnsureInfraDeps` seam (they're plain top-level calls, not deps-driven),
+  // so a full behavioral test would need a temp AGENT_TEMPO_HOME set before
+  // any module import in this process — impractical in a shared mocha run.
+  // This source-position assertion is a cheap, real safeguard instead: it
+  // fails loudly if a future edit reorders the two calls.
+  it('printLastExitNoticeIfAny() call appears before printInstallHintIfNeeded() call in the source', function () {
+    // __dirname here is `dist-test/test` (this file compiles into dist-test,
+    // mirroring the repo's src/test layout) — go up TWO levels to the repo
+    // root, then down into the real TypeScript source (not the compiled JS
+    // sitting alongside this test at dist-test/src/...).
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'cli', 'ensure-infra.ts'), 'utf8');
+    const noticeCallIdx = src.indexOf('printLastExitNoticeIfAny();');
+    const hintCallIdx = src.indexOf('printInstallHintIfNeeded();');
+    expect(noticeCallIdx, 'printLastExitNoticeIfAny() call site not found').to.be.greaterThan(-1);
+    expect(hintCallIdx, 'printInstallHintIfNeeded() call site not found').to.be.greaterThan(-1);
+    expect(noticeCallIdx).to.be.lessThan(hintCallIdx);
   });
 });

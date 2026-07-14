@@ -22,12 +22,12 @@
  * keeps ensure-infra a LEAF (imports only connection / sa-preflight / daemon /
  * config / output) — no `commands.ts ↔ ensure-infra` cycle.
  */
-import { spawn as cpSpawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'fs';
+import { spawn as cpSpawn, spawnSync } from 'child_process';
+import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { Client } from '@temporalio/client';
-import { Config, getConfig, AGENT_TEMPO_HOME } from '../config';
+import { Config, getConfig, AGENT_TEMPO_HOME, isDevMode } from '../config';
 import { createTemporalConnection } from '../connection';
 import {
   REQUIRED_SEARCH_ATTRIBUTES,
@@ -268,6 +268,93 @@ export function printLastExitNoticeIfAny(
   if (marker) warn(formatLastExitNotice(marker));
 }
 
+// ── #PR-C install hint (folded from the original PR-4) ──
+
+/** One-time marker so the install hint below nags at most once per install. */
+const INSTALL_HINT_MARKER_PATH = join(AGENT_TEMPO_HOME, 'install-hint-shown');
+
+/**
+ * Best-effort, per-platform probe for whether `agent-tempo daemon install`
+ * has already been run — i.e. whether an external process supervisor
+ * (systemd --user unit / launchd agent / Windows Scheduled Task) is
+ * registered for the daemon. Exported for unit testing (inject `deps`).
+ * Never throws: any probe failure (missing `schtasks`, permission error,
+ * …) degrades to "assume not installed" — worst case the hint nags once
+ * more than strictly necessary, never crashes the CLI.
+ */
+export function isDaemonSupervisionInstalled(
+  deps: {
+    platform?: NodeJS.Platform;
+    existsSync?: (p: string) => boolean;
+    querySchtasks?: () => boolean;
+  } = {},
+): boolean {
+  const platform = deps.platform ?? process.platform;
+  const exists = deps.existsSync ?? existsSync;
+  try {
+    if (platform === 'linux') {
+      return exists(join(homedir(), '.config', 'systemd', 'user', 'agent-tempo.service'));
+    }
+    if (platform === 'darwin') {
+      return exists(join(homedir(), 'Library', 'LaunchAgents', 'com.agent.tempo.plist'));
+    }
+    if (platform === 'win32') {
+      const query = deps.querySchtasks ?? (() => {
+        const r = spawnSync('schtasks', ['/query', '/tn', 'agent-tempo-daemon'], {
+          stdio: 'ignore', windowsHide: true, timeout: 5000,
+        });
+        return r.status === 0;
+      });
+      return query();
+    }
+  } catch {
+    // Fall through to "not installed" — see doc comment.
+  }
+  return false;
+}
+
+/**
+ * Print a one-time hint nudging the operator toward `agent-tempo daemon
+ * install` when the daemon is running unsupervised — this is precisely how
+ * an operator discovers the crash-supervision fix exists (architect ruling
+ * §5, "Install hint — FOLD into PR-C. ~10 lines, and it's how users
+ * discover the fix"). Skipped entirely in dev mode (`--dev`): dev mode must
+ * never install prod supervision (§4.5), so nagging toward an unsupported
+ * action would be actively unhelpful. Skipped if the hint marker already
+ * exists (shown once ever, not once per CLI invocation) or if supervision
+ * is already installed. Never throws — a marker-write failure is
+ * best-effort and non-fatal.
+ */
+export function printInstallHintIfNeeded(
+  deps: {
+    isDevMode?: () => boolean;
+    existsSync?: (p: string) => boolean;
+    isDaemonSupervisionInstalled?: () => boolean;
+    warn?: (msg: string) => void;
+    writeMarker?: () => void;
+  } = {},
+): void {
+  const devMode = deps.isDevMode ?? isDevMode;
+  const exists = deps.existsSync ?? existsSync;
+  const supervised = deps.isDaemonSupervisionInstalled ?? isDaemonSupervisionInstalled;
+  const warn = deps.warn ?? out.warn;
+  const writeMarker = deps.writeMarker ?? (() => {
+    mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
+    writeFileSync(INSTALL_HINT_MARKER_PATH, new Date().toISOString());
+  });
+
+  if (devMode()) return;
+  if (exists(INSTALL_HINT_MARKER_PATH)) return;
+  if (supervised()) return;
+
+  warn(
+    'daemon is running but unsupervised — if it ever crashes, nobody will know until you notice ' +
+    'things have stopped working. Run `agent-tempo daemon install` to auto-restart it on a crash ' +
+    '(this hint only shows once).',
+  );
+  try { writeMarker(); } catch { /* best-effort */ }
+}
+
 /**
  * Bring local infra up (CONNECT-ONLY — never registers MCP). Order: Temporal →
  * search attributes → agent types → daemon (SA MUST precede the daemon, which
@@ -319,7 +406,19 @@ export async function ensureInfra(
   // Windows Scheduled Task re-trigger — PR-C — restarted it between CLI
   // invocations, and this is simply the first CLI call since). See
   // docs/design/daemon-last-exit-schema.md.
+  //
+  // MUST run BEFORE the install hint (step 6) — both hook this same
+  // bootstrap path, and a crash notice is strictly higher priority than a
+  // "you should install supervision" nudge. If the hint printed first, an
+  // operator's eye would land on the nudge and the actual crash message
+  // (which they need to act on NOW) could read as buried underneath it.
   printLastExitNoticeIfAny();
+
+  // 6. One-time nudge toward `daemon install` when unsupervised (architect
+  // ruling §5 — folded from PR-4). Runs after the daemon is confirmed
+  // up/started, on every profile except dev. Deliberately AFTER step 5 —
+  // see the ordering note above.
+  printInstallHintIfNeeded();
 
   return { config, temporal, daemon };
 }

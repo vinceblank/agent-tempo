@@ -79,6 +79,11 @@ interface ParsedArgs {
   host?: string;
   /** `daemon start --force` — bypass the stale-PID-file guard. */
   force: boolean;
+  /** `daemon start --foreground` (#PR-C) — run the daemon IN this process
+   *  instead of spawning a detached grandchild, so an external process
+   *  supervisor (systemd/launchd/Task Scheduler) tracks the real daemon and
+   *  can restart it on a non-zero exit. See src/cli/daemon-command.ts. */
+  foreground?: boolean;
   /** `upgrade-to-2 --dry-run` (#785) — print the would-be snapshot + destroy
    *  list and exit before pausing. */
   dryRun?: boolean;
@@ -211,6 +216,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--force') {
       // Consumed by `daemon start --force` (bypass stale-PID guard).
       result.force = true;
+    } else if (arg === '--foreground') {
+      // Consumed by `daemon start --foreground` — run in-process (#PR-C).
+      result.foreground = true;
     } else if (arg === '--dry-run') {
       // `upgrade-to-2 --dry-run` — print snapshot + destroy list, change nothing.
       result.dryRun = true;
@@ -382,6 +390,7 @@ async function main() {
     await daemon({
       subcommand: args.positional[1],
       force: args.force,
+      foreground: args.foreground,
       ...overrides,
     });
     return;
