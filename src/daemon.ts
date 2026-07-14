@@ -178,7 +178,7 @@ export interface EnsureDevNamespaceResult {
  *     mutating state.
  *
  * Production daemons never call this — guarded by `isDevMode()` at the
- * single callsite in `main()` below. Exported for direct unit testing
+ * single callsite in `runDaemon()` below. Exported for direct unit testing
  * with an injected stub workflow service.
  */
 export async function ensureDevNamespace(
@@ -1048,7 +1048,29 @@ export function startCleanupLoop(
   };
 }
 
-async function main() {
+/**
+ * PR-0 of the 2026-07-13 daemon-resilience program (architect ruling
+ * `docs/research/daemon-resilience-architect-ruling.md` §1 "exit-code seam").
+ *
+ * The daemon's whole run loop, factored out of the entry-point guard so it is
+ * (a) importable — devops's real `--foreground` mode (PR-C) runs it in-process
+ * from the CLI instead of shelling a detached child; and (b) exit-code-typed —
+ * the worker supervisor (PR-D) returns `1` on give-up so external supervision
+ * can key on "non-zero ⇒ restart" (`docs/ops/daemon.md` contract).
+ *
+ * Returns the process exit code instead of calling `process.exit` at the end
+ * of the run: `0` = workers stopped after a requested shutdown drain. The `1`
+ * arm is reserved for PR-D (worker give-up); today an abnormal worker stop
+ * still returns 0 — behavior-preserving refactor, the exit-code contract
+ * change ships with the supervisor.
+ *
+ * Known remaining hard exits INSIDE the run (unchanged in this PR, documented
+ * for callers): the SA preflight refusal and the #786 protocol boot guard
+ * `process.exit(1)` before workers start, and the shutdown-timeout `hardExit`
+ * safety net. All three are "refuse/force-quit loudly" paths whose semantics
+ * are identical in-process and detached.
+ */
+export async function runDaemon(): Promise<0 | 1> {
   // Neutralize the Temporal/grpc-js "Channel has been shut down" retry-after-
   // close race so a stray retry timer can't kill the long-lived daemon. See
   // src/utils/grpc-shutdown-guard.ts.
@@ -1565,20 +1587,29 @@ async function main() {
     log('Worker error:', err);
   }
 
-  // Workers have stopped — clean up PID file and exit
+  // Workers have stopped — clean up PID file and report the exit code to
+  // the entry-point guard (or the in-process PR-C `--foreground` caller).
   try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
   log('Daemon stopped');
-  process.exit(0);
+  return 0;
 }
 
-// Only run `main()` when this file is invoked directly (e.g. via
+// Only run `runDaemon()` when this file is invoked directly (e.g. via
 // `node dist/daemon.js` or `npx ts-node src/daemon.ts`). Tests that
 // import `reconcileOnBoot` / `cleanupLoop` / `selectStaleDetachedOrphans`
 // must not trigger the worker-bootstrap path as a module side-effect.
+//
+// `process.exit(code)` (not a bare return) is deliberate: the run loop can
+// leave benign lingering handles (keep-alive sockets mid-drain, unref'd
+// timers) and the daemon must terminate promptly either way — same behavior
+// as the pre-PR-0 `process.exit(0)` tail.
 if (require.main === module) {
-  main().catch((err) => {
-    log('Fatal error:', err);
-    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-    process.exit(1);
-  });
+  runDaemon().then(
+    (code) => process.exit(code),
+    (err) => {
+      log('Fatal error:', err);
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      process.exit(1);
+    },
+  );
 }
