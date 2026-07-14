@@ -210,8 +210,8 @@ schtasks /query /tn agent-tempo-daemon-recheck
 # `daemon stop`, which is a clean exit-0 shutdown the supervisor should
 # NOT restart from) and confirm Task Scheduler brings it back within
 # RestartInterval (1 min):
-$pid = (Get-Content "$env:USERPROFILE\.agent-tempo\daemon.pid")
-Stop-Process -Id $pid -Force
+$daemonPid = (Get-Content "$env:USERPROFILE\.agent-tempo\daemon.pid")
+Stop-Process -Id $daemonPid -Force
 Start-Sleep -Seconds 90
 agent-tempo daemon status   # should show a DIFFERENT pid, running
 
