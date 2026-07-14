@@ -224,7 +224,7 @@ describe('session wire extensions (#399 W2)', function () {
       this.timeout(10_000);
       const handle = await startFresh(`wiremeta-live-${Date.now()}`);
       const token = await handle.executeUpdate(claimAttachmentUpdate, {
-        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
       await handle.signal(receiveMessageSignal, { from: 'tester', text: 'one' });
       await handle.signal(receiveMessageSignal, { from: 'tester', text: 'two' });
