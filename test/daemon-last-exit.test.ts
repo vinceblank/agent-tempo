@@ -73,6 +73,30 @@ describe('daemon.last-exit.json marker', function () {
       const dirEntries = fs.readdirSync(tmpDir);
       expect(dirEntries.some((f) => f.includes('.tmp.'))).to.be.false;
     });
+
+    it('leaves no .tmp file behind after a first-writer-wins no-op (EEXIST path)', function () {
+      writeLastExitSync({ reason: 'worker-give-up', restarts: 0, at: 't1', pid: 1 }, filePath);
+      writeLastExitSync({ reason: 'stale-pid-unexplained', restarts: 0, at: 't2', pid: 2 }, filePath);
+      const dirEntries = fs.readdirSync(tmpDir);
+      expect(dirEntries.some((f) => f.includes('.tmp.'))).to.be.false;
+    });
+
+    it('is exclusive at the OS level, not just check-then-act (#934 gate 2 fix) — never clobbers a pre-existing file written by ANY mechanism', function () {
+      // Pre-create the destination directly (not via writeLastExitSync) —
+      // this is what a genuinely concurrent second writer's committed file
+      // looks like from this call's perspective. A check-then-act
+      // (existsSync + renameSync) implementation could still lose this race
+      // in real concurrency; linkSync's EEXIST is enforced by the
+      // filesystem itself, so a single-threaded test asserting "does not
+      // overwrite whatever is already there" is a meaningful proxy even
+      // without true multi-process interleaving.
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, 'sentinel-content-not-json');
+
+      const ok = writeLastExitSync({ reason: 'worker-give-up', restarts: 0, at: 't', pid: 1 }, filePath);
+      expect(ok).to.be.false;
+      expect(fs.readFileSync(filePath, 'utf8')).to.equal('sentinel-content-not-json');
+    });
   });
 
   describe('readAndClearLastExit', function () {

@@ -136,6 +136,19 @@ const RETRY_BACKOFFS_MS = [10, 20, 40, 80];
  * stale-pid-unexplained fallback observes the death FIRST owns the
  * forensic record; the other must not clobber it.
  *
+ * MECHANISM (QA finding on #934 gate 2 — fixed here, before PR-D's
+ * daemon-side writers land and create the first genuine two-process race):
+ * write the full payload to a `.tmp.<pid>` file, then commit it into place
+ * with `fs.linkSync(tmp, filePath)` — a hardlink is an atomic,
+ * **exclusive** operation that fails with `EEXIST` if `filePath` already
+ * exists. This is deliberately NOT `fs.renameSync`, which unconditionally
+ * REPLACES its target — an earlier revision used rename and was a
+ * check-then-act race (`existsSync` then `renameSync`): two genuinely
+ * concurrent writers could both pass the `existsSync` check before either
+ * renamed, and since rename always wins, the actual winner would be
+ * "whoever renamed last," not "whoever wrote first." `linkSync` closes
+ * that gap — the OS itself refuses the second writer's commit.
+ *
  * Never throws — a failure to write the marker (disk full, permissions)
  * must not block whatever exit/cleanup path called this. Logged via the
  * caller's own logger if desired (this module stays log-sink-agnostic to
@@ -151,51 +164,72 @@ export function writeLastExitSync(
   marker: Omit<DaemonLastExit, 'schemaVersion'>,
   filePath: string = LAST_EXIT_PATH,
 ): boolean {
-  try {
-    if (fs.existsSync(filePath)) return false; // first-writer-wins
-  } catch {
-    // existsSync essentially can't throw, but if the containing dir is
-    // gone entirely, fall through and let the write attempt surface it.
-  }
-
   const payload: DaemonLastExit = {
     schemaVersion: 1,
     ...marker,
     lastFatalMessage: marker.lastFatalMessage?.slice(0, MAX_FATAL_MESSAGE_LEN),
   };
 
+  let tmp: string;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp.${process.pid}`;
+    tmp = `${filePath}.tmp.${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify(payload));
-
-    for (let attempt = 0; attempt <= RETRY_BACKOFFS_MS.length; attempt++) {
-      try {
-        fs.renameSync(tmp, filePath);
-        return true;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (!code || !RETRYABLE_CODES.has(code) || attempt === RETRY_BACKOFFS_MS.length) {
-          try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-          return false;
-        }
-        sleepSync(RETRY_BACKOFFS_MS[attempt]);
-      }
-    }
-    return false;
   } catch {
     return false;
   }
+
+  for (let attempt = 0; attempt <= RETRY_BACKOFFS_MS.length; attempt++) {
+    try {
+      // Atomic exclusive commit — fails EEXIST if another writer already
+      // committed. The tmp file's content now also lives at `filePath` (two
+      // hardlinks, same inode); unlinking `tmp` just drops the extra name.
+      fs.linkSync(tmp, filePath);
+      try { fs.unlinkSync(tmp); } catch { /* best-effort — filePath already has the content */ }
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        // First-writer-wins: someone else's marker already landed. NOT a
+        // failure — this is the expected, load-bearing outcome for the
+        // CLI's generic fallback racing a daemon-authored write.
+        try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+        return false;
+      }
+      if (!code || !RETRYABLE_CODES.has(code) || attempt === RETRY_BACKOFFS_MS.length) {
+        try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+        return false;
+      }
+      sleepSync(RETRY_BACKOFFS_MS[attempt]);
+    }
+  }
+  try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  return false;
 }
 
 /**
- * Read the marker (if any), then delete it — one-shot, per the module
- * doc comment. NEVER throws: a malformed file, an unreadable file, or an
- * unrecognized `schemaVersion` all degrade to "nothing to report" rather
- * than bricking the CLI invocation that called this. This is a hard
- * requirement (architect ruling §Q1) — the crash-notice path runs on EVERY
- * CLI invocation via ensureInfra()/startup.ts, so a single malformed marker
- * must never be able to break every verb.
+ * Read the marker (if any), then delete it.
+ *
+ * ATOMICITY NOTE (QA finding on #934 gate 3): this is read-THEN-unlink, not
+ * claim-then-read — there is no lock. Two CLI invocations racing (two
+ * terminals, or a script firing two `agent-tempo` commands back to back)
+ * can both `readFileSync` the same marker before either unlinks it, so the
+ * notice can print **more than once**. It cannot print **zero** times for
+ * an existing marker (a read always succeeds before either side deletes),
+ * so the actual guarantee is "at-least-once, usually exactly-once" — not
+ * the strict one-shot the name implies. This is tolerated, not a bug: it
+ * never throws, never corrupts, and self-heals within one extra CLI
+ * invocation. If exactly-once ever becomes load-bearing, the fix is to
+ * `renameSync` the marker to a per-pid claim path first and have only the
+ * renaming process read/report — mirrors the write side's own
+ * `linkSync`-based exclusivity.
+ *
+ * NEVER throws: a malformed file, an unreadable file, or an unrecognized
+ * `schemaVersion` all degrade to "nothing to report" rather than bricking
+ * the CLI invocation that called this. This is a hard requirement
+ * (architect ruling §Q1) — the crash-notice path runs on EVERY CLI
+ * invocation via `ensureInfra()`, so a single malformed marker must never
+ * be able to break every verb.
  *
  * Delete is best-effort — a failure to delete (Windows EPERM from a
  * lingering handle) is swallowed rather than thrown; the notice may repeat

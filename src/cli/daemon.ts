@@ -1135,11 +1135,22 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   const status = getDaemonStatus();
   let stopped = false;
 
-  // Kill the tracked daemon first (if any). We do this even if `kill` fails —
-  // the PID file is invariant we own, so we always clean it up.
+  // Unlink the PID file BEFORE sending the kill signal (QA finding, #934
+  // gate 4) — `killer()` sends the signal and returns immediately; it does
+  // NOT wait for the process to actually exit. If we killed first and
+  // unlinked after, a concurrent `getDaemonStatus()` call (a second
+  // terminal/script) could observe "PID file present + process already
+  // dead" in that window and misclassify a deliberate, requested stop as a
+  // crash — writing a false `stale-pid-unexplained` last-exit marker for a
+  // clean shutdown (which is supposed to write nothing at all; see
+  // src/utils/last-exit.ts). Unlinking first means a racing
+  // `getDaemonStatus()` sees "no PID file" (harmless: `{running: false}`,
+  // no marker) instead of the dangerous "present + dead" combination — the
+  // PID file is our invariant to clean up either way, so removing it a few
+  // instructions earlier costs nothing.
   if (status.running && status.pid !== undefined) {
-    killDaemonPid(status.pid, killer, platform);
     try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    killDaemonPid(status.pid, killer, platform);
     stopped = true;
   }
 
