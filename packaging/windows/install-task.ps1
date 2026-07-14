@@ -249,7 +249,30 @@ Write-Output ""
 Write-Output "Verifying the daemon task actually functions..."
 
 $daemonPidFile = Join-Path $env:USERPROFILE '.agent-tempo\daemon.pid'
-$wasRunningBefore = Test-Path $daemonPidFile
+
+# QA finding, round 2 (#941): branch selector must check ACTUAL LIVENESS,
+# not just file existence. Test-Path alone treats a STALE pid file (daemon
+# dead, file lingering — literally the state bug-2675 leaves behind, and
+# the highest-value recovery scenario this whole self-check exists for) as
+# "already running", routing it into the wrong branch: that branch's pass
+# condition ("task finishes quickly, does NOT stay Running") is the exact
+# OPPOSITE of what a successful cold-start recovery looks like (a
+# long-lived --foreground process that STAYS Running). A perfect recovery
+# from the incident state would therefore report FAILURE — a false-FAIL,
+# mirror image of round 1's false-PASS. Fix: read the pid from the file and
+# verify the PROCESS is actually alive (Get-Process), mirroring the same
+# liveness distinction getDaemonStatus() already makes server-side
+# (src/cli/daemon.ts's isPidAlive) rather than trusting file presence alone.
+$wasRunningBefore = $false
+if (Test-Path $daemonPidFile) {
+  $existingPidRaw = Get-Content $daemonPidFile -ErrorAction SilentlyContinue
+  if ($existingPidRaw) {
+    $existingProc = Get-Process -Id $existingPidRaw -ErrorAction SilentlyContinue
+    if ($existingProc) {
+      $wasRunningBefore = $true
+    }
+  }
+}
 $preExistingPids = @(
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'dist[\\/]daemon\.js' } |
