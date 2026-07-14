@@ -7,6 +7,7 @@ import {
   upsertSearchAttributes,
   upsertMemo,
   uuid4,
+  patched,
   proxyActivities,
   log as workflowLog,
 } from '@temporalio/workflow';
@@ -26,7 +27,7 @@ function workflowNow(): Date {
 
 import type { OutboxActivities, OutboxActivityResult } from '../activities/outbox';
 import type { HardTerminateResult } from '../activities/hard-terminate';
-import { extendAttachmentForCAN } from './attachment-math';
+import { extendAttachmentForCAN, shouldEarlyCan } from './attachment-math';
 
 import {
   SessionInput,
@@ -359,7 +360,12 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // D14 — pending context-reset flag, polled + acked by the Pi extension. Single
   // slot, latest-wins; survives continue-as-new until the extension acks it.
   let pendingReset: PendingReset | null = input.pendingReset ?? null;
-  let lastActivityTime = workflowNow().getTime();
+  // PR-E — carried across continueAsNew. Pre-E this re-seeded to NOW on every
+  // run start, which was invisible while CAN was unreachable; with early-CAN
+  // firing ~2-3×/day it would make a frozen 10h-idle session report
+  // `lastActivityAt: just now` on `getActivityState` — the freeze-spotting
+  // surface. Old CAN payloads (no field) fall back to NOW, same as a fresh start.
+  let lastActivityTime = input.lastActivityTime ?? workflowNow().getTime();
   let lastOutboundTime = input.lastOutboundTime ?? workflowNow().getTime();
   let lastInboundRRTime = input.lastInboundRRTime ?? 0;
 
@@ -374,11 +380,15 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
 
   // ── 3c Tier-1 — coarse activity (currentTool + context usage) ──
   // Refreshed by the heartbeat piggyback; surfaced by `getCoarseActivityQuery`.
-  // Deliberately volatile/live — NOT carried across continueAsNew (no input
-  // field), so a fresh run reports `{currentTool:null}` until the next ~30s
-  // heartbeat repopulates it. Acceptable for coarse observability; the live,
-  // fine-grained tail is the off-wire /inner side-channel.
-  let coarseActivity: { currentTool: string | null; contextTokens?: number; contextPercent?: number } = { currentTool: null };
+  // PR-E: CARRIED across continueAsNew. The original "deliberately volatile —
+  // acceptable" rationale was written when CAN was effectively unreachable
+  // (server suggestion ~10k events — the RCA's never-CAN bug); with early-CAN
+  // firing ~2-3×/day, dropping it would blank the mission-control board's
+  // currentTool/context% for up to a heartbeat interval on every CAN. A truly
+  // FRESH start (no input field, incl. pre-E CAN payloads) still begins idle.
+  // The live, fine-grained tail remains the off-wire /inner side-channel.
+  let coarseActivity: { currentTool: string | null; contextTokens?: number; contextPercent?: number } =
+    input.coarseActivity ?? { currentTool: null };
 
   // ── Warm Hold + Pause State ──
   let outboxLocked = input.outboxLocked ?? false;
@@ -1068,8 +1078,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   setHandler(testForceContinueAsNewSignal, () => {
     forceContinueAsNew = true;
     wakeEpoch++;
-    lastActivityTime = workflowNow().getTime();
-    activityCount++;
+    // PR-E: deliberately does NOT bump `lastActivityTime`/`activityCount` —
+    // per the getActivityState contract, lifecycle plumbing isn't "work",
+    // and a test fixture that mutates the very fields the early-CAN carry
+    // tests assert on would make those tests non-deterministic.
   });
 
   // ── v0.25 Attachment Lifecycle Handlers (design §§8, §9.2, §9.5) ──
@@ -2445,12 +2457,33 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // The phase machine (lease expiry, `processingDeadline`, `adapterExited`) is now
     // the single source of liveness truth; see §§9.5.a/b above.
 
-    // Prevent unbounded history growth — let the SDK decide when. The
-    // `forceContinueAsNew` flag (#226 test-only) piggybacks on this branch so
-    // the test fixture exercises the exact production CAN path, including the
-    // §2.3 lease extension below.
+    // Prevent unbounded history growth. The `forceContinueAsNew` flag (#226
+    // test-only) piggybacks on this branch so the test fixture exercises the
+    // exact production CAN path, including the §2.3 lease extension below.
+    //
+    // PR-E (daemon-resilience) — early CAN. The server's
+    // `continueAsNewSuggested` fires at ~10,240 events / ~10 MB, which let
+    // session histories grow ~200 events/h for days; replaying one inside the
+    // workflow-task budget is what killed the daemon on 2026-07-13 (RCA:
+    // docs/research/daemon-query-timeout-rca.md §4). Trigger far earlier on
+    // an explicit threshold so replay cost stays bounded (~2k events ≈ 10h at
+    // observed idle rates; CAN ~2-3×/day/session).
+    //
+    // `patched('v2.0-early-can')` gates ONLY the new clause: histories
+    // recorded before this deploy sailed past event 2000 without a CAN
+    // command, and an ungated trigger would re-decide CAN at that point on
+    // their replay → command mismatch → nondeterminism failure. (The #787
+    // clean-slate removed the 1.x markers because upgrade-to-2 DESTROYS 1.x
+    // histories — that reasoning does not extend to live 2.0 histories.)
+    // `continueAsNewSuggested`/`forceContinueAsNew` stay ungated.
+    //
+    // Staleness bound: this check runs when the main-loop `condition()`
+    // wakes — worst case BACKSTOP_MS (30 min) ≈ ~100-event overshoot at
+    // observed rates. No dedicated timer needed.
     const info = workflowInfo();
-    if (info.continueAsNewSuggested || forceContinueAsNew) {
+    const earlyCan =
+      patched('v2.0-early-can') && shouldEarlyCan(info.historyLength, info.historySize);
+    if (info.continueAsNewSuggested || forceContinueAsNew || earlyCan) {
       forceContinueAsNew = false;
       await condition(allHandlersFinished);
 
@@ -2489,6 +2522,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         ...(pendingReset ? { pendingReset } : {}),
         lastInboundRRTime,
         lastOutboundTime,
+        // PR-E — preserve the freeze-spotting timestamp and the board's
+        // coarse activity across CAN (both previously reset per run, which
+        // was invisible while CAN was unreachable — see the `let` sites).
+        lastActivityTime,
+        coarseActivity,
         // #399 W2 — counters carried across continueAsNew so the
         // dashboard's "Messages" + "tempo" surfaces stay monotonic.
         receivedCount,
