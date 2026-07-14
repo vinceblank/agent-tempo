@@ -129,12 +129,37 @@ Two separate tokens, each scoped to a specific access tier:
 interface HealthV1 {
   ok: true;
   namespace: string;
+  taskQueue: string;        // shared task queue the daemon's workers poll (#444)
   version: string;          // daemon package version
   uptimeMs: number;
   ensembleCount: number;
   subscriberCount: number;  // open SSE connections
+  memory?: MemoryUsageV1;   // process.memoryUsage() snapshot (#336)
+  nondeterminism?: NondeterminismAlarmV1; // daemon nondeterminism alarm (#886)
+  workers?: WorkersHealthV1;              // per-worker supervisor state (PR-D, below)
 }
+
+// PR-D (2026-07-13 daemon-resilience program) — per-worker supervisor state.
+// The daemon heartbeat file refreshes every 60s regardless of worker health,
+// so this field is the ONLY external truth about dispatch capability.
+type WorkersHealthV1 = Record<'shared' | 'host', {
+  state: 'running'        // polling normally
+       | 'restarting'     // last run failed fatally; rebuilding after capped backoff
+       | 'reconnecting'   // cannot create the worker (Temporal unreachable);
+                          // retrying forever — never gives up on connect failures
+       | 'gave-up';       // restart budget (5 per rolling 10min) exhausted;
+                          // the daemon is exiting 1 and writing daemon.last-exit.json
+  restarts: number;         // cumulative successful rebuilds since daemon boot
+  lastFatalAt?: string;     // ISO timestamp of the most recent fatal run() failure
+  lastFatalMessage?: string; // truncated (≤2KB) message of that failure
+}>;
 ```
+
+`workers` is additive and optional — pre-PR-D clients ignore it; non-daemon
+health responders omit it. Monitoring rule of thumb: alert on any worker not
+`running` for more than a few minutes, and treat `gave-up` as "daemon exit(1)
+imminent — read `~/.agent-tempo/daemon.last-exit.json`" (see
+`docs/ops/daemon.md` for the exit-code contract).
 
 ### 4.2 `/v1/ensembles`
 

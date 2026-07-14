@@ -31,8 +31,19 @@ import { attachmentInfoQuery } from './workflows/signals';
 import { queryHandleWithTimeout } from './utils/query-timeout';
 import type { AttachmentInfo, AttachmentPhase } from './types';
 import { emitDevBannerIfActive } from './cli/dev-banner';
-import { WORKFLOW_TASK_TIMEOUT } from './constants';
-import { createWorkers } from './worker';
+import {
+  createWorkerDeps,
+  createSharedWorker,
+  createHostWorker,
+  type SupervisedWorkerHandle,
+} from './worker';
+import {
+  superviseWorker,
+  WorkerHealthRegistry,
+  setGlobalWorkerHealthRegistry,
+  type GiveUpInfo,
+} from './daemon-worker-supervisor';
+import { writeLastExitSync } from './utils/last-exit';
 import type { DoorbellSink } from './activities/outbox';
 import { createTemporalConnection } from './connection';
 import { InnerLoopRegistry } from './http/inner-loop';
@@ -279,7 +290,6 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
     await client.workflow.start('agentGlobalMaestroWorkflow', {
       workflowId: GLOBAL_MAESTRO_WORKFLOW_ID,
       taskQueue: config.taskQueue,
-      workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
       args: [input],
       workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     });
@@ -1085,14 +1095,21 @@ export async function runDaemon(): Promise<0 | 1> {
   // line with a running count — and surfaced on `GET /v1/health`
   // (`HealthV1.nondeterminism`). Runtime.install must precede worker creation
   // and can only run once per process; both hold here (daemon entry point).
-  {
-    const alarm = new NondeterminismAlarm({
-      onHit: (count, sample) => {
-        // Prominent + greppable (`ALARM`), distinct from normal daemon chatter.
-        log(`[agent-tempo:ALARM] nondeterminism #${count} — ${sample.detail}`);
-      },
-    });
-    setGlobalNondeterminismAlarm(alarm);
+  //
+  // PR-D — extracted into a re-invokable helper: `Runtime.deregisterWorker`
+  // idle-shuts the Runtime singleton when the LAST worker/client deregisters,
+  // so if both workers happen to be dead at once mid-restart, the next
+  // `Worker.create` would lazily build a DEFAULT Runtime and silently drop
+  // this alarm logger. The worker supervisors re-assert before every rebuild
+  // (quietly — "already installed" is the healthy case there).
+  const alarm = new NondeterminismAlarm({
+    onHit: (count, sample) => {
+      // Prominent + greppable (`ALARM`), distinct from normal daemon chatter.
+      log(`[agent-tempo:ALARM] nondeterminism #${count} — ${sample.detail}`);
+    },
+  });
+  setGlobalNondeterminismAlarm(alarm);
+  const ensureAlarmRuntimeInstalled = (logSkip: boolean): void => {
     try {
       // Match the SDK default logger level ('INFO') so verbosity is unchanged;
       // the wrapper only ADDS alarm detection on WARN/ERROR records.
@@ -1100,13 +1117,17 @@ export async function runDaemon(): Promise<0 | 1> {
     } catch (err) {
       // Runtime.install throws if a Runtime already exists this process. Non-
       // fatal: the alarm singleton still backs /v1/health; we just couldn't
-      // intercept Core logs. (Shouldn't happen — this is the daemon entry.)
-      log(
-        'nondeterminism alarm: Runtime.install skipped (runtime already initialized):',
-        err instanceof Error ? err.message : err,
-      );
+      // intercept Core logs. (Shouldn't happen at boot — this is the daemon
+      // entry. On supervisor rebuilds it's the NORMAL case, hence `logSkip`.)
+      if (logSkip) {
+        log(
+          'nondeterminism alarm: Runtime.install skipped (runtime already initialized):',
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
-  }
+  };
+  ensureAlarmRuntimeInstalled(true);
 
   // ADR 0014 §5.4 / gate 4 — dev daemon log self-identifies. Banner fires
   // first so it lands at the top of `~/.agent-tempo-dev/daemon.log` for
@@ -1178,7 +1199,7 @@ export async function runDaemon(): Promise<0 | 1> {
         await provisionConn.close();
       }
     } catch (err) {
-      // Connection itself failed — log + fall through. createWorkers() will
+      // Connection itself failed — log + fall through. createWorkerDeps() will
       // surface the same error with its own context.
       log(
         '[dev-mode] namespace pre-create skipped — Temporal connection failed:',
@@ -1192,7 +1213,7 @@ export async function runDaemon(): Promise<0 | 1> {
   // error message includes the exact `temporal operator search-attribute
   // create` commands operators need to paste. Probe failure (Temporal CLI
   // missing, namespace unreachable) is downgraded to a warning — the
-  // createWorkers() call below will surface the connection error with
+  // createWorkerDeps() call below will surface the connection error with
   // better context. The hard-stop is only "namespace reached, but SAs
   // missing".
   {
@@ -1205,19 +1226,29 @@ export async function runDaemon(): Promise<0 | 1> {
     if (!result.ok && !result.probeError) {
       process.stderr.write('ERROR: ' + result.message + '\n');
       log('Daemon refused to boot — search attributes missing on namespace ' + config.temporalNamespace);
+      // PR-D — last-exit marker so the next CLI invocation names the refusal
+      // instead of inferring "unexplained" from a stale PID.
+      writeLastExitSync({
+        reason: 'boot-guard-refused',
+        restarts: 0,
+        at: new Date().toISOString(),
+        pid: process.pid,
+        lastFatalMessage: result.message,
+        version: daemonVersion(),
+      });
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
       process.exit(1);
     } else if (result.probeError) {
       log(
-        'search-attribute preflight probe failed (non-fatal — createWorkers will surface the real error):',
+        'search-attribute preflight probe failed (non-fatal — createWorkerDeps will surface the real error):',
         result.probeError,
       );
     }
   }
 
   // #786 — 2.0 cutover BOOT GUARD. Runs AFTER the search-attribute preflight
-  // and BEFORE createWorkers(): a 2.0 worker cannot deterministically replay a
+  // and BEFORE createWorkerDeps(): a 2.0 worker cannot deterministically replay a
   // 1.x-recorded history, so refuse to register workers if visibility still
   // shows ANY Running agent-tempo workflow lacking the protocol-2 stamp (a
   // pre-cutover 1.x run). FAIL-CLOSED — a timed-out/errored scan, or a failure
@@ -1255,6 +1286,15 @@ export async function runDaemon(): Promise<0 | 1> {
     if (!result.ok) {
       process.stderr.write('ERROR: ' + result.message + '\n');
       log(`Daemon refused to boot — ${result.reason} (#786 protocol guard)`);
+      // PR-D — see the SA-preflight marker above.
+      writeLastExitSync({
+        reason: 'boot-guard-refused',
+        restarts: 0,
+        at: new Date().toISOString(),
+        pid: process.pid,
+        lastFatalMessage: `${result.reason}: ${result.message}`,
+        version: daemonVersion(),
+      });
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
       process.exit(1);
@@ -1263,14 +1303,27 @@ export async function runDaemon(): Promise<0 | 1> {
 
   // Use mutable refs so signal handlers can be registered before workers
   // are created — closes the narrow window where a SIGTERM during
-  // createWorkers() would be missed.
-  let sharedWorker: Awaited<ReturnType<typeof createWorkers>>['sharedWorker'] | null = null;
-  let hostWorker: Awaited<ReturnType<typeof createWorkers>>['hostWorker'] | null = null;
+  // worker creation would be missed. PR-D: the worker supervisors REPLACE
+  // these refs on every rebuild (via onWorkerReplaced) so `shutdown()`
+  // always drains the CURRENT instance, never a dead one.
+  let sharedWorker: SupervisedWorkerHandle['worker'] | null = null;
+  let hostWorker: SupervisedWorkerHandle['worker'] | null = null;
 
   // Register signal handlers first — idempotent, drain-only (no process.exit).
   let shuttingDown = false;
   const hardExit = () => {
     log('Shutdown timeout — forcing exit');
+    // PR-D — 'drain-timeout' marker (devops enum, src/utils/last-exit.ts):
+    // an exit forced by this net is abnormal by contract (§3) even when the
+    // shutdown itself was requested. First-writer-wins inside the writer
+    // means an earlier worker-give-up marker is never clobbered by this one.
+    writeLastExitSync({
+      reason: 'drain-timeout',
+      restarts: 0,
+      at: new Date().toISOString(),
+      pid: process.pid,
+      version: daemonVersion(),
+    });
     try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
     try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
     process.exit(1);
@@ -1342,8 +1395,14 @@ export async function runDaemon(): Promise<0 | 1> {
     // T1.1 — end every open doorbell stream (adapters see :closed + reconnect
     // with backoff; while disconnected they poll at the T0.2 ceiling, §2.5).
     doorbells.close();
-    sharedWorker?.shutdown();
-    hostWorker?.shutdown();
+    // PR-D — tolerate a mid-rebuild ref: between a fatal and the next
+    // successful create, the ref still points at the DEAD worker, and
+    // Worker.shutdown() throws IllegalStateError('Not running') on a FAILED
+    // or not-yet-run instance. A throw here would escape the signal handler
+    // as an uncaughtException mid-drain; the supervisor's own
+    // isShuttingDown() checks already end the loop, so swallowing is safe.
+    try { sharedWorker?.shutdown(); } catch { /* dead/not-running instance */ }
+    try { hostWorker?.shutdown(); } catch { /* dead/not-running instance */ }
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
@@ -1354,12 +1413,32 @@ export async function runDaemon(): Promise<0 | 1> {
   // activity fail-opens to "observers present" (no cadence stretch).
   const observerPresence: ObserverPresenceSource = { current: null };
 
-  // Create workers (signal handlers already active via mutable refs)
+  // Create workers (signal handlers already active via mutable refs).
+  //
+  // PR-D — split construction: `deps` (activity client + activity closures +
+  // workflow bundle) is DAEMON-LIFETIME and reused across supervisor-driven
+  // worker rebuilds — the activity closures capture the ingestTokens /
+  // observerPresence / doorbells singletons wired above, so rebuilding them
+  // per restart would silently re-wire those seams. Only the Worker + its
+  // NativeConnection are per-incarnation. The boot-time FIRST create stays
+  // fail-fast (the boot guards just proved Temporal reachable; a failure here
+  // is config, not outage) and is handed to the supervisors as `initial`.
   log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const workers = await createWorkers(config, ingestTokens, observerPresence, doorbellSink);
-  sharedWorker = workers.sharedWorker;
-  hostWorker = workers.hostWorker;
+  const workerDeps = await createWorkerDeps(config, ingestTokens, observerPresence, doorbellSink);
+  const initialShared = await createSharedWorker(config, workerDeps);
+  const initialHost = await createHostWorker(config, workerDeps);
+  sharedWorker = initialShared.worker;
+  hostWorker = initialHost.worker;
   log('Workers created — processing tasks');
+
+  // PR-D — worker-supervisor health registry, readable by the HTTP
+  // `/v1/health` handler via the module-level global (same pattern as the
+  // #886 nondeterminism alarm). Required in the same PR as the supervisor:
+  // the heartbeat file touches its mtime every 60s regardless of worker
+  // health, so after PR-D it would report "alive" straight through a total
+  // dispatch outage — `health.workers` is the only truth (ruling §2 Q2).
+  const workerHealth = new WorkerHealthRegistry();
+  setGlobalWorkerHealthRegistry(workerHealth);
 
   // #336 — start the periodic memory reporter alongside the workers. The
   // first sample lands in the log immediately as a baseline; subsequent
@@ -1582,16 +1661,80 @@ export async function runDaemon(): Promise<0 | 1> {
     log('http server skipped: no Temporal client available');
   }
 
-  // Run both workers — blocks until shutdown + drain completes
-  try {
-    await Promise.all([sharedWorker.run(), hostWorker.run()]);
-  } catch (err) {
-    log('Worker error:', err);
-  }
+  // ── PR-D — run both workers under supervision ──────────────────────────
+  //
+  // Replaces the fail-fast `Promise.all([shared.run(), host.run()])` that
+  // turned ANY fatal worker error into a whole-daemon exit(0) — the
+  // 2026-07-13 incident (14.5h ensemble freeze). Each supervisor loop is
+  // independent: a shared-queue fatal no longer kills the per-host worker or
+  // the HTTP/SSE surface, and vice versa. Supervisor promises NEVER reject.
+  const bootedAtIso = new Date(DAEMON_STARTED_AT).toISOString();
+  const giveUp: { current: GiveUpInfo | null } = { current: null };
+  const onGiveUp = (info: GiveUpInfo): void => {
+    // First give-up is causal (ruling §Q2); the writer's first-writer-wins
+    // makes a second call a no-op on disk, this latch keeps our log/exit
+    // reporting on the causal one too.
+    if (giveUp.current) return;
+    giveUp.current = info;
+    // Marker BEFORE exit (ruling §2 Q3). lastHeartbeatAt: read fresh — we're
+    // pre-exit, so the heartbeat file mtime is whatever OUR process last
+    // touched (the next boot truncates it, but that hasn't happened yet).
+    let lastHeartbeatAt: string | undefined;
+    try {
+      lastHeartbeatAt = fs.statSync(DAEMON_HEARTBEAT_PATH).mtime.toISOString();
+    } catch { /* already unlinked/absent — omit */ }
+    writeLastExitSync({
+      reason: 'worker-give-up',
+      worker: info.worker,
+      restarts: info.restarts,
+      at: info.atIso,
+      pid: process.pid,
+      lastFatalMessage: info.lastFatalMessage,
+      lastHeartbeatAt,
+      bootedAt: bootedAtIso,
+      version: daemonVersion(),
+    });
+    // Drain everything else (HTTP, aggregate, the other worker) through the
+    // normal shutdown path; the 15s hardExit net still bounds the drain.
+    shutdown();
+  };
+  const outcomes = await Promise.all([
+    superviseWorker({
+      name: 'shared',
+      factory: () => createSharedWorker(config, workerDeps),
+      initial: initialShared,
+      isShuttingDown: () => shuttingDown,
+      health: workerHealth,
+      onWorkerReplaced: (w) => { sharedWorker = w; },
+      onGiveUp,
+      ensureRuntimeInstalled: () => ensureAlarmRuntimeInstalled(false),
+      log,
+    }),
+    superviseWorker({
+      name: 'host',
+      factory: () => createHostWorker(config, workerDeps),
+      initial: initialHost,
+      isShuttingDown: () => shuttingDown,
+      health: workerHealth,
+      onWorkerReplaced: (w) => { hostWorker = w; },
+      onGiveUp,
+      ensureRuntimeInstalled: () => ensureAlarmRuntimeInstalled(false),
+      log,
+    }),
+  ]);
 
   // Workers have stopped — clean up PID file and report the exit code to
   // the entry-point guard (or the in-process PR-C `--foreground` caller).
+  //
+  // Exit-code contract (ruling §3, docs/ops/daemon.md): `0` ONLY for a
+  // requested shutdown (SIGTERM/SIGINT, drain complete); a give-up exits `1`
+  // so external supervision restarts the daemon and the last-exit marker
+  // (written in onGiveUp, above) explains why on the next CLI invocation.
   try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+  if (outcomes.includes('gave-up')) {
+    log(`Daemon stopped after worker give-up (worker=${giveUp.current?.worker ?? 'unknown'}) — exiting 1`);
+    return 1;
+  }
   log('Daemon stopped');
   return 0;
 }
@@ -1610,6 +1753,17 @@ if (require.main === module) {
     (code) => process.exit(code),
     (err) => {
       log('Fatal error:', err);
+      // PR-D — 'unhandled-fatal' marker so the next CLI invocation names the
+      // crash. First-writer-wins: never clobbers a more specific marker
+      // (worker-give-up / boot-guard-refused) written earlier in this run.
+      writeLastExitSync({
+        reason: 'unhandled-fatal',
+        restarts: 0,
+        at: new Date().toISOString(),
+        pid: process.pid,
+        lastFatalMessage: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        version: daemonVersion(),
+      });
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       process.exit(1);
     },

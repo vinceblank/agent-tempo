@@ -86,6 +86,9 @@ import type { HealthV1 } from './event-types';
 // alarm core is Temporal-VALUE-free, so this import doesn't pull the worker
 // runtime into the HTTP layer.
 import { getGlobalNondeterminismAlarm } from '../observability/nondeterminism-alarm';
+// PR-D — worker-supervisor health for `/v1/health.workers` (same global-
+// singleton pattern as the #886 alarm above).
+import { getGlobalWorkerHealthRegistry } from '../daemon-worker-supervisor';
 
 const log = (...args: unknown[]) =>
   console.error(`[agent-tempo:http ${new Date().toISOString()}]`, ...args);
@@ -874,6 +877,13 @@ function handleHealth(res: http.ServerResponse, ctx: HandleContext): void {
     ...(() => {
       const snap = getGlobalNondeterminismAlarm()?.snapshot();
       return snap ? { nondeterminism: snap } : {};
+    })(),
+    // PR-D — per-worker supervisor state (see HealthV1.workers). The daemon
+    // installs the registry before the HTTP server starts; non-daemon
+    // responders (registry absent) simply omit the field.
+    ...(() => {
+      const registry = getGlobalWorkerHealthRegistry();
+      return registry ? { workers: registry.snapshot() } : {};
     })(),
   };
   // Best-effort ensemble count — soft-fail to 0 rather than 500ing on a

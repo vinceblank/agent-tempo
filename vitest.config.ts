@@ -28,6 +28,9 @@ export default defineConfig({
       'tests/reconcile/**/*.test.ts',
       'tests/http/**/*.test.ts',
       'tests/utils/**/*.test.ts',
+      // PR-D (2026-07-13 daemon-resilience) — worker-supervisor state machine
+      // (virtual clock + fake workers; no Temporal server).
+      'tests/daemon/**/*.test.ts',
       // ADR 0014 PR-2 — mock-adapter pure-logic unit tests (parser, prefix
       // parser, build-exclusion script harness, source-level recruit gate
       // + prefix-safety regressions).
