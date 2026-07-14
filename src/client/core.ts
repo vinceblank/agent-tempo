@@ -43,10 +43,7 @@ import {
   requestDetachSignal,
   releaseHeldSignal,
   setPausedSignal,
-  getRunIdQuery,
-  getMessagingStateQuery,
-  getLeaseStateQuery,
-  getCoarseActivityQuery,
+  getWireMetaQuery,
 } from '../workflows/signals';
 import {
   maestroPausedQuery,
@@ -529,51 +526,36 @@ export function createTempoClientCore(
       lease?: { expiresAt: number | null; leaseMs: number | null };
       coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
     } | null> {
-      // Issue #399 W2 — fan-out three queries against the session
-      // workflow. The handle is opened by workflow ID directly; if the
-      // workflow can't be resolved (just-recruited, just-destroyed,
-      // transient lookup failure) every query rejects together and
-      // we return `null` so the caller's projection drops the whole
-      // wire-meta block rather than emitting half-populated fields.
+      // Daemon-resilience PR-B — ONE combined `getWireMeta` query per
+      // player per tick, replacing the #399 W2 four-query fan-out
+      // (getRunId / getMessagingState / getLeaseState /
+      // getCoarseActivity). The old shape fired 4 query tasks × N
+      // players × 750 ms into the daemon's single workflow thread
+      // (~20 q/s at idle) — the self-inflicted storm behind the
+      // 2026-07-13 daemon death (docs/research/daemon-query-timeout-rca.md).
+      // No rolling-upgrade fallback needed: queries execute against the
+      // WORKER's bundled code, and the daemon that runs this client also
+      // bundles + serves the new handler — it exists the moment the
+      // daemon restarts, even for workflow runs started under old code.
       const h = handle(sessionWorkflowId(ensemble, playerId));
-      // Issue #433 — bound each per-session query. Without a timeout,
-      // `Promise.allSettled` waits for the slowest query to settle (or
-      // never, if the session worker is wedged), so a single hung session
-      // would block the entire snapshot fan-out for `/v1/state/:ensemble`
-      // and the AggregateRunner's 750ms poll loop. With timeouts, hung
-      // queries reject as `QueryTimeoutError`, `Promise.allSettled` sees
-      // three rejections and the existing all-rejected branch returns
-      // `null` — caller treats this player's wireMeta as missing.
-      const [runIdR, messagingR, leaseR, coarseR] = await Promise.allSettled([
-        queryHandleWithTimeout(h, getRunIdQuery),
-        queryHandleWithTimeout(h, getMessagingStateQuery),
-        queryHandleWithTimeout(h, getLeaseStateQuery),
-        // 3c Tier-1 — coarse activity (currentTool + context usage). Bounded like
-        // the others; an older session workflow without the handler rejects and
-        // is simply absent (additive/non-breaking).
-        queryHandleWithTimeout(h, getCoarseActivityQuery),
-      ]);
-      // If every query rejected, treat this as "session unreachable" —
-      // the caller renders no wire-meta rather than partial sentinels.
-      if (
-        runIdR.status === 'rejected' &&
-        messagingR.status === 'rejected' &&
-        leaseR.status === 'rejected' &&
-        coarseR.status === 'rejected'
-      ) {
+      // Issue #433 — bound the query. Without a timeout a wedged session
+      // worker would block the entire snapshot fan-out for
+      // `/v1/state/:ensemble` and the AggregateRunner's 750ms poll loop.
+      // On timeout / unresolvable workflow (just-recruited,
+      // just-destroyed, transient lookup failure) we return `null` so
+      // the caller's projection drops the whole wire-meta block rather
+      // than emitting half-populated fields.
+      try {
+        const meta = await queryHandleWithTimeout(h, getWireMetaQuery);
+        return {
+          runId: meta.runId,
+          messaging: meta.messaging,
+          lease: meta.lease,
+          coarse: meta.coarse,
+        };
+      } catch {
         return null;
       }
-      const out: {
-        runId?: string;
-        messaging?: { received: number; sent: number; outbox: string };
-        lease?: { expiresAt: number | null; leaseMs: number | null };
-        coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
-      } = {};
-      if (runIdR.status === 'fulfilled') out.runId = runIdR.value;
-      if (messagingR.status === 'fulfilled') out.messaging = messagingR.value;
-      if (leaseR.status === 'fulfilled') out.lease = leaseR.value;
-      if (coarseR.status === 'fulfilled') out.coarse = coarseR.value;
-      return out;
     },
 
     async getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]> {

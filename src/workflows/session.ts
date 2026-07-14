@@ -65,6 +65,7 @@ import {
   getActivityStateQuery,
   getLeaseStateQuery,
   getCoarseActivityQuery,
+  getWireMetaQuery,
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
@@ -804,6 +805,30 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
 
   // 3c Tier-1 — surface the latest coarse activity for the snapshot fan-out.
   setHandler(getCoarseActivityQuery, () => ({ ...coarseActivity }));
+
+  // Daemon-resilience PR-B — combined wire-meta: the SAME four read
+  // expressions as `getRunId` / `getMessagingState` / `getLeaseState` /
+  // `getCoarseActivity` (above) in ONE query, so the snapshot fan-out
+  // pays 1 query task per player per tick instead of 4 (precedent:
+  // `pendingIntake`, #750). Keep all five handlers serving — the wire
+  // protocol is stable (removing a documented name is a breaking
+  // change), and older daemons on other hosts in a mixed-version fleet
+  // still poll the standalone quartet.
+  setHandler(getWireMetaQuery, () => ({
+    runId: workflowInfo().runId,
+    messaging: {
+      received: receivedCount,
+      sent: sentCount,
+      outbox: outboxStatus(),
+    },
+    lease: currentAttachment
+      ? {
+          expiresAt: Date.parse(currentAttachment.expiresAt),
+          leaseMs: currentAttachment.leaseMs,
+        }
+      : { expiresAt: null, leaseMs: null },
+    coarse: { ...coarseActivity },
+  }));
 
   // ── Hold / Release Handlers ──
 

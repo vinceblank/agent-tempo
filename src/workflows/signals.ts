@@ -458,6 +458,38 @@ export const getCoarseActivityQuery = defineQuery<{
   contextPercent?: number;
 }>('getCoarseActivity');
 
+/** Result shape of {@link getWireMetaQuery}. */
+export interface WireMeta {
+  /** Identical to `getRunId`. */
+  runId: string;
+  /** Identical to `getMessagingState`. */
+  messaging: { received: number; sent: number; outbox: string };
+  /** Identical to `getLeaseState`. */
+  lease: { expiresAt: number | null; leaseMs: number | null };
+  /** Identical to `getCoarseActivity`. */
+  coarse: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
+}
+
+/**
+ * Combined wire-meta for the snapshot fan-out (daemon-resilience PR-B).
+ *
+ * Returns in ONE query what `getRunId` + `getMessagingState` +
+ * `getLeaseState` + `getCoarseActivity` return separately — the four
+ * queries `getPlayerWireMeta` used to fire per player per 750 ms
+ * aggregate tick. At idle that was ~20 queries/s into the worker's
+ * single workflow thread (`reuseV8Context` default), starving workflow
+ * tasks and — via WFT-timeout → sticky invalidation → full-history
+ * legacy-query replay — killing the daemon on 2026-07-13 (see
+ * docs/research/daemon-query-timeout-rca.md). This query is a 4× cut
+ * on that load for the same information.
+ *
+ * Precedent for merging polled queries: `pendingIntake` (#750).
+ * Additive/non-breaking: the four standalone queries stay served —
+ * the wire protocol is stable, and older daemons on other hosts in a
+ * mixed-version fleet still poll them.
+ */
+export const getWireMetaQuery = defineQuery<WireMeta>('getWireMeta');
+
 // ── Test-only Signals ──
 //
 // **Test-only.** Forces the session workflow's main loop to take the

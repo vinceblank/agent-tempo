@@ -31,6 +31,7 @@ import {
   getMessagingStateQuery,
   getActivityStateQuery,
   getLeaseStateQuery,
+  getWireMetaQuery,
   claimAttachmentUpdate,
   forceDetachUpdate,
 } from '../src/workflows/signals';
@@ -188,6 +189,61 @@ describe('session wire extensions (#399 W2)', function () {
       });
       const state = await handle.query(getLeaseStateQuery);
       expect(state).to.deep.equal({ expiresAt: null, leaseMs: null });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  // ── getWireMeta (daemon-resilience PR-B) ───────────────────────────
+  //
+  // The combined query MUST return field-for-field what the four
+  // standalone queries return — `getPlayerWireMeta` switched its poll
+  // path to this single query, so any drift between the combined and
+  // standalone shapes silently corrupts the snapshot projection.
+
+  describe('getWireMeta (combined, PR-B)', function () {
+    it('initial state matches the standalone queries field-for-field', async function () {
+      this.timeout(10_000);
+      const handle = await startFresh(`wiremeta-init-${Date.now()}`);
+      const [combined, runId, messaging, lease] = await Promise.all([
+        handle.query(getWireMetaQuery),
+        handle.query(getRunIdQuery),
+        handle.query(getMessagingStateQuery),
+        handle.query(getLeaseStateQuery),
+      ]);
+      expect(combined.runId).to.equal(runId);
+      expect(combined.messaging).to.deep.equal(messaging);
+      expect(combined.lease).to.deep.equal(lease);
+      // Fresh session: no heartbeat piggyback yet → coarse is idle.
+      expect(combined.coarse).to.deep.equal({ currentTool: null });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+
+    it('reflects lease + messaging changes exactly like the standalone queries', async function () {
+      this.timeout(10_000);
+      const handle = await startFresh(`wiremeta-live-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', protocolVersion: PROTOCOL_VERSION, adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+      });
+      await handle.signal(receiveMessageSignal, { from: 'tester', text: 'one' });
+      await handle.signal(receiveMessageSignal, { from: 'tester', text: 'two' });
+
+      const combined = await handle.query(getWireMetaQuery);
+      expect(combined.lease.leaseMs).to.equal(30_000);
+      expect(combined.lease.expiresAt).to.equal(Date.parse(token.expiresAt));
+      expect(combined.messaging.received).to.equal(2);
+      expect(combined.messaging.sent).to.equal(0);
+
+      // Cross-check against the standalone pair — both surfaces stay
+      // served (stable wire protocol; older daemons still poll them).
+      const [messaging, lease] = await Promise.all([
+        handle.query(getMessagingStateQuery),
+        handle.query(getLeaseStateQuery),
+      ]);
+      expect(combined.messaging).to.deep.equal(messaging);
+      expect(combined.lease).to.deep.equal(lease);
+
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
     });
