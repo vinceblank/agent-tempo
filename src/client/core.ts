@@ -14,7 +14,7 @@
  * `docs/design/tempoclient-core-spawn-split.md`.
  */
 import { hostname as osHostname } from 'os';
-import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, QueryNotRegisteredError, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import { WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { recordAction } from '../utils/action-counters';
@@ -44,6 +44,10 @@ import {
   releaseHeldSignal,
   setPausedSignal,
   getWireMetaQuery,
+  getRunIdQuery,
+  getMessagingStateQuery,
+  getLeaseStateQuery,
+  getCoarseActivityQuery,
 } from '../workflows/signals';
 import {
   maestroPausedQuery,
@@ -533,10 +537,16 @@ export function createTempoClientCore(
       // players × 750 ms into the daemon's single workflow thread
       // (~20 q/s at idle) — the self-inflicted storm behind the
       // 2026-07-13 daemon death (docs/research/daemon-query-timeout-rca.md).
-      // No rolling-upgrade fallback needed: queries execute against the
-      // WORKER's bundled code, and the daemon that runs this client also
-      // bundles + serves the new handler — it exists the moment the
-      // daemon restarts, even for workflow runs started under old code.
+      // Rolling-upgrade caveat (#937 fast-follow c): queries execute
+      // against the worker that serves the SESSION's task queue. On a
+      // single host that's this daemon (handler exists the moment the
+      // daemon restarts), but per-host task queues mean a REMOTE host's
+      // daemon may be one release behind and not serve `getWireMeta`
+      // yet. That failure is a typed `QueryNotRegisteredError` — fall
+      // back to the pre-#937 four-query fan-out so a stale remote host
+      // degrades per-field instead of losing its whole wireMeta block.
+      // Self-healing: once the remote daemon restarts on new code, the
+      // single-query path takes over again.
       const h = handle(sessionWorkflowId(ensemble, playerId));
       // Issue #433 — bound the query. Without a timeout a wedged session
       // worker would block the entire snapshot fan-out for
@@ -553,9 +563,35 @@ export function createTempoClientCore(
           lease: meta.lease,
           coarse: meta.coarse,
         };
-      } catch {
+      } catch (err) {
+        // ONLY the handler-missing case falls back. Timeouts and
+        // unreachable workflows return `null` as before — re-firing 4
+        // queries at a wedged worker would resurrect the exact storm
+        // #937 removed.
+        if (!(err instanceof QueryNotRegisteredError)) return null;
+      }
+      // Legacy per-field fan-out (verbatim pre-#937 semantics): each
+      // query soft-fails independently; all-rejected → null.
+      const [runIdR, messagingR, leaseR, coarseR] = await Promise.allSettled([
+        queryHandleWithTimeout(h, getRunIdQuery),
+        queryHandleWithTimeout(h, getMessagingStateQuery),
+        queryHandleWithTimeout(h, getLeaseStateQuery),
+        queryHandleWithTimeout(h, getCoarseActivityQuery),
+      ]);
+      if (
+        runIdR.status === 'rejected' &&
+        messagingR.status === 'rejected' &&
+        leaseR.status === 'rejected' &&
+        coarseR.status === 'rejected'
+      ) {
         return null;
       }
+      return {
+        ...(runIdR.status === 'fulfilled' ? { runId: runIdR.value } : {}),
+        ...(messagingR.status === 'fulfilled' ? { messaging: messagingR.value } : {}),
+        ...(leaseR.status === 'fulfilled' ? { lease: leaseR.value } : {}),
+        ...(coarseR.status === 'fulfilled' ? { coarse: coarseR.value } : {}),
+      };
     },
 
     async getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]> {

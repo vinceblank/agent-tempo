@@ -20,6 +20,7 @@
  */
 import { expect } from 'chai';
 import type { Client, WorkflowHandle } from '@temporalio/client';
+import { QueryNotRegisteredError } from '@temporalio/client';
 import { createTempoClientCore } from '../src/client/core';
 import { sessionWorkflowId, maestroWorkflowId } from '../src/config';
 import {
@@ -111,6 +112,89 @@ describe('snapshot fan-out with hung session (#433)', function () {
       const tempo = createTempoClientCore(client);
       const result = await tempo.getPlayerWireMeta(ensemble, playerId);
       expect(result).to.equal(null);
+    });
+  });
+
+  // ── getPlayerWireMeta stale-host fallback (#937 fast-follow c) ──────
+
+  describe('getPlayerWireMeta stale-host fallback (#937-c)', function () {
+    /**
+     * Per-host task queues: the session's queries execute on ITS host's
+     * daemon, which may be one release behind and not serve `getWireMeta`.
+     * That surfaces as a typed `QueryNotRegisteredError` → fall back to
+     * the pre-#937 four-query fan-out (per-field degradation). Any OTHER
+     * failure (timeout, unreachable) must NOT fall back — re-firing 4
+     * queries at a wedged worker resurrects the storm #937 removed.
+     */
+    function fakeStaleHostClient(opts: {
+      wireMetaBehavior: 'not-registered' | 'hang';
+      workflowId: string;
+    }): { client: Client; calls: string[] } {
+      const calls: string[] = [];
+      const client = {
+        workflow: {
+          getHandle(workflowId: string): WorkflowHandle {
+            return {
+              workflowId,
+              async query(def: unknown): Promise<unknown> {
+                const name = typeof def === 'string' ? def : (def as { name: string }).name;
+                calls.push(name);
+                if (name === 'getWireMeta') {
+                  if (opts.wireMetaBehavior === 'hang') return new Promise(() => {});
+                  throw new QueryNotRegisteredError(
+                    `Workflow did not register a handler for getWireMeta. Registered queries: [getRunId]`,
+                    3 as never,
+                  );
+                }
+                if (name === 'getRunId') return 'legacy-run-id';
+                if (name === 'getMessagingState') return { received: 1, sent: 2, outbox: 'empty' };
+                if (name === 'getLeaseState') return { expiresAt: null, leaseMs: null };
+                if (name === 'getCoarseActivity') return { currentTool: null };
+                throw new Error(`unhandled query: ${name}`);
+              },
+            } as unknown as WorkflowHandle;
+          },
+        },
+      } as unknown as Client;
+      return { client, calls };
+    }
+
+    it('falls back to the four legacy queries when getWireMeta is not registered on the serving worker', async function () {
+      this.timeout(5_000);
+      const ensemble = 'demo';
+      const playerId = 'stale-host';
+      const { client, calls } = fakeStaleHostClient({
+        wireMetaBehavior: 'not-registered',
+        workflowId: sessionWorkflowId(ensemble, playerId),
+      });
+      const tempo = createTempoClientCore(client);
+      const result = await tempo.getPlayerWireMeta(ensemble, playerId);
+      expect(result).to.deep.equal({
+        runId: 'legacy-run-id',
+        messaging: { received: 1, sent: 2, outbox: 'empty' },
+        lease: { expiresAt: null, leaseMs: null },
+        coarse: { currentTool: null },
+      });
+      expect(calls[0]).to.equal('getWireMeta');
+      expect(calls.slice(1).sort()).to.deep.equal([
+        'getCoarseActivity', 'getLeaseState', 'getMessagingState', 'getRunId',
+      ]);
+    });
+
+    it('does NOT fall back on timeout — returns null with no legacy fan-out', async function () {
+      this.timeout(5_000);
+      const ensemble = 'demo';
+      const playerId = 'wedged-host';
+      const { client, calls } = fakeStaleHostClient({
+        wireMetaBehavior: 'hang',
+        workflowId: sessionWorkflowId(ensemble, playerId),
+      });
+      const tempo = createTempoClientCore(client);
+      const result = await tempo.getPlayerWireMeta(ensemble, playerId);
+      expect(result).to.equal(null);
+      // Only the combined query was fired — a wedged worker must not be
+      // hit with 4 more queries.
+      expect(calls).to.deep.equal(['getWireMeta']);
     });
   });
 
