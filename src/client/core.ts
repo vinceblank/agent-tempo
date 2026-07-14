@@ -16,6 +16,7 @@
 import { hostname as osHostname } from 'os';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
+import { WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { recordAction } from '../utils/action-counters';
 import type {
   AttachmentPhase,
@@ -1416,6 +1417,7 @@ export function createTempoClientCore(
         const wfHandle = await client.workflow.start('agentSessionWorkflow', {
           workflowId,
           taskQueue: 'agent-tempo',
+          workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
           workflowExecutionTimeout: '24 hours',
@@ -1442,6 +1444,7 @@ export function createTempoClientCore(
           await client.workflow.start('agentMaestroWorkflow', {
             workflowId: maestroHubId,
             taskQueue: 'agent-tempo',
+            workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
             // T0.1 (#748) — thread the cost profile (see CreateTempoClientOpts).
             args: [{
               ensemble,

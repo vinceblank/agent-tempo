@@ -10,7 +10,7 @@ import {
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
   DEFAULT_RESTART_LEASE_MS,
 } from '../utils/validation';
-import { ENSEMBLE_SENTINEL_FLAG, PROTOCOL_VERSION } from '../constants';
+import { ENSEMBLE_SENTINEL_FLAG, PROTOCOL_VERSION, WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter, spawnPiHeadless } from '../spawn';
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
@@ -619,6 +619,7 @@ export function createOutboxActivities(
         await client.workflow.start('agentSessionWorkflow', {
           workflowId,
           taskQueue,
+          workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
           // T0.5 (#747) — read-only fields ride the MEMO, not search

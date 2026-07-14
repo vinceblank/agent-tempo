@@ -13,7 +13,7 @@ import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
-import { ensembleReadyDirective } from '../constants';
+import { ensembleReadyDirective, WORKFLOW_TASK_TIMEOUT } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:load-lineup]', ...args);
 
@@ -310,6 +310,7 @@ export function buildLoadLineupTool(
                 await client.workflow.start('agentSchedulerWorkflow', {
                   workflowId: wfId,
                   taskQueue: config.taskQueue,
+                  workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
                   args: [{ ensemble: config.ensemble, entries: [scheduleEntry] }],
                   workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
                   searchAttributes: {

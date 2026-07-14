@@ -42,6 +42,30 @@ export const ENSEMBLE_SENTINEL_FLAG = '--remote-control-session-name-prefix';
 export const PROTOCOL_VERSION = 2 as const;
 
 /**
+ * Workflow task timeout for every agent-tempo `workflow.start` site (PR-A of
+ * the 2026-07-13 daemon-resilience program; architect ruling
+ * `docs/research/daemon-resilience-architect-ruling.md` §1).
+ *
+ * Why 30s instead of the server default (10s): the daemon serves ~20 q/s of
+ * visibility-driven queries into ONE workflow V8 thread. Under query
+ * starvation a workflow task can blow the 10s WFT deadline even though the
+ * worker is healthy — which invalidates the sticky cache and forces a
+ * full-history replay, which starves the thread further (the 2026-07-13
+ * escalation ladder that ended in a fatal worker error and a dead daemon).
+ * A 30s budget absorbs the stall instead of amplifying it.
+ *
+ * Pairs with the worker-side `isolateExecutionTimeout: '30s'` in
+ * `src/worker.ts` (the vm-script deadline for a single sandbox call) — the
+ * two budgets should move together.
+ *
+ * NOTE: this is a START option. Already-running workflows keep their old
+ * value until restart or continueAsNew (CAN inherits the previous run's
+ * value unless overridden — none of our CAN sites override it, so new
+ * starts propagate forward).
+ */
+export const WORKFLOW_TASK_TIMEOUT = '30s';
+
+/**
  * Escape the two regex metacharacters that can appear in validated player/ensemble
  * names (which are constrained to `[A-Za-z0-9._-]+`). Safe to interpolate the
  * result into a regex source string.

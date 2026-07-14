@@ -59,7 +59,7 @@ import {
   schedulerWorkflowId,
 } from '../config';
 import { MEMO_KEYS } from '../utils/search-attributes';
-import { PROTOCOL_VERSION } from '../constants';
+import { PROTOCOL_VERSION, WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { defaultPart } from '../utils/default-part';
 import type { AgentType, PlayerStateEntry, ScheduleEntry, SessionInput } from '../types';
 import {
@@ -368,6 +368,7 @@ export async function runFromUpgrade(
       await client.workflow.start(spec.workflowType, {
         workflowId: spec.workflowId,
         taskQueue: opts.taskQueue,
+        workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         args: spec.args as any,
         // Idempotent re-run: an already-recreated workflow is left as-is.

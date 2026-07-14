@@ -31,6 +31,7 @@ import { attachmentInfoQuery } from './workflows/signals';
 import { queryHandleWithTimeout } from './utils/query-timeout';
 import type { AttachmentInfo, AttachmentPhase } from './types';
 import { emitDevBannerIfActive } from './cli/dev-banner';
+import { WORKFLOW_TASK_TIMEOUT } from './constants';
 import { createWorkers } from './worker';
 import type { DoorbellSink } from './activities/outbox';
 import { createTemporalConnection } from './connection';
@@ -278,6 +279,7 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
     await client.workflow.start('agentGlobalMaestroWorkflow', {
       workflowId: GLOBAL_MAESTRO_WORKFLOW_ID,
       taskQueue: config.taskQueue,
+      workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
       args: [input],
       workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     });
