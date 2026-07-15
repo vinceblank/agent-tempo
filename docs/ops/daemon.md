@@ -14,6 +14,58 @@ Ratified by the architect ruling (`docs/research/daemon-resilience-architect-rul
 **Invariant: any exit not initiated by a shutdown signal is non-zero.** Do not
 invent codes 2..N — no consumer keys on them.
 
+External supervision should key `Restart=on-failure`-style policies on this
+contract; belt-and-braces `Restart=always` + `RestartSec=5` is acceptable,
+but a clean `daemon stop` must not fight the supervisor (launchd: prefer the
+`SuccessfulExit=false` KeepAlive dict form).
+
+Historical note: before this contract, a fatal worker error exited **0**
+("Daemon stopped") — which is why the 2026-07-13 incident froze all ensembles
+for ~14.5h: even a correctly-installed `Restart=on-failure` unit would not
+have restarted it.
+
+## Worker supervision (in-process)
+
+Each of the daemon's two Temporal workers (shared queue: workflows +
+delivery activities; per-host queue: spawn/terminate) runs under an
+independent supervisor loop (`src/daemon-worker-supervisor.ts`):
+
+- **Fatal `run()` failure** → the dead worker's NativeConnection is closed
+  and a fresh Worker + connection is built after capped backoff (1s → 30s).
+  The HTTP/SSE surface and the other worker keep serving.
+- **Create/connect failure** (Temporal unreachable) → indefinite
+  capped-backoff reconnect with a rate-limited log beacon. **Never** counts
+  toward the restart budget and never gives up — restarting the local
+  Temporal server is a routine operation.
+- **Restart budget**: 5 restarts per rolling 10 minutes, counted only for
+  fatal failures after a successful create. A run that survives ≥10 minutes
+  clears the window. Budget exhausted → `[agent-tempo:ALARM] worker '<name>'
+  gave up …`, `daemon.last-exit.json` is written, and the daemon exits `1`.
+
+Live state is served on `GET /v1/health` as `workers` (see
+`docs/SSE-PROTOCOL.md` §4.1). The heartbeat file (`daemon.heartbeat`)
+refreshes its mtime every 60s **regardless of worker health** — for
+dispatch-capability monitoring, `health.workers` is the only truth.
+
+## `daemon.last-exit.json`
+
+One-shot post-mortem marker for an abnormal exit, written BEFORE the process
+dies and surfaced once on the next CLI invocation. Schema and semantics
+(first-writer-wins, closed `reason` enum, reader-clears) are owned by
+`src/utils/last-exit.ts` — see `docs/design/daemon-last-exit-schema.md`.
+A clean exit (code 0) writes nothing: absence of the file IS the
+"shut down cleanly" signal.
+
+Writers in the daemon:
+
+| `reason` | Write site |
+|---|---|
+| `worker-give-up` | supervisor `onGiveUp` (src/daemon.ts) — includes `worker`, `restarts`, `lastFatalMessage`, `lastHeartbeatAt`, `bootedAt` |
+| `boot-guard-refused` | SA-preflight refusal and #786 protocol-guard refusal |
+| `drain-timeout` | the 15s `hardExit` safety-net timer |
+| `unhandled-fatal` | the entry-point guard's catch |
+| `stale-pid-unexplained` | (CLI-side writer — dead PID found with no self-written marker) |
+
 ## Per-platform supervisor reliability (as verified, not as designed)
 
 Design intent treated each platform's native crash-restart (systemd

@@ -24,6 +24,7 @@ import type {
   ScheduleEntry,
 } from '../types';
 import type { EnsembleSummary } from '../client/interface';
+import type { WorkersHealthV1 } from '../daemon-worker-supervisor';
 
 // ── §4. Snapshot payload shapes ──────────────────────────────────────────
 
@@ -65,6 +66,18 @@ export interface HealthV1 {
    * Optional so pre-#886 clients (and non-daemon health responders) ignore it.
    */
   nondeterminism?: NondeterminismAlarmV1;
+  /**
+   * PR-D (2026-07-13 daemon-resilience program) — per-worker supervisor
+   * state. Present when the daemon runs its workers under supervision
+   * (always, post-PR-D). The heartbeat file's mtime keeps refreshing every
+   * 60s regardless of worker health, so this field is the ONLY external
+   * truth about dispatch capability: `state: 'running'` on both workers
+   * means tasks are being polled; `restarting`/`reconnecting` means a
+   * temporary gap; `gave-up` means the daemon is about to exit 1.
+   * See `WorkersHealthV1` in src/daemon-worker-supervisor.ts (Temporal-free
+   * type). Optional so pre-PR-D clients and non-daemon responders ignore it.
+   */
+  workers?: WorkersHealthV1;
 }
 
 /** #886 — `/v1/health` shape of the nondeterminism alarm snapshot. */
