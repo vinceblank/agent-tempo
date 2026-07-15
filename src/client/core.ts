@@ -14,7 +14,7 @@
  * `docs/design/tempoclient-core-spawn-split.md`.
  */
 import { hostname as osHostname } from 'os';
-import { Client, QueryNotRegisteredError, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, QueryNotRegisteredError, WorkflowIdConflictPolicy, WorkflowNotFoundError } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import { WORKFLOW_TASK_TIMEOUT } from '../constants';
 import { recordAction } from '../utils/action-counters';
@@ -122,6 +122,26 @@ export interface CreateTempoClientOpts {
 /** Shared unknown-error → string helper for summary `error` fields. */
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * P0 restore/restart fix (2026-07-15 incident) — classify "the headless
+ * maestro session workflow is missing or closed". Covers:
+ *  - never created (ensemble brought up by a path that never called
+ *    `ensureMaestroSession` — the TUI, deleted in #789, was the historical
+ *    creator; today only the daemon's HTTP cue/reset routes ensure it),
+ *  - expired (`ensureMaestroSession` starts it with
+ *    `workflowExecutionTimeout: '24 hours'`, so it silently self-reaps),
+ *  - terminated/completed by a destroy or the 2.0 cutover.
+ * `instanceof` covers the SDK's typed rejection; the message probes cover the
+ * same condition surfaced through wrapper layers (style of
+ * `isQueryNotRegisteredError` / `adapters/terminal-error.ts`).
+ */
+export function isWorkflowGoneError(err: unknown): boolean {
+  if (err instanceof WorkflowNotFoundError) return true;
+  if ((err as Error)?.name === 'WorkflowNotFoundError') return true;
+  const msg = (err as Error)?.message ?? '';
+  return /workflow not found|workflow execution already completed/i.test(msg);
 }
 
 // ── Factory ──
@@ -239,6 +259,110 @@ export function createTempoClientCore(
     recordAction('list');
     return client.workflow.list(options);
   };
+
+  // ── Maestro session (headless outbox-host workflow) ──────────────────────
+  async function ensureMaestroSessionImpl(ensemble: string): Promise<string> {
+    const workflowId = sessionWorkflowId(ensemble, 'maestro');
+
+    const sessionInput = {
+      metadata: {
+        playerId: 'maestro',
+        ensemble,
+        hostname: 'dashboard',
+        workDir: process.cwd(),
+        isConductor: false,
+        agentType: 'claude',
+        playerType: 'maestro',
+        playerTypeDescription: 'TUI dashboard — human operator interface',
+      },
+      part: 'Dashboard interface (human operator)',
+      disableStaleDetection: true,
+    };
+
+    try {
+      const wfHandle = await client.workflow.start('agentSessionWorkflow', {
+        workflowId,
+        taskQueue: 'agent-tempo',
+        workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
+        args: [sessionInput],
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        workflowExecutionTimeout: '24 hours',
+        // T0.5 (#747) — PlayerType rides the memo, not a search attribute
+        // (fresh namespaces register only the 5 filter SAs).
+        searchAttributes: {
+          AgentTempoHostname: ['dashboard'],
+          AgentTempoEnsemble: [ensemble],
+          AgentTempoPlayerId: ['maestro'],
+        },
+        memo: {
+          [MEMO_KEYS.playerType]: 'maestro',
+          [MEMO_KEYS.isConductor]: false,
+          [MEMO_KEYS.part]: sessionInput.part,
+        },
+      });
+      console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
+
+      // Also ensure the per-ensemble Maestro hub workflow exists.
+      // Without this, getEnsembleChat returns empty when the hub wasn't
+      // previously created by a CLI command.
+      const maestroHubId = maestroWorkflowId(ensemble);
+      try {
+        await client.workflow.start('agentMaestroWorkflow', {
+          workflowId: maestroHubId,
+          taskQueue: 'agent-tempo',
+          workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
+          // T0.1 (#748) — thread the cost profile (see CreateTempoClientOpts).
+          args: [{
+            ensemble,
+            ...(opts.costProfile === 'cloud' ? { costProfile: 'cloud' as const } : {}),
+          }],
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+          searchAttributes: {
+            AgentTempoEnsemble: [ensemble],
+          },
+        });
+        console.error(`[tui:client] Maestro hub ensured: ${maestroHubId}`);
+      } catch {
+        // Maestro hub is non-critical — log but don't fail
+        console.error(`[tui:client] Maestro hub start skipped (may already exist): ${maestroHubId}`);
+      }
+
+      return wfHandle.workflowId;
+    } catch (err) {
+      console.error('[tui:client] Failed to start maestro session:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * P0 restore/restart fix (2026-07-15 incident) — submit an outbox entry
+   * via the ensemble's headless maestro session (`agent-session-{e}-maestro`),
+   * CREATING IT ON DEMAND when it is missing or expired.
+   *
+   * Why lazy-ensure at this choke point instead of per-caller ensures: the
+   * maestro session was historically created by the TUI (deleted in #789)
+   * and later by SOME daemon HTTP routes (cue/reset ensured; restart/detach/
+   * release/recruit/destroy did NOT) — and even an ensured session self-reaps
+   * after its 24h `workflowExecutionTimeout`. Every direct TempoClient caller
+   * (CLI `restore` → `restoreOrphansOnce`, HTTP write routes, embedders) was
+   * therefore one expiry away from "workflow not found for ID:
+   * agent-session-{e}-maestro" — which took out BOTH documented recovery
+   * paths (restore + restart) in the 2026-07-15 incident. Healing inside the
+   * submit means no caller can forget again.
+   *
+   * Fast path costs nothing extra (no describe/start round-trip); the
+   * not-found path pays one `ensureMaestroSessionImpl` + one retry.
+   */
+  async function submitOutboxViaMaestro(ensemble: string, entry: OutboxEntryInput): Promise<string> {
+    const maestroId = sessionWorkflowId(ensemble, 'maestro');
+    try {
+      return await handle(maestroId).executeUpdate(submitOutboxUpdate, { args: [entry] });
+    } catch (err) {
+      if (!isWorkflowGoneError(err)) throw err;
+      await ensureMaestroSessionImpl(ensemble);
+      return await handle(maestroId).executeUpdate(submitOutboxUpdate, { args: [entry] });
+    }
+  }
 
   return {
     subscribe,
@@ -748,8 +872,6 @@ export function createTempoClientCore(
         allowedTools = info.allowedTools;
       }
 
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
       // #306 fix: always set `targetHostname` on the entry. The TUI-owned
       // maestro session stores `hostname: 'dashboard'` in its metadata
       // (a placeholder, not a real host), so the session workflow's
@@ -776,16 +898,14 @@ export function createTempoClientCore(
         targetHostname,
         ...(opts.held === true ? { held: true } : {}),
       } satisfies OutboxEntryInput;
-      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      const entryId = await submitOutboxViaMaestro(ensemble, entry);
       return { playerId: opts.name, entryId };
     },
 
     async release(ensemble, playerId): Promise<ReleaseClientResult> {
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const mh = handle(maestroId);
       const submitRelease = async (target: string): Promise<void> => {
         const entry: OutboxEntryInput = { type: 'release', targetPlayerId: target };
-        await mh.executeUpdate(submitOutboxUpdate, { args: [entry] });
+        await submitOutboxViaMaestro(ensemble, entry);
       };
 
       if (playerId) {
@@ -851,8 +971,6 @@ export function createTempoClientCore(
 
     async restart(ensemble, playerId, opts = {}) {
       const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
       // #580 — `confirmStealFromHost` is a caller-side intent flag (§16.5
       // Option B). The outbox entry has no slot for it because the workflow
       // trusts the caller; the gate is enforced pre-submit by the TUI
@@ -870,7 +988,7 @@ export function createTempoClientCore(
         ...(opts.loadFromState !== undefined ? { loadFromState: opts.loadFromState } : {}),
         ...(opts.transcript !== undefined ? { transcript: opts.transcript } : {}),
       };
-      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      const entryId = await submitOutboxViaMaestro(ensemble, entry);
       return {
         playerId,
         ...(opts.host !== undefined ? { host: opts.host } : {}),
@@ -884,8 +1002,6 @@ export function createTempoClientCore(
       // reset is clean-wipe only (always `fresh: true`); `invokerPlayerId:
       // 'maestro'` is the operator identity, surfaced to the wiped session as
       // `requestedBy`. The caller (HTTP handler) ensures the maestro exists.
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
       const entry: OutboxEntryInput = {
         type: 'reset',
         targetPlayerId: playerId,
@@ -893,20 +1009,18 @@ export function createTempoClientCore(
         fresh: true,
         ...(reason !== undefined ? { reason } : {}),
       };
-      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      const entryId = await submitOutboxViaMaestro(ensemble, entry);
       return { playerId, entryId };
     },
 
     async detach(ensemble, playerId, deadlineMs = 5_000) {
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
       const entry: OutboxEntryInput = {
         type: 'detach',
         targetPlayerId: playerId,
         reason: 'user-stop',
         deadlineMs,
       };
-      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      await submitOutboxViaMaestro(ensemble, entry);
     },
 
     async destroy(ensemble, playerId, reason) {
@@ -985,15 +1099,13 @@ export function createTempoClientCore(
         return summary;
       }
 
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
       const entry: OutboxEntryInput = {
         type: 'destroy',
         targetPlayerId: playerId,
         ...(reason !== undefined ? { reason } : {}),
         notifyConductor: true,
       };
-      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      await submitOutboxViaMaestro(ensemble, entry);
     },
 
     async pause(ensemble) {
@@ -1414,76 +1526,7 @@ export function createTempoClientCore(
     // ── Maestro session (TUI-owned workflow for two-way messaging) ──
 
     async ensureMaestroSession(ensemble: string): Promise<string> {
-      const workflowId = sessionWorkflowId(ensemble, 'maestro');
-
-      const sessionInput = {
-        metadata: {
-          playerId: 'maestro',
-          ensemble,
-          hostname: 'dashboard',
-          workDir: process.cwd(),
-          isConductor: false,
-          agentType: 'claude',
-          playerType: 'maestro',
-          playerTypeDescription: 'TUI dashboard — human operator interface',
-        },
-        part: 'Dashboard interface (human operator)',
-        disableStaleDetection: true,
-      };
-
-      try {
-        const wfHandle = await client.workflow.start('agentSessionWorkflow', {
-          workflowId,
-          taskQueue: 'agent-tempo',
-          workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
-          args: [sessionInput],
-          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-          workflowExecutionTimeout: '24 hours',
-          // T0.5 (#747) — PlayerType rides the memo, not a search attribute
-          // (fresh namespaces register only the 5 filter SAs).
-          searchAttributes: {
-            AgentTempoHostname: ['dashboard'],
-            AgentTempoEnsemble: [ensemble],
-            AgentTempoPlayerId: ['maestro'],
-          },
-          memo: {
-            [MEMO_KEYS.playerType]: 'maestro',
-            [MEMO_KEYS.isConductor]: false,
-            [MEMO_KEYS.part]: sessionInput.part,
-          },
-        });
-        console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
-
-        // Also ensure the per-ensemble Maestro hub workflow exists.
-        // Without this, getEnsembleChat returns empty when the hub wasn't
-        // previously created by a CLI command.
-        const maestroHubId = maestroWorkflowId(ensemble);
-        try {
-          await client.workflow.start('agentMaestroWorkflow', {
-            workflowId: maestroHubId,
-            taskQueue: 'agent-tempo',
-            workflowTaskTimeout: WORKFLOW_TASK_TIMEOUT, // PR-A 2026-07-13 incident — see constants.ts
-            // T0.1 (#748) — thread the cost profile (see CreateTempoClientOpts).
-            args: [{
-              ensemble,
-              ...(opts.costProfile === 'cloud' ? { costProfile: 'cloud' as const } : {}),
-            }],
-            workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-            searchAttributes: {
-              AgentTempoEnsemble: [ensemble],
-            },
-          });
-          console.error(`[tui:client] Maestro hub ensured: ${maestroHubId}`);
-        } catch {
-          // Maestro hub is non-critical — log but don't fail
-          console.error(`[tui:client] Maestro hub start skipped (may already exist): ${maestroHubId}`);
-        }
-
-        return wfHandle.workflowId;
-      } catch (err) {
-        console.error('[tui:client] Failed to start maestro session:', err);
-        throw err;
-      }
+      return ensureMaestroSessionImpl(ensemble);
     },
 
     async sendAsMaestro(ensemble: string, targetPlayer: string, text: string): Promise<void> {
