@@ -65,3 +65,32 @@ export function extendAttachmentForCAN(
     expiresAt: new Date(now + extendMs).toISOString(),
   };
 }
+
+/**
+ * PR-E (daemon-resilience) — early continue-as-new thresholds.
+ *
+ * The server's own `continueAsNewSuggested` fires at ~10,240 events /
+ * ~10 MB. Session histories grow ~200 events/h at idle (RCA:
+ * docs/research/daemon-query-timeout-rca.md — heartbeat signals are the
+ * dominant source), so the server suggestion effectively never fired and
+ * replay cost grew for days: cll-devops hit 4,661 events / 886 KB in 23 h
+ * and its full-history legacy-query replay is what killed the daemon on
+ * 2026-07-13. These explicit thresholds bound replay at roughly 10 h of
+ * idle history (~2-3 CANs/day/session).
+ */
+export const EARLY_CAN_HISTORY_EVENTS = 2_000;
+/** See {@link EARLY_CAN_HISTORY_EVENTS}. 2 MB — generous byte-side backstop
+ * for sessions with large payloads (coat-check-adjacent cues, big reports)
+ * whose event count lags their byte size. */
+export const EARLY_CAN_HISTORY_BYTES = 2_000_000;
+
+/**
+ * Pure early-CAN predicate — should this run continue-as-new now, given its
+ * current history footprint? Kept Temporal-free (like the rest of this file)
+ * so thresholds are unit-testable without a TestWorkflowEnvironment; the
+ * caller supplies `workflowInfo().historyLength` / `.historySize` and gates
+ * the result behind `patched('v2.0-early-can')` for replay determinism.
+ */
+export function shouldEarlyCan(historyLength: number, historySize: number): boolean {
+  return historyLength > EARLY_CAN_HISTORY_EVENTS || historySize > EARLY_CAN_HISTORY_BYTES;
+}

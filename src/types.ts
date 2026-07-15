@@ -484,6 +484,25 @@ export interface SessionInput {
   /** Restored from continue-as-new: last outbound activity timestamp */
   lastOutboundTime?: number;
   /**
+   * PR-E (daemon-resilience) — restored from continue-as-new: epoch ms of the
+   * most recent "work" event. Before early-CAN this was deliberately re-seeded
+   * to `workflow.now()` on every run start; with CAN firing ~2-3×/day a
+   * 10h-idle session would report `lastActivityAt: just now` after each CAN —
+   * corrupting the exact surface operators use to spot frozen ensembles.
+   * Optional additive: old CAN payloads fall back to `workflow.now()`.
+   */
+  lastActivityTime?: number;
+  /**
+   * PR-E (daemon-resilience) — restored from continue-as-new: the 3c Tier-1
+   * coarse-activity block (currentTool + context usage from the heartbeat
+   * piggyback). Was volatile-by-design when CAN was effectively unreachable
+   * (server suggestion ~10k events); post early-CAN, dropping it would blank
+   * the mission-control board's currentTool/context% for up to a heartbeat
+   * interval on every CAN. Optional additive: old payloads fall back to
+   * `{ currentTool: null }`.
+   */
+  coarseActivity?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
+  /**
    * #399 W2 — counters carried across continueAsNew. Each is monotonic
    * across the workflow's lifetime; the dashboard surfaces them via
    * `getMessagingStateQuery` and `getActivityStateQuery`.
