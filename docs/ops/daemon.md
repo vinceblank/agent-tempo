@@ -19,6 +19,19 @@ contract; belt-and-braces `Restart=always` + `RestartSec=5` is acceptable,
 but a clean `daemon stop` must not fight the supervisor (launchd: prefer the
 `SuccessfulExit=false` KeepAlive dict form).
 
+**Windows exception — this guarantee does not currently hold there.** The
+`agent-tempo-daemon-recheck` scheduled task (see "Worker supervision" and
+the per-platform table below) re-invokes plain `daemon start` every 5
+minutes and is a pure liveness poll: `evaluateStartPreflight`
+(`src/cli/daemon-command.ts`) only checks `status.running` / an orphan scan
+— it never reads `daemon.last-exit.json` or otherwise distinguishes "clean
+`daemon stop`" from "crashed." `daemon stop` alone does not unregister the
+recheck task (only `daemon uninstall` does). Net effect: on Windows, a
+clean `daemon stop` **will** be relaunched by the recheck task within 5
+minutes unless the caller also runs `daemon uninstall` first. Tracked as a
+known gap, not yet fixed — do not rely on `daemon stop` alone to keep the
+daemon down on Windows.
+
 Historical note: before this contract, a fatal worker error exited **0**
 ("Daemon stopped") — which is why the 2026-07-13 incident froze all ensembles
 for ~14.5h: even a correctly-installed `Restart=on-failure` unit would not
