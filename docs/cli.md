@@ -163,6 +163,15 @@ agent-tempo down --keep-daemon           # stop sessions and Temporal, but leave
 
 `--destroy` scopes workflow termination to the **resolved ensemble** (`--ensemble` flag > positional > env > `default`). Pass `--all-ensembles` to extend termination across every ensemble, which prompts a louder confirmation (#907).
 
+> **`down` is whole-HOST teardown, not per-ensemble teardown.** Even with
+> `--ensemble X` scoping the *workflow terminations*, `down` still stops the
+> **daemon** and the **shared local Temporal server** — which takes every
+> OTHER ensemble on this host offline too (`--keep-daemon` spares the daemon
+> but not Temporal). To tear down ONE ensemble while others stay live, use
+> `agent-tempo destroy <ensemble>` / the `destroy` MCP tool / the HTTP
+> `POST /v1/ensembles/<name>/shutdown {"destroy":true}` surface instead —
+> none of them touch the daemon or Temporal. (2026-07-15 ops finding.)
+
 `--kill-shared-temporal` overrides the cross-profile guard and kills a local Temporal dev server even if the other profile is active (#423). It does **not** stop a Cloud or remote Temporal server — `down` categorically refuses to touch a server when a non-loopback host, API key, or TLS cert/key is configured, regardless of flags (#907).
 
 When `--destroy` is passed and Temporal is not yet running, `down` starts a temporary Temporal

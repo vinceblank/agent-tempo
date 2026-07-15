@@ -35,7 +35,7 @@ import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
 const PACKAGE_ROOT = resolve(__dirname, '..');
 
-interface ParsedArgs {
+export interface ParsedArgs {
   command: string;
   positional: string[];
   temporalAddress?: string;
@@ -123,7 +123,7 @@ interface ParsedArgs {
   fromUpgrade?: boolean;
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+export function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     // #789 — the TUI is deleted; a bare `agent-tempo` now resolves to the
     // `home` command (bootstrap + status + hints), NOT a terminal UI launch.
@@ -313,7 +313,15 @@ function parseArgs(argv: string[]): ParsedArgs {
     i++;
   }
 
-  if (result.positional.length > 0) {
+  // P1 fix (2026-07-15 teardown incident): an explicit `--help`/`-h`/`--version`
+  // must WIN over the positional verb. Previously the positional override below
+  // clobbered the `command = 'help'` set by the flag branch, so
+  // `agent-tempo down --help` executed the REAL `down` — stopping the daemon
+  // and the shared Temporal server (~90s outage) instead of printing help.
+  // Asking a destructive verb for help must never run it; this guard covers
+  // every verb and both argument orders (`down --help`, `--help down`).
+  // Unknown flags were already rejected with exit 1 by the loop above.
+  if (result.positional.length > 0 && result.command !== 'help' && result.command !== 'version') {
     result.command = result.positional[0];
   }
 
@@ -781,7 +789,12 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  out.error(err.message || String(err));
-  process.exit(1);
-});
+// Only run `main()` when invoked directly (`node dist/cli.js`, the bin shim,
+// the global wrapper). Guarded so tests can import `parseArgs` without
+// executing the CLI — same pattern as `src/daemon.ts` (PR-0).
+if (require.main === module) {
+  main().catch((err) => {
+    out.error(err.message || String(err));
+    process.exit(1);
+  });
+}
